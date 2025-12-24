@@ -7,6 +7,7 @@ import Home from './pages/Home';
 import NewLessonPlan from './pages/NewLessonPlan';
 import EditLessonPlan from './pages/EditLessonPlan';
 import TemplateManager from './pages/TemplateManager';
+import TemplateEditor from './pages/TemplateEditor';
 import History from './pages/History';
 import LessonPlanDetail from './pages/LessonPlanDetail';
 import Settings from './pages/Settings';
@@ -22,6 +23,7 @@ function App() {
           <Route path="/new" element={<NewLessonPlan />} />
           <Route path="/edit" element={<EditLessonPlan />} />
           <Route path="/templates" element={<TemplateManager />} />
+          <Route path="/templates/:templateId/edit" element={<TemplateEditor />} />
           <Route path="/history" element={<History />} />
           <Route path="/lesson-plan" element={<LessonPlanDetail />} />
           <Route path="/settings" element={<Settings />} />
