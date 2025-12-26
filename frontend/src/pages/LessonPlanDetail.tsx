@@ -114,7 +114,9 @@ function LessonPlanDetail() {
   if (loading) {
     return (
       <div style={{ maxWidth: 1200, margin: '0 auto', textAlign: 'center', padding: '100px 0' }}>
-        <Spin size="large" tip="加载中..." />
+        <Spin size="large" tip="加载中...">
+          <div style={{ minHeight: 100 }} />
+        </Spin>
       </div>
     );
   }

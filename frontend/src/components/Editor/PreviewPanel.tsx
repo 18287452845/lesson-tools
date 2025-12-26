@@ -190,7 +190,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
           {/* 提示信息 */}
           <Alert
             message="实时预览"
-            description="使用示例数据渲染模板，可以点击"配置数据"修改示例值"
+            description="使用示例数据渲染模板，可以点击'配置数据'修改示例值"
             type="info"
             showIcon
             closable
@@ -244,7 +244,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
             ) : (
               <div style={{ textAlign: 'center', padding: '50px', color: '#999' }}>
                 <EyeOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
-                <div>点击"刷新"按钮生成预览</div>
+                <div>点击'刷新'按钮生成预览</div>
               </div>
             )}
           </Card>

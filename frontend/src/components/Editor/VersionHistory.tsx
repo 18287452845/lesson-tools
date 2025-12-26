@@ -216,7 +216,9 @@ const VersionHistory: React.FC<VersionHistoryProps> = ({
       >
         {loading ? (
           <div style={{ textAlign: 'center', padding: '50px' }}>
-            <Spin size="large" tip="加载中..." />
+            <Spin size="large" tip="加载中...">
+              <div style={{ minHeight: 100 }} />
+            </Spin>
           </div>
         ) : versions.length === 0 ? (
           <Empty description="暂无版本历史" />

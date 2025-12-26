@@ -44,7 +44,6 @@ function NewLessonPlan() {
   } = useGeneratorStore();
 
   const [currentStep, setCurrentStep] = useState(0);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [form] = Form.useForm();
 
   // Fetch templates on mount
@@ -55,8 +54,17 @@ function NewLessonPlan() {
   const handleGenerate = async () => {
     try {
       const values = await form.validateFields();
-      // Include the selected template_id
-      await generateLessonPlan({ ...values, template_id: selectedTemplateId });
+      // Ensure template_id is included
+      if (!values.template_id) {
+        form.setFields([
+          {
+            name: 'template_id',
+            errors: ['请选择教案模板'],
+          },
+        ]);
+        return;
+      }
+      await generateLessonPlan(values);
       setCurrentStep(2);
     } catch (err) {
       // Error is handled by the store
@@ -251,8 +259,7 @@ function NewLessonPlan() {
               type="primary"
               onClick={async () => {
                 try {
-                  const templateId = await form.validateFields(['template_id']);
-                  setSelectedTemplateId(templateId.template_id);
+                  await form.validateFields(['template_id']);
                   setCurrentStep(1);
                 } catch {
                   // Validation failed

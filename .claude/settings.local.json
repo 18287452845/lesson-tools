@@ -39,7 +39,9 @@
       "Bash(curl:*)",
       "mcp__chrome-devtools__list_pages",
       "Bash(venvScriptspython:*)",
-      "Bash(./venv/Scripts/python.exe -m pip install:*)"
+      "Bash(./venv/Scripts/python.exe -m pip install:*)",
+      "Bash(./start.sh:*)",
+      "Bash(ps:*)"
     ]
   }
 }

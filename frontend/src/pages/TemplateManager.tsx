@@ -16,7 +16,7 @@ import {
   Upload,
   Typography,
 } from 'antd';
-import { UploadOutlined, DeleteOutlined } from '@ant-design/icons';
+import { UploadOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { useTemplateStore } from '@/stores/templateStore';
 import { SUBJECT_OPTIONS, GRADE_OPTIONS } from '@/types';
@@ -112,6 +112,13 @@ function TemplateManager() {
       key: 'actions',
       render: (_: unknown, record: any) => (
         <Space>
+          <Button
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => navigate(`/templates/${record.id}/edit`)}
+          >
+            编辑
+          </Button>
           <Popconfirm
             title="确定要删除这个模板吗？"
             onConfirm={() => handleDelete(record.id)}

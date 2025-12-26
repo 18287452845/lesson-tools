@@ -148,11 +148,13 @@ const TipTapEditor: React.FC<TipTapEditorProps> = ({
       {/* 编辑器内容 */}
       <Card
         className="tiptap-editor-content"
-        bodyStyle={{
-          minHeight: '500px',
-          maxHeight: '700px',
-          overflow: 'auto',
-          padding: '20px',
+        styles={{
+          body: {
+            minHeight: '500px',
+            maxHeight: '700px',
+            overflow: 'auto',
+            padding: '20px',
+          }
         }}
       >
         <EditorContent editor={editor} />

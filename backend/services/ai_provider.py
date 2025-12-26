@@ -49,12 +49,17 @@ class DeepSeekProvider(AIProvider):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        # DeepSeek API payload
         payload = {
             "model": self.model,
             "messages": messages,
-            "max_tokens": self.max_tokens,
             "temperature": self.temperature,
+            "stream": False,  # Explicitly disable streaming
         }
+
+        # Only add max_tokens if it's reasonable (DeepSeek may have limits)
+        if self.max_tokens and self.max_tokens <= 8192:
+            payload["max_tokens"] = self.max_tokens
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
@@ -62,6 +67,15 @@ class DeepSeekProvider(AIProvider):
                 headers=headers,
                 json=payload,
             )
+
+            # Log detailed error for debugging
+            if response.status_code != 200:
+                error_detail = response.text
+                raise ValueError(
+                    f"DeepSeek API error (status {response.status_code}): {error_detail}\n"
+                    f"Request payload: {json.dumps(payload, ensure_ascii=False)}"
+                )
+
             response.raise_for_status()
             return self._parse_response(response.json())
 

@@ -9,6 +9,7 @@ import {
   FolderOutlined,
   HistoryOutlined,
   SettingOutlined,
+  AppstoreAddOutlined,
 } from '@ant-design/icons';
 
 const { Title, Text } = Typography;
@@ -22,6 +23,12 @@ function Home() {
       title: '新建教案',
       description: '选择模板，AI自动生成完整教案内容',
       action: () => navigate('/new'),
+    },
+    {
+      icon: <AppstoreAddOutlined style={{ fontSize: 48, color: '#13c2c2' }} />,
+      title: '批量生成',
+      description: '一次生成整个学期的教案，支持AI自动拆分章节',
+      action: () => navigate('/batch-generate'),
     },
     {
       icon: <EditOutlined style={{ fontSize: 48, color: '#52c41a' }} />,
@@ -59,7 +66,7 @@ function Home() {
               hoverable
               onClick={feature.action}
               style={{ height: '100%', textAlign: 'center' }}
-              bodyStyle={{ padding: '32px' }}
+              styles={{ body: { padding: '32px' } }}
             >
               <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                 {feature.icon}

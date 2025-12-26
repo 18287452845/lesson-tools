@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .models.database import init_db
-from .api import templates, generate, edit, documents, settings as settings_api
+from .api import templates, generate, edit, documents, settings as settings_api, batch
 
 
 @asynccontextmanager
@@ -46,6 +46,7 @@ app.include_router(generate.router, prefix=settings.api_prefix, tags=["generate"
 app.include_router(edit.router, prefix=settings.api_prefix, tags=["edit"])
 app.include_router(documents.router, prefix=settings.api_prefix, tags=["documents"])
 app.include_router(settings_api.router, prefix=settings.api_prefix, tags=["settings"])
+app.include_router(batch.router, prefix=settings.api_prefix, tags=["batch"])
 
 
 @app.get("/")

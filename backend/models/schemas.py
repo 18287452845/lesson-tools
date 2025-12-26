@@ -85,10 +85,28 @@ class LessonPlanGenerateRequest(LessonPlanInput):
 
 
 class TeachingGoal(BaseModel):
-    """Teaching goal."""
-    knowledge: List[str]
-    ability: List[str]
-    emotion: List[str]
+    """Teaching goal.
+
+    Different templates may require different fields:
+    - Standard templates: knowledge, ability, emotion
+    - Vocational templates: knowledge, ability, quality
+
+    All fields are optional to support various template requirements.
+    """
+    knowledge: Optional[List[str]] = None
+    ability: Optional[List[str]] = None
+    emotion: Optional[List[str]] = None  # 情感态度价值观目标（标准模板）
+    quality: Optional[List[str]] = None  # 素质目标（职业院校模板）
+
+    class Config:
+        extra = "allow"  # Allow additional custom goal types
+
+    def model_dump(self, **kwargs):
+        """Override to exclude None values."""
+        # Get the base dict
+        data = super().model_dump(**kwargs)
+        # Remove None values to prevent 'NoneType is not iterable' errors in templates
+        return {k: v for k, v in data.items() if v is not None}
 
 
 class TeachingStep(BaseModel):
@@ -107,18 +125,26 @@ class Homework(BaseModel):
 
 
 class GeneratedContent(BaseModel):
-    """Generated lesson plan content."""
-    teaching_goals: TeachingGoal
-    key_points: str
-    difficult_points: str
-    teaching_tools: str
-    teaching_methods: str
-    student_analysis: str
-    textbook_analysis: str
-    teaching_steps: List[TeachingStep]
-    homework: Homework
+    """Generated lesson plan content.
+
+    All fields are optional to support dynamic templates with different field requirements.
+    """
+    # Core fields (commonly used)
+    teaching_goals: Optional[TeachingGoal] = None
+    key_points: Optional[str] = None
+    difficult_points: Optional[str] = None
+    teaching_tools: Optional[str] = None
+    teaching_methods: Optional[str] = None
+    student_analysis: Optional[str] = None
+    textbook_analysis: Optional[str] = None
+    teaching_steps: Optional[List[TeachingStep]] = None
+    homework: Optional[Homework] = None
     blackboard_design: Optional[str] = None
     reflection: Optional[str] = None
+
+    # Allow extra fields for custom template fields
+    class Config:
+        extra = "allow"
 
 
 class LessonPlanResponse(BaseModel):
@@ -231,3 +257,110 @@ class ExportResponse(BaseModel):
     """Document export response."""
     download_url: str
     file_path: str
+
+
+# ============================================================================
+# Batch Generation Models
+# ============================================================================
+
+
+class ChapterInfo(BaseModel):
+    """Chapter information for batch generation."""
+    week: int
+    topic: str
+    content_summary: str
+    key_concepts: List[str]
+
+
+class ChapterSplitRequest(BaseModel):
+    """Request to split course into chapters."""
+    course_name: str
+    subject: str
+    grade: str
+    start_week: int = Field(..., ge=1, description="Starting week number")
+    end_week: int = Field(..., ge=1, description="Ending week number")
+    additional_info: Optional[str] = None
+
+
+class ChapterSplitResponse(BaseModel):
+    """Response from chapter splitting."""
+    chapters: List[ChapterInfo]
+
+
+class BatchTaskCreateRequest(BaseModel):
+    """Request to create a batch task."""
+    course_name: str
+    subject: str
+    grade: str
+    template_id: str
+    start_week: int = Field(..., ge=1)
+    end_week: int = Field(..., ge=1)
+    chapters: List[ChapterInfo]
+    additional_requirements: Optional[str] = None
+
+
+class BatchTaskCreateResponse(BaseModel):
+    """Response from batch task creation."""
+    task_id: str
+    status: str
+
+
+class BatchTask(BaseModel):
+    """Batch task information."""
+    id: str
+    course_name: str
+    subject: str
+    grade: str
+    template_id: str
+    start_week: int
+    end_week: int
+    chapters: List[ChapterInfo]
+    status: Literal["pending", "processing", "completed", "failed", "cancelled"]
+    total_count: int
+    completed_count: int
+    failed_count: int
+    zip_file_path: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: str
+    updated_at: str
+    completed_at: Optional[str] = None
+
+
+class BatchLessonPlan(BaseModel):
+    """Individual lesson plan in a batch."""
+    id: str
+    batch_task_id: str
+    lesson_plan_id: str
+    week_number: int
+    topic: str
+    status: Literal["pending", "processing", "completed", "failed"]
+    file_path: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: str
+
+
+class BatchTaskListResponse(BaseModel):
+    """Response for listing batch tasks."""
+    tasks: List[BatchTask]
+    total: int
+
+
+class CourseChapterTemplate(BaseModel):
+    """Saved course chapter template."""
+    id: str
+    course_name: str
+    subject: str
+    grade: str
+    start_week: int
+    end_week: int
+    total_weeks: int
+    chapters: List[ChapterInfo]
+    use_count: int
+    created_at: str
+    updated_at: str
+
+
+class ChapterTemplateListResponse(BaseModel):
+    """Response for listing chapter templates."""
+    templates: List[CourseChapterTemplate]
+    total: int

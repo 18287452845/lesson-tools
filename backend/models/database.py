@@ -100,6 +100,91 @@ class Database:
             )
         """)
 
+        # Batch tasks table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS batch_tasks (
+                id TEXT PRIMARY KEY,
+                course_name TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                grade TEXT NOT NULL,
+                template_id TEXT NOT NULL,
+                start_week INTEGER NOT NULL,
+                end_week INTEGER NOT NULL,
+                chapters TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                total_count INTEGER NOT NULL,
+                completed_count INTEGER DEFAULT 0,
+                failed_count INTEGER DEFAULT 0,
+                zip_file_path TEXT,
+                error_message TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                completed_at TEXT,
+                FOREIGN KEY (template_id) REFERENCES templates(id)
+            )
+        """)
+
+        # Batch lesson plans table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS batch_lesson_plans (
+                id TEXT PRIMARY KEY,
+                batch_task_id TEXT NOT NULL,
+                lesson_plan_id TEXT NOT NULL,
+                week_number INTEGER NOT NULL,
+                topic TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                file_path TEXT,
+                error_message TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (batch_task_id) REFERENCES batch_tasks(id),
+                FOREIGN KEY (lesson_plan_id) REFERENCES lesson_plans(id)
+            )
+        """)
+
+        # Course chapter templates table (for caching AI-generated chapters)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS course_chapter_templates (
+                id TEXT PRIMARY KEY,
+                course_name TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                grade TEXT NOT NULL,
+                start_week INTEGER NOT NULL,
+                end_week INTEGER NOT NULL,
+                total_weeks INTEGER NOT NULL,
+                chapters TEXT NOT NULL,
+                use_count INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(course_name, subject, grade, start_week, end_week)
+            )
+        """)
+
+        # Add batch-related columns to lesson_plans if they don't exist
+        await self._add_column_if_not_exists(
+            db, "lesson_plans", "batch_task_id", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "lesson_plans", "week_number", "INTEGER"
+        )
+
+    async def _add_column_if_not_exists(
+        self,
+        db: aiosqlite.Connection,
+        table_name: str,
+        column_name: str,
+        column_type: str
+    ) -> None:
+        """Add a column to a table if it doesn't exist."""
+        # Check if column exists
+        cursor = await db.execute(f"PRAGMA table_info({table_name})")
+        columns = await cursor.fetchall()
+        column_names = [col[1] for col in columns]
+
+        if column_name not in column_names:
+            await db.execute(
+                f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+            )
+
     @asynccontextmanager
     async def get_connection(self) -> AsyncIterator[aiosqlite.Connection]:
         """Get a database connection."""

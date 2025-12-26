@@ -14,6 +14,7 @@ from ..models.schemas import (
     FieldRegenerateRequest,
     FieldEditRequest,
     GeneratedContent,
+    FieldConfig,
     generate_id,
 )
 from ..services.ai_generator import AIGenerator
@@ -37,10 +38,23 @@ async def generate_lesson_plan(request: LessonPlanGenerateRequest):
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
+    # Parse field configs from template
+    field_configs = None
+    try:
+        # Safely access field_configs column
+        fields_config_str = template["fields_config"] if "fields_config" in template.keys() else None
+
+        if fields_config_str:
+            configs_data = json.loads(fields_config_str)
+            field_configs = [FieldConfig(**config) for config in configs_data]
+    except (json.JSONDecodeError, TypeError, KeyError, IndexError) as e:
+        # If field_configs parsing fails, continue without it
+        print(f"Warning: Failed to parse field_configs: {e}")
+
     # Generate content using AI
     try:
         generator = await get_ai_generator()
-        content = await generator.generate_lesson_plan(request)
+        content = await generator.generate_lesson_plan(request, field_configs)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

@@ -6,8 +6,9 @@ import shutil
 import json
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, Body
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from ..config import settings
 from ..models.database import db
@@ -311,3 +312,227 @@ async def update_template(
         )
 
     return {"message": "Template updated successfully"}
+
+
+# ============================================================================
+# Template Editor API Endpoints
+# ============================================================================
+
+class JinjaValidateRequest(BaseModel):
+    html: str
+
+
+class SaveHtmlRequest(BaseModel):
+    html: str
+    metadata: Optional[dict] = None
+
+
+class PreviewHtmlRequest(BaseModel):
+    html: str
+    sample_data: dict
+
+
+@router.get("/{template_id}/html")
+async def get_template_html(template_id: str):
+    """
+    Get template content as HTML for editing.
+    Converts DOCX to HTML using mammoth.
+    """
+    row = await db.fetch_one(
+        "SELECT file_path, name FROM templates WHERE id = ?",
+        (template_id,),
+    )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    file_path = row["file_path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Template file not found")
+
+    try:
+        import mammoth
+
+        with open(file_path, "rb") as docx_file:
+            result = mammoth.convert_to_html(docx_file)
+            html = result.value
+            messages = [str(msg) for msg in result.messages]
+
+        # Extract basic metadata from docx
+        from docx import Document
+        doc = Document(file_path)
+        metadata = {
+            "title": doc.core_properties.title or row["name"],
+            "author": doc.core_properties.author or "",
+            "created": str(doc.core_properties.created) if doc.core_properties.created else "",
+            "modified": str(doc.core_properties.modified) if doc.core_properties.modified else "",
+            "paragraphs_count": len(doc.paragraphs),
+            "tables_count": len(doc.tables),
+        }
+
+        return {
+            "html": html,
+            "metadata": metadata,
+            "messages": messages,
+            "name": row["name"],
+        }
+
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="mammoth library not installed. Run: pip install mammoth",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to convert template to HTML: {str(e)}",
+        )
+
+
+@router.post("/{template_id}/validate-jinja")
+async def validate_jinja(template_id: str, request: JinjaValidateRequest = Body(...)):
+    """
+    Validate Jinja2 syntax in HTML content and extract variables.
+    """
+    from jinja2 import Environment, meta, TemplateSyntaxError
+
+    try:
+        env = Environment()
+
+        # Parse template to check for syntax errors
+        try:
+            ast = env.parse(request.html)
+        except TemplateSyntaxError as e:
+            return {
+                "valid": False,
+                "errors": [f"Jinja2 syntax error at line {e.lineno}: {e.message}"],
+                "variables": [],
+            }
+
+        # Extract variables
+        variables = list(meta.find_undeclared_variables(ast))
+
+        return {
+            "valid": True,
+            "errors": [],
+            "variables": variables,
+        }
+
+    except Exception as e:
+        return {
+            "valid": False,
+            "errors": [f"Validation error: {str(e)}"],
+            "variables": [],
+        }
+
+
+@router.post("/{template_id}/save-html")
+async def save_template_html(template_id: str, request: SaveHtmlRequest = Body(...)):
+    """
+    Save HTML content back to DOCX template.
+    Uses htmldocx to convert HTML back to DOCX.
+    """
+    row = await db.fetch_one(
+        "SELECT file_path, name FROM templates WHERE id = ?",
+        (template_id,),
+    )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    file_path = row["file_path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Template file not found")
+
+    try:
+        from htmldocx import HtmlToDocx
+        from docx import Document
+
+        # Create a new document
+        doc = Document()
+
+        # Convert HTML to DOCX
+        parser = HtmlToDocx()
+        parser.add_html_to_document(request.html, doc)
+
+        # Update metadata if provided
+        if request.metadata:
+            if "title" in request.metadata:
+                doc.core_properties.title = request.metadata["title"]
+            if "author" in request.metadata:
+                doc.core_properties.author = request.metadata["author"]
+
+        # Save to the same file (backup original first)
+        backup_path = file_path + ".backup"
+        shutil.copy2(file_path, backup_path)
+
+        try:
+            doc.save(file_path)
+            # If successful, remove backup
+            os.remove(backup_path)
+        except Exception as e:
+            # Restore from backup if save fails
+            shutil.copy2(backup_path, file_path)
+            os.remove(backup_path)
+            raise e
+
+        # Update template in database
+        await db.execute(
+            "UPDATE templates SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (template_id,),
+            commit=True,
+        )
+
+        return {
+            "success": True,
+            "message": "Template saved successfully",
+        }
+
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="htmldocx library not installed. Run: pip install htmldocx",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save HTML to DOCX: {str(e)}",
+        )
+
+
+@router.post("/{template_id}/preview-html")
+async def preview_template_html(template_id: str, request: PreviewHtmlRequest = Body(...)):
+    """
+    Preview HTML with sample data rendered using Jinja2.
+    """
+    from jinja2 import Environment, TemplateSyntaxError
+
+    try:
+        env = Environment()
+
+        # Render template with sample data
+        try:
+            template = env.from_string(request.html)
+            preview_html = template.render(**request.sample_data)
+        except TemplateSyntaxError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Jinja2 syntax error at line {e.lineno}: {e.message}",
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Template rendering error: {str(e)}",
+            )
+
+        return {
+            "preview_html": preview_html,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Preview generation failed: {str(e)}",
+        )

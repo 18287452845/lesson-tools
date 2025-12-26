@@ -62,3 +62,31 @@ storage/outputs/
 *.tmp
 *.temp
 nul
+
+# Test and debug scripts
+test_*.py
+test_*.sh
+check_*.py
+add_sample_template.py
+add_yunnan_template.py
+analyze_lesson_plan.py
+create_sample_template.py
+create_yunnan_template.py
+clean_database.py
+
+# Development reports and guides
+*_REPORT.md
+*_GUIDE.md
+*_SUMMARY.md
+*_FIX*.md
+FIXES_AND_FEATURES.md
+DEBUG_*.md
+SERVICE_MANAGEMENT.md
+
+# Personal documents
+*.doc
+!backend/templates/*.doc
+
+# Monitor scripts (keeping start.sh, stop.sh, status.sh)
+monitor_*.sh
+final_monitor.sh

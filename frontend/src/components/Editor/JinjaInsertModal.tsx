@@ -197,7 +197,7 @@ const JinjaInsertModal: React.FC<JinjaInsertModalProps> = ({
           <>
             <Alert
               message="插入 For 循环"
-              description="将插入 {% for item in items %}...{% endfor %} 结构"
+              description={'将插入 {% for item in items %}...{% endfor %} 结构'}
               type="info"
               showIcon
               style={{ marginBottom: 16 }}
@@ -245,7 +245,7 @@ const JinjaInsertModal: React.FC<JinjaInsertModalProps> = ({
             </Form.Item>
 
             <Paragraph type="secondary" style={{ fontSize: 12 }}>
-              示例: {% for step in teaching_steps %} ... {% endfor %}
+              {'示例: {% for step in teaching_steps %} ... {% endfor %}'}
               <br />
               可用变量: loop.index (索引), loop.first (是否第一个), loop.last (是否最后一个)
             </Paragraph>
@@ -257,7 +257,7 @@ const JinjaInsertModal: React.FC<JinjaInsertModalProps> = ({
           <>
             <Alert
               message="插入 If 条件"
-              description="将插入 {% if condition %}...{% endif %} 结构"
+              description={'将插入 {% if condition %}...{% endif %} 结构'}
               type="info"
               showIcon
               style={{ marginBottom: 16 }}
@@ -302,7 +302,7 @@ const JinjaInsertModal: React.FC<JinjaInsertModalProps> = ({
             </Form.Item>
 
             <Paragraph type="secondary" style={{ fontSize: 12 }}>
-              示例: {% if homework %}作业: {{ homework }}{% endif %}
+              {'示例: {% if homework %}作业: {{ homework }}{% endif %}'}
             </Paragraph>
           </>
         )}

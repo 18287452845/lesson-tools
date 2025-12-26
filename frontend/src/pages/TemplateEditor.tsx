@@ -35,12 +35,12 @@ import {
   DownloadOutlined,
   EyeInvisibleOutlined,
 } from '@ant-design/icons'
-import { useTemplateEditorStore } from '../../stores/templateEditorStore'
-import { useAutoSave } from '../../hooks/useAutoSave'
-import TipTapEditor from '../../components/Editor/TipTapEditor'
-import JinjaInsertModal from '../../components/Editor/JinjaInsertModal'
-import PreviewPanel from '../../components/Editor/PreviewPanel'
-import VersionHistory from '../../components/Editor/VersionHistory'
+import { useTemplateEditorStore } from '../stores/templateEditorStore'
+import { useAutoSave } from '../hooks/useAutoSave'
+import TipTapEditor from '../components/Editor/TipTapEditor'
+import JinjaInsertModal from '../components/Editor/JinjaInsertModal'
+import PreviewPanel from '../components/Editor/PreviewPanel'
+import VersionHistory from '../components/Editor/VersionHistory'
 import type { Editor } from '@tiptap/react'
 import axios from 'axios'
 
@@ -222,7 +222,9 @@ const TemplateEditor: React.FC = () => {
   if (isLoading) {
     return (
       <div style={{ textAlign: 'center', padding: '100px' }}>
-        <Spin size="large" tip="加载模板中..." />
+        <Spin size="large" tip="加载模板中...">
+          <div style={{ minHeight: 100 }} />
+        </Spin>
       </div>
     )
   }

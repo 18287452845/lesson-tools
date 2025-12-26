@@ -187,3 +187,106 @@ export const GRADE_OPTIONS: GradeLevel[] = [
 export const DURATION_OPTIONS = [
   '1课时', '2课时', '3课时', '0.5课时', '45分钟', '40分钟',
 ];
+
+// ============================================================================
+// Batch Generation Types
+// ============================================================================
+
+export interface ChapterInfo {
+  week: number;
+  topic: string;
+  content_summary: string;
+  key_concepts: string[];
+}
+
+export interface ChapterSplitRequest {
+  course_name: string;
+  subject: string;
+  grade: string;
+  start_week: number;
+  end_week: number;
+  additional_info?: string;
+}
+
+export interface ChapterSplitResponse {
+  chapters: ChapterInfo[];
+}
+
+export interface BatchTaskCreateRequest {
+  course_name: string;
+  subject: string;
+  grade: string;
+  template_id: string;
+  start_week: number;
+  end_week: number;
+  chapters: ChapterInfo[];
+  additional_requirements?: string;
+}
+
+export interface BatchTaskCreateResponse {
+  task_id: string;
+  status: string;
+}
+
+export type BatchTaskStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface BatchTask {
+  id: string;
+  course_name: string;
+  subject: string;
+  grade: string;
+  template_id: string;
+  start_week: number;
+  end_week: number;
+  chapters: ChapterInfo[];
+  status: BatchTaskStatus;
+  total_count: number;
+  completed_count: number;
+  failed_count: number;
+  zip_file_path?: string;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+export interface BatchLessonPlan {
+  id: string;
+  batch_task_id: string;
+  lesson_plan_id: string;
+  week_number: number;
+  topic: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  file_path?: string;
+  error_message?: string;
+  created_at: string;
+}
+
+export interface BatchTaskListResponse {
+  tasks: BatchTask[];
+  total: number;
+}
+
+export interface CourseChapterTemplate {
+  id: string;
+  course_name: string;
+  subject: string;
+  grade: string;
+  start_week: number;
+  end_week: number;
+  total_weeks: number;
+  chapters: ChapterInfo[];
+  use_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChapterTemplateListResponse {
+  templates: CourseChapterTemplate[];
+  total: number;
+}

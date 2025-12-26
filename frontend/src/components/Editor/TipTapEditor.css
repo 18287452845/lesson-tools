@@ -60,12 +60,13 @@
   width: 100%;
   margin: 16px 0;
   overflow: hidden;
+  border: 1px solid #d9d9d9;
 }
 
 .tiptap-editor-content .tiptap-table td,
 .tiptap-editor-content .tiptap-table th {
   min-width: 1em;
-  border: 1px solid #d9d9d9;
+  border: 1px solid #d9d9d9 !important;
   padding: 8px 12px;
   vertical-align: top;
   box-sizing: border-box;
@@ -79,6 +80,36 @@
 }
 
 .tiptap-editor-content .tiptap-table .selectedCell {
+  background-color: #e6f7ff;
+}
+
+/* 确保 ProseMirror 表格元素也有边框 */
+.tiptap-editor-content .ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 16px 0;
+  overflow: hidden;
+  border: 1px solid #d9d9d9;
+}
+
+.tiptap-editor-content .ProseMirror table td,
+.tiptap-editor-content .ProseMirror table th {
+  min-width: 1em;
+  border: 1px solid #d9d9d9 !important;
+  padding: 8px 12px;
+  vertical-align: top;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.tiptap-editor-content .ProseMirror table th {
+  font-weight: bold;
+  text-align: left;
+  background-color: #fafafa;
+}
+
+.tiptap-editor-content .ProseMirror table .selectedCell {
   background-color: #e6f7ff;
 }
 

@@ -3,12 +3,13 @@ AI generator service for creating lesson plans using multiple AI providers (Deep
 """
 import json
 import re
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 
 from ..config import settings
 from ..models.schemas import (
     LessonPlanInput,
     GeneratedContent,
+    FieldConfig,
 )
 from .ai_provider import AIProviderFactory, generate_with_ai
 
@@ -131,17 +132,20 @@ class AIGenerator:
     async def generate_lesson_plan(
         self,
         input_data: LessonPlanInput,
+        field_configs: Optional[List[FieldConfig]] = None,
     ) -> GeneratedContent:
         """
         Generate a complete lesson plan.
 
         Args:
             input_data: Lesson plan input information
+            field_configs: Optional list of field configurations from template
+                         If provided, will generate dynamic fields based on template
 
         Returns:
             Generated lesson plan content
         """
-        prompt = self._build_generation_prompt(input_data)
+        prompt = self._build_generation_prompt(input_data, field_configs)
 
         content = await generate_with_ai(
             prompt=prompt,
@@ -216,8 +220,12 @@ class AIGenerator:
             model=self.model,
         )
 
-    def _build_generation_prompt(self, input_data: LessonPlanInput) -> str:
-        """Build the full lesson plan generation prompt."""
+    def _build_generation_prompt(
+        self,
+        input_data: LessonPlanInput,
+        field_configs: Optional[List[FieldConfig]] = None,
+    ) -> str:
+        """Build the full lesson plan generation prompt with dynamic fields support."""
         extra_info = ""
         if input_data.textbook_version:
             extra_info += f"- 教材版本：{input_data.textbook_version}\n"
@@ -227,15 +235,67 @@ class AIGenerator:
         prior_knowledge = input_data.prior_knowledge or "无特殊说明"
         additional_requirements = input_data.additional_requirements or "无特殊要求"
 
-        return self.GENERATION_PROMPT.format(
-            subject=input_data.subject,
-            grade=input_data.grade,
-            topic=input_data.topic,
-            duration=input_data.duration,
-            extra_info=extra_info,
-            prior_knowledge=prior_knowledge,
-            additional_requirements=additional_requirements,
-        )
+        # Build JSON template based on field configs
+        if field_configs:
+            json_template = self._build_dynamic_json_template(field_configs)
+            notes = self._build_field_generation_notes(field_configs)
+            required_fields_note = self._build_required_fields_note(field_configs)
+        else:
+            # Fallback to default template
+            json_template = self._get_default_json_template()
+            notes = self._get_default_generation_notes()
+            required_fields_note = ""
+
+        return f"""你是一位资深的{input_data.subject}学科教研专家，拥有20年教学经验。
+请根据以下信息，生成一份专业、详细、可操作性强的教案。
+
+## 基本信息
+- 学科：{input_data.subject}
+- 年级：{input_data.grade}
+- 课题：{input_data.topic}
+- 课时：{input_data.duration}
+{extra_info}
+
+## 学情参考
+{prior_knowledge}
+
+## 教师要求
+{additional_requirements}
+
+## 输出要求
+请严格按照以下JSON格式返回，确保JSON格式正确可解析：
+
+```json
+{json_template}
+```
+
+{notes}
+
+{required_fields_note}
+
+## 重要注意事项
+1. **必须生成JSON中的所有字段**，不允许遗漏任何字段
+2. 教学目标要具体、可测量、可评价
+   - teaching_goals必须包含knowledge（知识目标）、ability（能力目标）、quality（素质目标）三个字段
+   - 每个字段至少包含2-3条具体目标，使用数组格式
+3. **教学过程必须包含5个完整阶段，每个阶段的stage值必须严格使用以下标准名称**：
+   - 第1阶段："新课预热" 或 "导入新课"（课前准备、复习铺垫，3-5分钟）
+   - 第2阶段："问题导入"（提出问题、创设情境，5-8分钟）
+   - 第3阶段："传授新知" 或 "探究新知"（讲授核心内容，20-30分钟）
+   - 第4阶段："课堂实践" 或 "巩固练习"（实践操作、练习巩固，15-20分钟）
+   - 第5阶段："课堂总结" 或 "课堂小结"（总结回顾、布置作业，5分钟）
+   - **关键要求**：
+     * 必须包含所有5个阶段，缺一不可
+     * stage字段的值必须是上述标准名称之一，不要添加编号、说明或其他文字
+     * 每个阶段都要有详细的teacher_activity、student_activity和design_intent
+4. 教学过程要详细到可以直接使用，每个步骤包含教师活动、学生活动和设计意图
+5. 时间分配要合理，总时长匹配课时（{input_data.duration}）
+6. 语言要专业但不晦涩
+7. 要体现新课标理念和学生主体地位
+8. 请确保返回的是纯JSON格式，不要包含其他说明文字
+9. 对于每个字段都要提供有价值的具体内容，不要使用"待补充"、"根据实际情况"等占位符
+10. 所有字段的内容要相互关联、逻辑一致
+"""
 
     def _build_field_prompt(
         self,
@@ -368,6 +428,235 @@ class AIGenerator:
 
 请直接输出优化后的内容，不要添加其他说明。
 """
+
+    def _build_dynamic_json_template(self, field_configs: List[FieldConfig]) -> str:
+        """Build JSON template based on field configurations."""
+        template_parts = []
+
+        for field in field_configs:
+            field_name = field.name
+            field_type = field.field_type
+
+            # Generate sample value based on field type and name
+            if field_name == "teaching_goals":
+                sample = """{
+    "knowledge": ["具体的知识目标1（至少2-3条）", "知识目标2"],
+    "ability": ["具体的能力目标1（至少2-3条）", "能力目标2"],
+    "quality": ["具体的素质目标1（至少2条）", "素质目标2"]
+  }"""
+            elif field_name == "teaching_steps":
+                sample = """[
+    {
+      "stage": "新课预热",
+      "duration": "3-5分钟",
+      "teacher_activity": "课前准备、复习旧知、激发兴趣的具体活动（详细描述）",
+      "student_activity": "回顾、准备、参与互动的具体活动（详细描述）",
+      "design_intent": "激发学习兴趣，做好知识衔接"
+    },
+    {
+      "stage": "问题导入",
+      "duration": "5-8分钟",
+      "teacher_activity": "提出核心问题、创设情境、引导思考的具体内容（详细描述）",
+      "student_activity": "观察、思考、讨论问题的具体活动（详细描述）",
+      "design_intent": "引出本课主题，激发探究欲望"
+    },
+    {
+      "stage": "传授新知",
+      "duration": "20-25分钟",
+      "teacher_activity": "讲解核心概念、演示操作、组织探究的详细内容...",
+      "student_activity": "听讲、记录、思考、提问、探究的详细内容...",
+      "design_intent": "帮助学生理解核心概念，掌握关键方法..."
+    },
+    {
+      "stage": "课堂实践",
+      "duration": "15-20分钟",
+      "teacher_activity": "布置练习任务、巡视指导、组织交流的详细内容...",
+      "student_activity": "动手实践、小组合作、展示成果的详细内容...",
+      "design_intent": "巩固所学知识，培养应用能力和协作精神..."
+    },
+    {
+      "stage": "课堂总结",
+      "duration": "5分钟",
+      "teacher_activity": "系统总结要点、强调重难点、布置作业的详细内容...",
+      "student_activity": "回顾总结、自我评价、提出疑问的详细内容...",
+      "design_intent": "帮助学生梳理知识体系，形成完整认知..."
+    }
+  ]"""
+            elif field_name == "homework":
+                sample = """{
+    "required": "必做作业",
+    "optional": "选做作业/拓展"
+  }"""
+            elif field_type == "json" or "_steps" in field_name or "_process" in field_name:
+                # Array type fields
+                sample = f"""[
+    {{"step": 1, "content": "步骤1的具体内容"}},
+    {{"step": 2, "content": "步骤2的具体内容"}}
+  ]"""
+            elif field_type == "textarea" or "_analysis" in field_name or "_description" in field_name:
+                # Long text fields
+                hint = self._infer_field_hint(field_name)
+                sample = f'"{hint}"'
+            else:
+                # Simple text fields
+                hint = self._infer_field_hint(field_name)
+                sample = f'"{hint}"'
+
+            template_parts.append(f'  "{field_name}": {sample}')
+
+        return "{\n" + ",\n".join(template_parts) + "\n}"
+
+    def _build_field_generation_notes(self, field_configs: List[FieldConfig]) -> str:
+        """Build generation notes for custom fields."""
+        notes = []
+
+        custom_fields = [f for f in field_configs if f.name not in [
+            "subject", "grade", "topic", "duration",
+            "teaching_goals", "key_points", "difficult_points",
+            "teaching_tools", "teaching_methods", "student_analysis",
+            "textbook_analysis", "teaching_steps", "homework",
+            "blackboard_design", "reflection"
+        ]]
+
+        if custom_fields:
+            notes.append("## 自定义字段说明")
+            for field in custom_fields:
+                display_name = field.display_name or field.name
+                hint = self._infer_field_hint(field.name)
+                notes.append(f"- {field.name} ({display_name}): {hint}")
+
+        return "\n".join(notes) if notes else ""
+
+    def _build_required_fields_note(self, field_configs: List[FieldConfig]) -> str:
+        """Build a note emphasizing required fields."""
+        if not field_configs:
+            return ""
+
+        # Filter required fields
+        required_fields = [f for f in field_configs if f.required]
+
+        if not required_fields:
+            return ""
+
+        # Build the note
+        note = "## ⚠️ 必填字段要求\n\n"
+        note += "以下字段为**必填字段**，必须全部生成，不得遗漏：\n\n"
+
+        for idx, field in enumerate(required_fields, 1):
+            display_name = field.display_name or field.name
+            field_type_desc = {
+                "text": "文本",
+                "textarea": "长文本",
+                "json": "结构化数据",
+                "array": "数组"
+            }.get(field.field_type, "内容")
+
+            note += f"{idx}. **{field.name}** ({display_name}) - {field_type_desc}\n"
+
+            # Add description if available
+            if field.description:
+                note += f"   - 说明：{field.description}\n"
+
+            # Add special note for teaching_steps
+            if field.name == "teaching_steps":
+                note += f"   - **特别要求**：必须包含5个完整阶段（新课预热、问题导入、传授新知、课堂实践、课堂总结）\n"
+
+        note += f"\n共 **{len(required_fields)}** 个必填字段，请确保每个字段都生成了有价值的具体内容。\n"
+        note += "**严格要求**：\n"
+        note += "- 不允许使用\"待补充\"、\"待填写\"、\"根据实际情况\"等占位符\n"
+        note += "- 每个字段都必须提供详实、具体、可操作的内容\n"
+        note += "- 所有字段内容应该相互关联、逻辑一致\n"
+
+        return note
+
+    def _infer_field_hint(self, field_name: str) -> str:
+        """Infer generation hint from field name."""
+        # Common patterns
+        if "_name" in field_name or "_title" in field_name:
+            return "根据上下文生成合适的名称"
+        elif "_date" in field_name or "_time" in field_name:
+            return "生成合适的日期或时间（可以留空或使用当前日期）"
+        elif "school" in field_name:
+            return "学校名称"
+        elif "teacher" in field_name:
+            return "教师姓名"
+        elif "class" in field_name and "room" not in field_name:
+            return "班级名称"
+        elif "classroom" in field_name or "room" in field_name:
+            return "教室或上课地点"
+        elif "_analysis" in field_name:
+            return "详细的分析内容（150-300字）"
+        elif "_description" in field_name:
+            return "详细的描述说明"
+        elif "_objectives" in field_name or "_goals" in field_name:
+            return "具体的目标列表"
+        elif "_steps" in field_name or "_process" in field_name:
+            return "分步骤的流程或过程"
+        elif "_checklist" in field_name or "_list" in field_name:
+            return "具体的清单项目"
+        elif "_notes" in field_name or "_remarks" in field_name:
+            return "相关注意事项或备注"
+        elif "_materials" in field_name or "_resources" in field_name:
+            return "所需材料或资源清单"
+        else:
+            # Use field name as hint
+            return f"生成与'{field_name}'相关的适当内容"
+
+    def _get_default_json_template(self) -> str:
+        """Get the default JSON template for backward compatibility."""
+        return """{
+  "teaching_goals": {
+    "knowledge": ["知识目标1", "知识目标2"],
+    "ability": ["能力目标1", "能力目标2"],
+    "emotion": ["情感态度价值观目标1"]
+  },
+  "key_points": "教学重点内容，要具体明确",
+  "difficult_points": "教学难点内容，说明难在哪里",
+  "teaching_tools": "教具和学具准备清单",
+  "teaching_methods": "采用的教学方法",
+  "student_analysis": "学情分析，包括认知基础、可能的困难",
+  "textbook_analysis": "教材分析，说明本课在单元/教材中的地位",
+  "teaching_steps": [
+    {
+      "stage": "导入新课",
+      "duration": "5分钟",
+      "teacher_activity": "教师具体做什么、说什么",
+      "student_activity": "学生具体做什么",
+      "design_intent": "这样设计的教育目的"
+    },
+    {
+      "stage": "探究新知",
+      "duration": "20分钟",
+      "teacher_activity": "...",
+      "student_activity": "...",
+      "design_intent": "..."
+    },
+    {
+      "stage": "巩固练习",
+      "duration": "12分钟",
+      "teacher_activity": "...",
+      "student_activity": "...",
+      "design_intent": "..."
+    },
+    {
+      "stage": "课堂小结",
+      "duration": "3分钟",
+      "teacher_activity": "...",
+      "student_activity": "...",
+      "design_intent": "..."
+    }
+  ],
+  "homework": {
+    "required": "必做作业",
+    "optional": "选做作业/拓展"
+  },
+  "blackboard_design": "板书设计的文字描述或结构",
+  "reflection": "（待课后填写）"
+}"""
+
+    def _get_default_generation_notes(self) -> str:
+        """Get default generation notes."""
+        return ""
 
     def _parse_json_response(self, content: str) -> Dict[str, Any]:
         """
