@@ -2,9 +2,14 @@
  * Batch Lesson Plan Generation Page
  *
  * 3-Step Wizard:
- * 1. Fill basic information
- * 2. Review and edit AI-split chapters
+ * 1. Fill basic information (total hours, chapters)
+ * 2. Review and edit AI-generated/manual chapters
  * 3. Monitor generation progress
+ *
+ * Now supports hours-based generation:
+ * - Total hours (64, 72, etc.)
+ * - Hours per lesson (default 2)
+ * - Manual or AI chapter input
  */
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -26,6 +31,7 @@ import {
   Modal,
   Radio,
   Divider,
+  Alert,
 } from 'antd';
 import {
   FileTextOutlined,
@@ -33,6 +39,7 @@ import {
   ClockCircleOutlined,
   ExclamationCircleOutlined,
   HistoryOutlined,
+  EditOutlined,
 } from '@ant-design/icons';
 import type {
   ChapterInfo,
@@ -59,17 +66,24 @@ const BatchGenerate: React.FC = () => {
   // Step state
   const [currentStep, setCurrentStep] = useState(0);
 
-  // Mode selection: 'new' or 'existing'
-  const [mode, setMode] = useState<'new' | 'existing'>('new');
+  // Mode selection: 'new' (AI generate chapters) or 'existing' (use cached) or 'manual' (user input)
+  const [mode, setMode] = useState<'new' | 'existing' | 'manual'>('new');
+
+  // Chapter input mode for new courses: 'ai' or 'manual'
+  const [chapterInputMode, setChapterInputMode] = useState<'ai' | 'manual'>('ai');
 
   // Step 1: Basic information
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [cachedTemplates, setCachedTemplates] = useState<CourseChapterTemplate[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // Saved form values (preserved across step changes)
+  const [savedFormValues, setSavedFormValues] = useState<any>({});
+
   // Step 2: Chapters
   const [chapters, setChapters] = useState<ChapterInfo[]>([]);
   const [splittingChapters, setSplittingChapters] = useState(false);
+  const [totalLessons, setTotalLessons] = useState(0);
 
   // Step 3: Progress
   const [batchTask, setBatchTask] = useState<BatchTask | null>(null);
@@ -126,50 +140,48 @@ const BatchGenerate: React.FC = () => {
     if (selected) {
       // Get current template_id to preserve it
       const currentTemplateId = form.getFieldValue('template_id');
-      console.log('🔍 [handleSelectCachedTemplate] 选择课程章节模板:', selected.course_name);
-      console.log('🔍 [handleSelectCachedTemplate] 当前教案模板ID:', currentTemplateId);
 
       // Prepare form values
       const formValues: any = {
         course_name: selected.course_name,
         subject: selected.subject,
         grade: selected.grade,
-        start_week: selected.start_week,
-        end_week: selected.end_week,
+        total_hours: selected.total_hours,
+        hours_per_lesson: selected.hours_per_lesson || 2,
       };
 
       // Only include template_id if it has a value (to preserve user's selection)
       if (currentTemplateId) {
         formValues.template_id = currentTemplateId;
-        console.log('🔍 [handleSelectCachedTemplate] 保留教案模板ID:', currentTemplateId);
-      } else {
-        console.log('🔍 [handleSelectCachedTemplate] 当前无教案模板，不设置template_id字段');
       }
 
       // Auto-fill form fields
       form.setFieldsValue(formValues);
 
-      console.log('🔍 [handleSelectCachedTemplate] setFieldsValue完成后，template_id =', form.getFieldValue('template_id'));
-
       // Load chapters but stay on step 1 to let user select lesson plan template
       setChapters(selected.chapters);
+      setTotalLessons(selected.chapters.length);
 
       if (currentTemplateId) {
-        message.success(`已加载 ${selected.course_name} 的 ${selected.chapters.length} 个教学周次`);
+        message.success(`已加载 ${selected.course_name} 的 ${selected.chapters.length} 份教案章节`);
       } else {
-        message.success(`已加载 ${selected.course_name} 的 ${selected.chapters.length} 个教学周次，请选择教案模板后继续`);
+        message.success(`已加载 ${selected.course_name} 的 ${selected.chapters.length} 份教案章节，请选择教案模板后继续`);
       }
     }
   };
 
   // Step 1: Submit basic info and split chapters
   const handleSplitChapters = async (values: any) => {
+    // Save form values before switching step
+    setSavedFormValues(values);
+
     const request: ChapterSplitRequest = {
       course_name: values.course_name,
       subject: values.subject,
       grade: values.grade,
-      start_week: values.start_week,
-      end_week: values.end_week,
+      total_hours: values.total_hours,
+      hours_per_lesson: values.hours_per_lesson || 2,
+      chapters_input: chapterInputMode === 'manual' ? values.chapters_input : undefined,
       additional_info: values.additional_info,
     };
 
@@ -177,10 +189,12 @@ const BatchGenerate: React.FC = () => {
     try {
       const response = await batchApi.splitChapters(request);
       setChapters(response.chapters);
+      setTotalLessons(response.total_lessons);
       setCurrentStep(1);
-      message.success(`成功拆分为 ${response.chapters.length} 个教学周次`);
+      const numDocs = Math.ceil(response.total_lessons / 2);
+      message.success(`成功生成 ${response.total_lessons} 份教案（${numDocs} 个文档）`);
     } catch (error: any) {
-      message.error(error.message || '章节拆分失败');
+      message.error(error.message || '章节生成失败');
     } finally {
       setSplittingChapters(false);
     }
@@ -188,14 +202,11 @@ const BatchGenerate: React.FC = () => {
 
   // Step 2: Create batch task
   const handleCreateBatchTask = async () => {
-    const values = form.getFieldsValue();
-    console.log('🔍 [handleCreateBatchTask] 开始创建批量任务');
-    console.log('🔍 [handleCreateBatchTask] 表单值:', values);
-    console.log('🔍 [handleCreateBatchTask] template_id =', values.template_id);
+    // Use saved form values instead of form.getFieldsValue()
+    const values = savedFormValues;
 
     // Validate required fields
     if (!values.template_id) {
-      console.log('❌ [handleCreateBatchTask] template_id为空，显示错误');
       message.error('请选择教案模板');
       return;
     }
@@ -205,13 +216,13 @@ const BatchGenerate: React.FC = () => {
       return;
     }
 
-    if (!values.start_week || !values.end_week) {
-      message.error('请填写起始和结束周次');
+    if (!values.total_hours) {
+      message.error('请填写总课时数');
       return;
     }
 
     if (!chapters || chapters.length === 0) {
-      message.error('章节信息为空，请先拆分章节或选择已有模板');
+      message.error('章节信息为空，请先生成章节或选择已有模板');
       return;
     }
 
@@ -220,13 +231,11 @@ const BatchGenerate: React.FC = () => {
       subject: values.subject,
       grade: values.grade,
       template_id: values.template_id,
-      start_week: values.start_week,
-      end_week: values.end_week,
+      total_hours: values.total_hours,
+      hours_per_lesson: values.hours_per_lesson || 2,
       chapters: chapters,
       additional_requirements: values.additional_requirements,
     };
-
-    console.log('Creating batch task with request:', request);
 
     setLoading(true);
     try {
@@ -235,7 +244,6 @@ const BatchGenerate: React.FC = () => {
       setCurrentStep(2);
       message.success('批量任务已创建，正在后台生成...');
     } catch (error: any) {
-      console.error('Failed to create batch task:', error);
       message.error(error.message || '创建任务失败');
     } finally {
       setLoading(false);
@@ -245,11 +253,11 @@ const BatchGenerate: React.FC = () => {
   // Chapter table columns
   const chapterColumns = [
     {
-      title: '周次',
-      dataIndex: 'week',
-      key: 'week',
+      title: '序号',
+      dataIndex: 'lesson_number',
+      key: 'lesson_number',
       width: 80,
-      render: (week: number) => `第${week}周`,
+      render: (num: number) => `教案${num}`,
     },
     {
       title: '课题',
@@ -288,7 +296,7 @@ const BatchGenerate: React.FC = () => {
       key: 'key_concepts',
       render: (concepts: string[]) => (
         <Space wrap>
-          {concepts.map((concept, idx) => (
+          {concepts?.map((concept, idx) => (
             <Tag key={idx} color="blue">{concept}</Tag>
           ))}
         </Space>
@@ -350,8 +358,8 @@ const BatchGenerate: React.FC = () => {
             layout="vertical"
             onFinish={handleSplitChapters}
             initialValues={{
-              start_week: 1,
-              end_week: 16,
+              total_hours: 64,
+              hours_per_lesson: 2,
             }}
             preserve={true}
           >
@@ -359,7 +367,11 @@ const BatchGenerate: React.FC = () => {
             <Form.Item label="选择方式">
               <Radio.Group
                 value={mode}
-                onChange={(e) => setMode(e.target.value)}
+                onChange={(e) => {
+                  setMode(e.target.value);
+                  setChapters([]);
+                  setTotalLessons(0);
+                }}
                 size="large"
               >
                 <Radio.Button value="new">
@@ -383,7 +395,7 @@ const BatchGenerate: React.FC = () => {
                       (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                     }
                     options={cachedTemplates.map((t) => ({
-                      label: `${t.course_name} - ${t.subject} - ${t.grade} (第${t.start_week}-${t.end_week}周, 使用${t.use_count}次)`,
+                      label: `${t.course_name} - ${t.subject} - ${t.grade} (${t.total_hours}课时, ${t.chapters?.length || 0}份教案, 使用${t.use_count}次)`,
                       value: t.id,
                     }))}
                     onChange={handleSelectCachedTemplate}
@@ -403,7 +415,7 @@ const BatchGenerate: React.FC = () => {
               label="课程名称"
               rules={[{ required: true, message: '请输入课程名称' }]}
             >
-              <Input placeholder="例如：信息安全技术基础" size="large" disabled={mode === 'existing'} />
+              <Input placeholder="例如：Java程序设计" size="large" disabled={mode === 'existing' && chapters.length > 0} />
             </Form.Item>
 
             <Space style={{ width: '100%' }} size="large">
@@ -417,7 +429,7 @@ const BatchGenerate: React.FC = () => {
                   placeholder="选择学科"
                   options={SUBJECT_OPTIONS.map((s) => ({ label: s, value: s }))}
                   showSearch
-                  disabled={mode === 'existing'}
+                  disabled={mode === 'existing' && chapters.length > 0}
                 />
               </Form.Item>
 
@@ -431,7 +443,7 @@ const BatchGenerate: React.FC = () => {
                   placeholder="选择年级"
                   options={GRADE_OPTIONS.map((g) => ({ label: g, value: g }))}
                   showSearch
-                  disabled={mode === 'existing'}
+                  disabled={mode === 'existing' && chapters.length > 0}
                 />
               </Form.Item>
 
@@ -444,10 +456,6 @@ const BatchGenerate: React.FC = () => {
                 <Select
                   placeholder="选择模板"
                   showSearch
-                  onChange={(value) => {
-                    console.log('🔍 [教案模板Select] 用户选择了教案模板:', value);
-                    console.log('🔍 [教案模板Select] 模板名称:', templates.find(t => t.id === value)?.name);
-                  }}
                 >
                   {templates.map((t) => (
                     <Select.Option key={t.id} value={t.id}>
@@ -458,27 +466,84 @@ const BatchGenerate: React.FC = () => {
               </Form.Item>
             </Space>
 
-            <Space size="large">
+            <Space size="large" align="start">
               <Form.Item
-                name="start_week"
-                label="起始周次"
-                rules={[{ required: true, type: 'number', min: 1 }]}
+                name="total_hours"
+                label="总课时数"
+                rules={[{ required: true, type: 'number', min: 2, message: '请输入总课时数' }]}
               >
-                <InputNumber min={1} max={30} disabled={mode === 'existing'} />
+                <InputNumber
+                  min={2}
+                  max={200}
+                  step={2}
+                  disabled={mode === 'existing' && chapters.length > 0}
+                  addonAfter="课时"
+                  style={{ width: 150 }}
+                />
               </Form.Item>
 
               <Form.Item
-                name="end_week"
-                label="结束周次"
+                name="hours_per_lesson"
+                label="每份教案课时"
                 rules={[{ required: true, type: 'number', min: 1 }]}
               >
-                <InputNumber min={1} max={30} disabled={mode === 'existing'} />
+                <InputNumber
+                  min={1}
+                  max={4}
+                  disabled={mode === 'existing' && chapters.length > 0}
+                  addonAfter="课时"
+                  style={{ width: 150 }}
+                />
               </Form.Item>
 
-              <Text type="secondary" style={{ marginTop: 30 }}>
-                将生成 {(form.getFieldValue('end_week') || 16) - (form.getFieldValue('start_week') || 1) + 1} 个教案
-              </Text>
+              <Form.Item label="生成统计" style={{ marginTop: 0 }}>
+                <Alert
+                  message={(() => {
+                    const totalHours = form.getFieldValue('total_hours') || 64;
+                    const hoursPerLesson = form.getFieldValue('hours_per_lesson') || 2;
+                    const numLessons = Math.floor(totalHours / hoursPerLesson);
+                    const numDocs = Math.ceil(numLessons / 2);
+                    return `将生成 ${numLessons} 份教案，共 ${numDocs} 个文档`;
+                  })()}
+                  type="info"
+                  showIcon
+                />
+              </Form.Item>
             </Space>
+
+            {/* Chapter input mode for new courses */}
+            {mode === 'new' && (
+              <>
+                <Divider orientation="left">章节内容</Divider>
+                <Form.Item label="章节来源">
+                  <Radio.Group
+                    value={chapterInputMode}
+                    onChange={(e) => setChapterInputMode(e.target.value)}
+                  >
+                    <Radio value="ai">
+                      <FileTextOutlined /> AI自动生成章节
+                    </Radio>
+                    <Radio value="manual">
+                      <EditOutlined /> 手动输入章节标题
+                    </Radio>
+                  </Radio.Group>
+                </Form.Item>
+
+                {chapterInputMode === 'manual' && (
+                  <Form.Item
+                    name="chapters_input"
+                    label="章节标题（每行一个）"
+                    rules={[{ required: true, message: '请输入章节标题' }]}
+                    extra={`请输入 ${Math.floor((form.getFieldValue('total_hours') || 64) / (form.getFieldValue('hours_per_lesson') || 2))} 个章节标题，每行一个`}
+                  >
+                    <TextArea
+                      rows={10}
+                      placeholder={`第一章：Java语言概述\n第二章：Java基本语法\n第三章：面向对象编程基础\n...`}
+                    />
+                  </Form.Item>
+                )}
+              </>
+            )}
 
             <Form.Item name="additional_info" label="补充说明（可选）">
               <TextArea
@@ -504,7 +569,7 @@ const BatchGenerate: React.FC = () => {
                     loading={splittingChapters}
                     icon={<FileTextOutlined />}
                   >
-                    {splittingChapters ? 'AI拆分中...' : '下一步：AI拆分章节'}
+                    {splittingChapters ? '生成中...' : (chapterInputMode === 'ai' ? '下一步：AI生成章节' : '下一步：解析章节')}
                   </Button>
                   <Button size="large" onClick={() => navigate('/')}>
                     取消
@@ -523,24 +588,20 @@ const BatchGenerate: React.FC = () => {
                     onClick={() => {
                       // Validate required fields
                       const values = form.getFieldsValue();
-                      console.log('🔍 [下一步按钮] 点击下一步按钮');
-                      console.log('🔍 [下一步按钮] 当前表单所有值:', values);
-                      console.log('🔍 [下一步按钮] template_id =', values.template_id);
 
                       if (!values.template_id) {
-                        console.log('❌ [下一步按钮] template_id为空，阻止进入步骤2');
                         message.error('请先选择教案模板');
                         return;
                       }
 
-                      form.validateFields(['template_id', 'course_name', 'subject', 'grade', 'start_week', 'end_week'])
+                      form.validateFields(['template_id', 'course_name', 'subject', 'grade', 'total_hours', 'hours_per_lesson'])
                         .then(() => {
-                          console.log('✅ [下一步按钮] 验证通过，进入步骤2');
+                          // Save form values before switching step
+                          setSavedFormValues(values);
                           setCurrentStep(1);
                           message.success('进入章节确认步骤');
                         })
-                        .catch((errorInfo) => {
-                          console.error('❌ [下一步按钮] 验证失败:', errorInfo);
+                        .catch(() => {
                           message.error('请完成必填项');
                         });
                     }}
@@ -559,18 +620,11 @@ const BatchGenerate: React.FC = () => {
         {/* Step 2: Review Chapters */}
         {currentStep === 1 && (
           <div>
-            {(() => {
-              const currentTemplateId = form.getFieldValue('template_id');
-              console.log('🔍 [步骤2渲染] 当前template_id =', currentTemplateId);
-              console.log('🔍 [步骤2渲染] 所有表单值:', form.getFieldsValue());
-              return null;
-            })()}
-
             <Title level={4}>
-              已准备 {chapters.length} 个教学周次，请审核并修改：
+              已准备 {chapters.length} 份教案，请审核并修改：
             </Title>
             <Paragraph type="secondary">
-              您可以直接在表格中编辑课题和内容概述。每个教案固定为2课时。
+              您可以直接在表格中编辑课题和内容概述。每份教案 {savedFormValues.hours_per_lesson || 2} 课时，每个文档包含2份教案。
             </Paragraph>
 
             {/* Show course info and template selection */}
@@ -579,18 +633,18 @@ const BatchGenerate: React.FC = () => {
                 <div>
                   <Text strong>课程信息：</Text>
                   <Text style={{ marginLeft: 8 }}>
-                    {form.getFieldValue('course_name')} - {form.getFieldValue('subject')} - {form.getFieldValue('grade')}
+                    {savedFormValues.course_name} - {savedFormValues.subject} - {savedFormValues.grade}
                   </Text>
                   <Text style={{ marginLeft: 16 }}>
-                    (第{form.getFieldValue('start_week')}-{form.getFieldValue('end_week')}周)
+                    （{savedFormValues.total_hours}课时，{chapters.length}份教案，{Math.ceil(chapters.length / 2)}个文档）
                   </Text>
                 </div>
 
                 <div>
                   <Text strong>教案模板：</Text>
-                  {form.getFieldValue('template_id') ? (
+                  {savedFormValues.template_id ? (
                     <Text style={{ marginLeft: 8, color: '#52c41a' }}>
-                      ✓ {templates.find(t => t.id === form.getFieldValue('template_id'))?.name || '已选择'}
+                      ✓ {templates.find(t => t.id === savedFormValues.template_id)?.name || '已选择'}
                     </Text>
                   ) : (
                     <Text style={{ marginLeft: 8, color: '#ff4d4f' }}>
@@ -604,7 +658,7 @@ const BatchGenerate: React.FC = () => {
             <Table
               columns={chapterColumns}
               dataSource={chapters}
-              rowKey="week"
+              rowKey="lesson_number"
               pagination={false}
               scroll={{ y: 400 }}
               style={{ marginTop: 16 }}
@@ -618,7 +672,7 @@ const BatchGenerate: React.FC = () => {
                   onClick={handleCreateBatchTask}
                   loading={loading}
                   icon={<CheckCircleOutlined />}
-                  disabled={!form.getFieldValue('template_id')}
+                  disabled={!savedFormValues.template_id}
                 >
                   确认并开始生成
                 </Button>

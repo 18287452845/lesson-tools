@@ -1,5 +1,11 @@
 """
 Batch task processor for generating multiple lesson plans.
+
+Updated to support hours-based generation:
+- Generate based on total hours (64, 72, etc.)
+- Each lesson plan = 2 hours (configurable)
+- 2 lesson plans per document
+- File naming: course_name_01.docx, course_name_02.docx, etc.
 """
 import json
 import logging
@@ -28,7 +34,8 @@ class BatchTaskProcessor:
 
     Handles:
     - Loading batch tasks from database
-    - Generating lesson plans sequentially
+    - Grouping lessons by document (2 lessons per document)
+    - Generating lesson plans with sequential numbering
     - Rendering to Word documents
     - Updating progress in database
     - Packaging results into ZIP
@@ -40,6 +47,7 @@ class BatchTaskProcessor:
         provider: Optional[str] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        hours_per_lesson: int = 2,
     ):
         """
         Initialize the batch processor.
@@ -48,10 +56,13 @@ class BatchTaskProcessor:
             provider: AI provider name
             api_key: API key for the provider
             model: Model name to use
+            hours_per_lesson: Hours per lesson plan (default 2)
         """
         self.provider = provider
         self.api_key = api_key
         self.model = model
+        self.hours_per_lesson = hours_per_lesson
+        self.default_duration = f"{hours_per_lesson}课时"
         self.ai_generator = AIGenerator(provider, api_key, model)
         self.document_renderer = DocumentRenderer()
 
@@ -64,9 +75,11 @@ class BatchTaskProcessor:
 
         This method runs the entire batch generation workflow:
         1. Load task from database
-        2. Generate each lesson plan sequentially
-        3. Package all into ZIP
-        4. Update task status
+        2. Group lessons by document (2 lessons per document)
+        3. Generate lesson plans with sequential numbering
+        4. Render combined documents
+        5. Package all into ZIP
+        6. Update task status
         """
         try:
             logger.info(f"Starting batch task processing: {batch_task_id}")
@@ -82,46 +95,61 @@ class BatchTaskProcessor:
             # Parse chapters
             chapters = json.loads(task["chapters"])
 
-            # Generate each lesson plan
+            # Group lessons by document (2 lessons per document)
+            document_groups = self._group_lessons_by_document(chapters)
+
+            # Track progress
+            total_lesson_plans = len(chapters)
+            completed_lesson_plans = 0
+
+            # Generate documents
             generated_files = []
-            for idx, chapter_data in enumerate(chapters):
+            for doc_number, doc_chapters in enumerate(document_groups, start=1):
+                # Check if task was cancelled
+                if await self._is_task_cancelled(batch_task_id):
+                    logger.info(f"Batch task {batch_task_id} was cancelled by user")
+                    await self._update_task_status(batch_task_id, "cancelled")
+                    return
+
                 try:
-                    chapter = ChapterInfo(**chapter_data)
                     logger.info(
-                        f"Processing chapter {idx + 1}/{len(chapters)}: "
-                        f"Week {chapter.week} - {chapter.topic}"
+                        f"Processing document {doc_number} with {len(doc_chapters)} lessons"
                     )
 
-                    file_path = await self._generate_single_lesson(
+                    file_path = await self._generate_document(
                         batch_task_id=batch_task_id,
-                        chapter=chapter,
+                        document_number=doc_number,
+                        chapters_data=doc_chapters,
                         template_id=task["template_id"],
                         subject=task["subject"],
                         grade=task["grade"],
+                        course_name=task["course_name"],
                     )
 
                     generated_files.append({
-                        "week": chapter.week,
-                        "topic": chapter.topic,
+                        "doc_number": doc_number,
+                        "topics": [c["topic"] for c in doc_chapters],
                         "file_path": file_path,
                     })
 
                     # Update progress
+                    completed_lesson_plans += len(doc_chapters)
                     await self._update_task_progress(
                         batch_task_id,
-                        completed=idx + 1,
-                        total=len(chapters),
+                        completed=completed_lesson_plans,
+                        total=total_lesson_plans,
                     )
 
                 except Exception as e:
                     logger.error(
-                        f"Failed to generate lesson for week {chapter.week}: {str(e)}",
+                        f"Failed to generate document {doc_number}: {str(e)}",
                         exc_info=True
                     )
-                    # Update failed count
-                    await self._increment_failed_count(batch_task_id)
+                    # Increment failed count for each failed lesson in this document
+                    for _ in doc_chapters:
+                        await self._increment_failed_count(batch_task_id)
 
-                    # Continue with next chapter (don't abort entire batch)
+                    # Continue with next document (don't abort entire batch)
                     continue
 
             # Package all files into ZIP
@@ -142,7 +170,7 @@ class BatchTaskProcessor:
 
                 logger.info(
                     f"Batch task {batch_task_id} completed successfully. "
-                    f"Generated {len(generated_files)} lesson plans."
+                    f"Generated {len(generated_files)} documents."
                 )
             else:
                 # No files generated - all failed
@@ -164,72 +192,53 @@ class BatchTaskProcessor:
                 error_message=str(e),
             )
 
-    async def _generate_single_lesson(
+    def _group_lessons_by_document(
+        self,
+        chapters: List[Dict],
+        lessons_per_doc: int = 2
+    ) -> List[List[Dict]]:
+        """
+        Group lessons into documents (default 2 lessons per document).
+
+        Args:
+            chapters: List of chapter data dictionaries
+            lessons_per_doc: Number of lesson plans per document (default 2)
+
+        Returns:
+            List of chapter groups, each group becomes one document
+        """
+        groups = []
+        for i in range(0, len(chapters), lessons_per_doc):
+            groups.append(chapters[i:i + lessons_per_doc])
+        return groups
+
+    async def _generate_document(
         self,
         batch_task_id: str,
-        chapter: ChapterInfo,
+        document_number: int,
+        chapters_data: List[Dict],
         template_id: str,
         subject: str,
         grade: str,
+        course_name: str,
     ) -> str:
         """
-        Generate a single lesson plan.
+        Generate a document containing lesson plans.
 
         Args:
             batch_task_id: ID of the batch task
-            chapter: Chapter information
+            document_number: Document sequence number (1, 2, 3...)
+            chapters_data: List of chapter data for this document (usually 2)
             template_id: Template to use
             subject: Subject area
             grade: Grade level
+            course_name: Course name for file naming
 
         Returns:
             Path to the generated .docx file
         """
-        # Create lesson plan input
-        lesson_input = LessonPlanInput(
-            template_id=template_id,
-            subject=subject,
-            grade=grade,
-            topic=chapter.topic,
-            duration="2课时",  # Fixed at 2 class hours
-            prior_knowledge=chapter.content_summary,
-            focus_areas=", ".join(chapter.key_concepts),
-        )
-
-        # Generate content using AI
-        logger.debug(f"Generating AI content for: {chapter.topic}")
-        generated_content = await self.ai_generator.generate_lesson_plan(lesson_input)
-
-        # Create lesson plan record in database
-        lesson_plan_id = str(uuid4())
-        db = await get_db()
-
-        await db.execute(
-            """
-            INSERT INTO lesson_plans (
-                id, template_id, title, subject, grade, topic,
-                input_data, generated_content, status,
-                batch_task_id, week_number, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                lesson_plan_id,
-                template_id,
-                f"第{chapter.week:02d}周 - {chapter.topic}",
-                subject,
-                grade,
-                chapter.topic,
-                json.dumps(lesson_input.model_dump(), ensure_ascii=False),
-                json.dumps(generated_content.model_dump(), ensure_ascii=False),
-                "generated",
-                batch_task_id,
-                chapter.week,
-                datetime.now().isoformat(),
-            ),
-            commit=True,
-        )
-
         # Get template file path from database
+        db = await get_db()
         template_row = await db.fetch_one(
             "SELECT file_path FROM templates WHERE id = ?",
             (template_id,)
@@ -239,55 +248,105 @@ class BatchTaskProcessor:
 
         template_path = template_row["file_path"]
 
-        # Render to Word document
-        logger.debug(f"Rendering document for: {chapter.topic}")
+        # Generate content for each chapter
+        lesson_plans_data = []
+        for chapter_data in chapters_data:
+            chapter = ChapterInfo(**chapter_data)
 
-        # Prepare lesson plan data for rendering
-        lesson_plan_data = {
-            **lesson_input.model_dump(),
-            **generated_content.model_dump(),
-            "week_number": chapter.week,
-        }
+            # Create lesson plan input
+            lesson_input = LessonPlanInput(
+                template_id=template_id,
+                subject=subject,
+                grade=grade,
+                topic=chapter.topic,
+                duration=self.default_duration,
+                prior_knowledge=chapter.content_summary,
+                focus_areas=", ".join(chapter.key_concepts),
+            )
 
-        output_path = self.document_renderer.render_lesson_plan(
+            # Generate content using AI
+            logger.debug(f"Generating AI content for: {chapter.topic}")
+            generated_content = await self.ai_generator.generate_lesson_plan(lesson_input)
+
+            # Create lesson plan record in database
+            lesson_plan_id = str(uuid4())
+            await db.execute(
+                """
+                INSERT INTO lesson_plans (
+                    id, template_id, title, subject, grade, topic,
+                    input_data, generated_content, status,
+                    batch_task_id, lesson_number, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    lesson_plan_id,
+                    template_id,
+                    f"教案{chapter.lesson_number}：{chapter.topic}",
+                    subject,
+                    grade,
+                    chapter.topic,
+                    json.dumps(lesson_input.model_dump(), ensure_ascii=False),
+                    json.dumps(generated_content.model_dump(), ensure_ascii=False),
+                    "generated",
+                    batch_task_id,
+                    chapter.lesson_number,
+                    datetime.now().isoformat(),
+                ),
+                commit=True,
+            )
+
+            # Prepare lesson plan data for rendering
+            lesson_plan_data = {
+                **lesson_input.model_dump(),
+                **generated_content.model_dump(),
+                "lesson_number": chapter.lesson_number,
+            }
+            lesson_plans_data.append(lesson_plan_data)
+
+            # Create batch_lesson_plans record
+            batch_lesson_plan_id = str(uuid4())
+            await db.execute(
+                """
+                INSERT INTO batch_lesson_plans (
+                    id, batch_task_id, lesson_plan_id, lesson_number,
+                    topic, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    batch_lesson_plan_id,
+                    batch_task_id,
+                    lesson_plan_id,
+                    chapter.lesson_number,
+                    chapter.topic,
+                    "completed",
+                    datetime.now().isoformat(),
+                ),
+                commit=True,
+            )
+
+        # Render combined document with all lesson plans
+        logger.debug(f"Rendering document {document_number}")
+        output_path = self.document_renderer.render_lesson_plans_document(
             template_path=template_path,
-            lesson_plan_data=lesson_plan_data,
+            lesson_plans_data=lesson_plans_data,
+            course_name=course_name,
+            document_number=document_number,
         )
 
-        # Update lesson plan with output file path
+        # Update file path in batch_lesson_plans records
+        lesson_numbers = [c["lesson_number"] for c in chapters_data]
+        placeholders = ",".join(["?"] * len(lesson_numbers))
         await db.execute(
-            """
-            UPDATE lesson_plans
-            SET output_file_path = ?, updated_at = ?
-            WHERE id = ?
+            f"""
+            UPDATE batch_lesson_plans
+            SET file_path = ?
+            WHERE batch_task_id = ? AND lesson_number IN ({placeholders})
             """,
-            (output_path, datetime.now().isoformat(), lesson_plan_id),
+            (output_path, batch_task_id, *lesson_numbers),
             commit=True,
         )
 
-        # Create batch_lesson_plans record
-        batch_lesson_plan_id = str(uuid4())
-        await db.execute(
-            """
-            INSERT INTO batch_lesson_plans (
-                id, batch_task_id, lesson_plan_id, week_number,
-                topic, status, file_path, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                batch_lesson_plan_id,
-                batch_task_id,
-                lesson_plan_id,
-                chapter.week,
-                chapter.topic,
-                "completed",
-                output_path,
-                datetime.now().isoformat(),
-            ),
-            commit=True,
-        )
-
-        logger.info(f"Successfully generated lesson plan: {output_path}")
+        logger.info(f"Successfully generated document {document_number}: {output_path}")
         return output_path
 
     async def _pack_zip(
@@ -416,6 +475,15 @@ class BatchTaskProcessor:
             commit=True,
         )
         logger.debug(f"Incremented failed count for {batch_task_id}")
+
+    async def _is_task_cancelled(self, batch_task_id: str) -> bool:
+        """Check if the task has been cancelled by user."""
+        db = await get_db()
+        row = await db.fetch_one(
+            "SELECT status FROM batch_tasks WHERE id = ?",
+            (batch_task_id,)
+        )
+        return row is not None and row["status"] == "cancelled"
 
 
 async def process_batch_task(

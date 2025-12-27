@@ -15,11 +15,16 @@ interface GeneratorState {
   isRegenerating: boolean;
   regeneratingField: string | null;
 
+  // Real-time progress
+  generationProgress: number;
+  generationMessage: string;
+
   // Error state
   error: string | null;
 
   // Actions
   generateLessonPlan: (input: LessonPlanInput) => Promise<void>;
+  generateLessonPlanStream: (input: LessonPlanInput) => Promise<void>;
   regenerateField: (fieldName: string, additionalInstruction?: string) => Promise<void>;
   updateField: (fieldName: string, content: any) => Promise<void>;
   exportLessonPlan: () => Promise<Blob>;
@@ -33,7 +38,96 @@ export const useGeneratorStore = create<GeneratorState>((set, get) => ({
   isGenerating: false,
   isRegenerating: false,
   regeneratingField: null,
+  generationProgress: 0,
+  generationMessage: '',
   error: null,
+
+  generateLessonPlanStream: async (input) => {
+    set({
+      isGenerating: true,
+      error: null,
+      generationProgress: 0,
+      generationMessage: '准备生成教案...'
+    });
+
+    try {
+      const response = await fetch('http://localhost:8000/api/generate/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(input),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error('无法读取响应流');
+      }
+
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              if (data.type === 'status') {
+                set({
+                  generationProgress: data.progress || 0,
+                  generationMessage: data.message,
+                });
+              } else if (data.type === 'complete') {
+                set({
+                  currentLessonPlan: {
+                    id: data.data.id,
+                    template_id: data.data.template_id,
+                    input,
+                    content: data.data.content,
+                    status: data.data.status,
+                    created_at: data.data.created_at,
+                  },
+                  generatedContent: data.data.content,
+                  isGenerating: false,
+                  generationProgress: 100,
+                  generationMessage: data.message,
+                });
+                return;
+              } else if (data.type === 'error') {
+                set({
+                  error: data.message,
+                  isGenerating: false,
+                });
+                return;
+              }
+            } catch (err) {
+              console.error('Error parsing SSE data:', err);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : '生成教案失败',
+        isGenerating: false,
+      });
+      throw error;
+    }
+  },
 
   generateLessonPlan: async (input) => {
     set({ isGenerating: true, error: null });

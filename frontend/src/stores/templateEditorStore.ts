@@ -5,6 +5,7 @@
  */
 import { create } from 'zustand'
 import axios from 'axios'
+import type { FieldConfig } from '@/types'
 
 const API_BASE = 'http://127.0.0.1:8000/api'
 
@@ -41,6 +42,12 @@ export interface TemplateEditorState {
   // Jinja2 变量
   variables: JinjaVariable[]
 
+  // 字段配置
+  fieldsConfig: FieldConfig[]
+  standardFields: FieldConfig[]
+  isFieldsDirty: boolean
+  isFieldsSaving: boolean
+
   // 状态标识
   isLoading: boolean
   isSaving: boolean
@@ -58,6 +65,14 @@ export interface TemplateEditorState {
   validateJinja: () => Promise<{ valid: boolean; errors: string[] }>
   generatePreview: (sampleData: Record<string, any>) => Promise<void>
   resetEditor: () => void
+
+  // 字段管理 Actions
+  loadFieldsConfig: () => Promise<void>
+  loadStandardFields: () => Promise<void>
+  addField: (field: FieldConfig) => void
+  updateField: (name: string, updates: Partial<FieldConfig>) => void
+  removeField: (name: string) => void
+  saveFieldsConfig: () => Promise<void>
 }
 
 export const useTemplateEditorStore = create<TemplateEditorState>((set, get) => ({
@@ -69,6 +84,10 @@ export const useTemplateEditorStore = create<TemplateEditorState>((set, get) => 
   metadata: null,
   messages: [],
   variables: [],
+  fieldsConfig: [],
+  standardFields: [],
+  isFieldsDirty: false,
+  isFieldsSaving: false,
   isLoading: false,
   isSaving: false,
   isDirty: false,
@@ -255,6 +274,10 @@ export const useTemplateEditorStore = create<TemplateEditorState>((set, get) => 
       metadata: null,
       messages: [],
       variables: [],
+      fieldsConfig: [],
+      standardFields: [],
+      isFieldsDirty: false,
+      isFieldsSaving: false,
       isLoading: false,
       isSaving: false,
       isDirty: false,
@@ -262,5 +285,90 @@ export const useTemplateEditorStore = create<TemplateEditorState>((set, get) => 
       previewHtml: null,
       isPreviewLoading: false,
     })
+  },
+
+  // 加载字段配置
+  loadFieldsConfig: async () => {
+    const { templateId } = get()
+    if (!templateId) return
+
+    try {
+      const response = await axios.get(`${API_BASE}/templates/${templateId}/fields`)
+      set({
+        fieldsConfig: response.data.fields || [],
+        isFieldsDirty: false,
+      })
+    } catch (error: any) {
+      console.error('加载字段配置失败:', error)
+    }
+  },
+
+  // 加载标准字段
+  loadStandardFields: async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/templates/standard-fields`)
+      set({ standardFields: response.data.fields || [] })
+    } catch (error: any) {
+      console.error('加载标准字段失败:', error)
+    }
+  },
+
+  // 添加字段
+  addField: (field: FieldConfig) => {
+    const { fieldsConfig } = get()
+    // 检查是否已存在
+    if (fieldsConfig.some(f => f.name === field.name)) {
+      return
+    }
+    set({
+      fieldsConfig: [...fieldsConfig, field],
+      isFieldsDirty: true,
+    })
+  },
+
+  // 更新字段
+  updateField: (name: string, updates: Partial<FieldConfig>) => {
+    const { fieldsConfig } = get()
+    set({
+      fieldsConfig: fieldsConfig.map(f =>
+        f.name === name ? { ...f, ...updates } : f
+      ),
+      isFieldsDirty: true,
+    })
+  },
+
+  // 删除字段
+  removeField: (name: string) => {
+    const { fieldsConfig } = get()
+    set({
+      fieldsConfig: fieldsConfig.filter(f => f.name !== name),
+      isFieldsDirty: true,
+    })
+  },
+
+  // 保存字段配置
+  saveFieldsConfig: async () => {
+    const { templateId, fieldsConfig } = get()
+    if (!templateId) {
+      throw new Error('未加载模板')
+    }
+
+    set({ isFieldsSaving: true })
+
+    try {
+      await axios.put(
+        `${API_BASE}/templates/${templateId}/fields`,
+        { fields: fieldsConfig },
+        { headers: { 'Content-Type': 'application/json' } }
+      )
+      set({
+        isFieldsDirty: false,
+        isFieldsSaving: false,
+      })
+    } catch (error: any) {
+      console.error('保存字段配置失败:', error)
+      set({ isFieldsSaving: false })
+      throw error
+    }
   },
 }))

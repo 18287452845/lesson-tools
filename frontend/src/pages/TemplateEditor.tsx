@@ -41,6 +41,7 @@ import TipTapEditor from '../components/Editor/TipTapEditor'
 import JinjaInsertModal from '../components/Editor/JinjaInsertModal'
 import PreviewPanel from '../components/Editor/PreviewPanel'
 import VersionHistory from '../components/Editor/VersionHistory'
+import FieldMappingPanel from '../components/Editor/FieldMappingPanel'
 import type { Editor } from '@tiptap/react'
 import axios from 'axios'
 
@@ -296,7 +297,7 @@ const TemplateEditor: React.FC = () => {
               icon={<TagsOutlined />}
               onClick={() => setVariablesVisible(true)}
             >
-              变量列表 ({variables.length})
+              字段配置
             </Button>
             <Button
               icon={<CheckCircleOutlined />}
@@ -407,29 +408,11 @@ const TemplateEditor: React.FC = () => {
         )}
       </Drawer>
 
-      {/* 变量列表抽屉 */}
-      <Drawer
-        title="Jinja2 变量列表"
-        placement="right"
+      {/* 字段配置面板 */}
+      <FieldMappingPanel
+        visible={variablesVisible}
         onClose={() => setVariablesVisible(false)}
-        open={variablesVisible}
-        width={400}
-      >
-        <Space direction="vertical" style={{ width: '100%' }}>
-          {variables.length === 0 ? (
-            <Alert message="未检测到 Jinja2 变量" type="info" />
-          ) : (
-            variables.map((v, idx) => (
-              <Card key={idx} size="small">
-                <Space>
-                  <Tag color="blue">{v.type}</Tag>
-                  <code>{v.name}</code>
-                </Space>
-              </Card>
-            ))
-          )}
-        </Space>
-      </Drawer>
+      />
 
       {/* 预览模态框 */}
       <Modal

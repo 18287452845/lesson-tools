@@ -11,6 +11,12 @@ import type {
   ParsedSection,
   SectionEditRequest,
   AIEnhanceRequest,
+  TemplateHtmlResponse,
+  JinjaValidationResult,
+  VersionListResponse,
+  VersionCompareResult,
+  HtmlExportResponse,
+  FieldConfig,
 } from '@/types';
 
 const api = axios.create({
@@ -124,7 +130,7 @@ export const generateApi = {
     fieldName: string,
     additionalInstruction?: string
   ): Promise<{ field_name: string; new_content: any }> => {
-    const response = await api.post(`/${lessonPlanId}/regenerate-field`, null, {
+    const response = await api.post(`/generate/${lessonPlanId}/regenerate-field`, null, {
       params: {
         field_name: fieldName,
         additional_instruction: additionalInstruction,
@@ -141,7 +147,7 @@ export const generateApi = {
     fieldName: string,
     content: string
   ): Promise<void> => {
-    await api.put(`/${lessonPlanId}/content`, {
+    await api.put(`/generate/${lessonPlanId}/content`, {
       field_name: fieldName,
       content,
     });
@@ -275,6 +281,143 @@ export const editApi = {
    */
   getEditHistory: async (documentId: string): Promise<{ document_id: string; edits: any[] }> => {
     const response = await api.get(`/edit/${documentId}/history`);
+    return response.data;
+  },
+};
+
+// ============================================================================
+// Template Editor API
+// ============================================================================
+
+export const templateEditorApi = {
+  /**
+   * Get template HTML content for editing
+   */
+  getTemplateHtml: async (templateId: string): Promise<TemplateHtmlResponse> => {
+    const response = await api.get(`/templates/${templateId}/html`);
+    return response.data;
+  },
+
+  /**
+   * Validate Jinja2 syntax
+   */
+  validateJinja: async (templateId: string, html: string): Promise<JinjaValidationResult> => {
+    const response = await api.post(`/templates/${templateId}/validate-jinja`, { html });
+    return response.data;
+  },
+
+  /**
+   * Save HTML content back to template
+   */
+  saveHtml: async (
+    templateId: string,
+    html: string,
+    metadata?: Record<string, any>
+  ): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post(`/templates/${templateId}/save-html`, { html, metadata });
+    return response.data;
+  },
+
+  /**
+   * Preview HTML with sample data
+   */
+  previewHtml: async (
+    templateId: string,
+    html: string,
+    sampleData: Record<string, any>
+  ): Promise<{ preview_html: string }> => {
+    const response = await api.post(`/templates/${templateId}/preview-html`, {
+      html,
+      sample_data: sampleData,
+    });
+    return response.data;
+  },
+
+  /**
+   * Export HTML as file
+   */
+  exportHtml: async (templateId: string, html: string): Promise<HtmlExportResponse> => {
+    const response = await api.post(`/templates/${templateId}/export/html`, { html });
+    return response.data;
+  },
+
+  /**
+   * Get version history
+   */
+  getVersions: async (templateId: string): Promise<VersionListResponse> => {
+    const response = await api.get(`/templates/${templateId}/versions`);
+    return response.data;
+  },
+
+  /**
+   * Get version content
+   */
+  getVersionContent: async (templateId: string, versionId: string): Promise<{ content: string }> => {
+    const response = await api.get(`/templates/${templateId}/versions/${versionId}`);
+    return response.data;
+  },
+
+  /**
+   * Restore to a specific version
+   */
+  restoreVersion: async (
+    templateId: string,
+    versionId: string
+  ): Promise<{ success: boolean; new_version_id: string; message: string }> => {
+    const response = await api.post(`/templates/${templateId}/versions/${versionId}/restore`);
+    return response.data;
+  },
+
+  /**
+   * Compare two versions
+   */
+  compareVersions: async (
+    templateId: string,
+    versionId1: string,
+    versionId2: string
+  ): Promise<VersionCompareResult> => {
+    const response = await api.post(`/templates/${templateId}/versions/compare`, {
+      version_id_1: versionId1,
+      version_id_2: versionId2,
+    });
+    return response.data;
+  },
+
+  /**
+   * Cleanup old versions
+   */
+  cleanupVersions: async (
+    templateId: string,
+    keepCount: number = 20
+  ): Promise<{ success: boolean; deleted_count: number; message: string }> => {
+    const response = await api.delete(`/templates/${templateId}/versions/cleanup?keep_count=${keepCount}`);
+    return response.data;
+  },
+
+  /**
+   * Get standard field mappings
+   */
+  getStandardFields: async (): Promise<{ fields: FieldConfig[] }> => {
+    const response = await api.get('/templates/standard-fields');
+    return response.data;
+  },
+
+  /**
+   * Update fields configuration
+   */
+  updateFields: async (
+    templateId: string,
+    fields: FieldConfig[]
+  ): Promise<{ success: boolean; fields: FieldConfig[] }> => {
+    const response = await api.put(`/templates/${templateId}/fields`, { fields });
+    return response.data;
+  },
+
+  /**
+   * Get fields configuration
+   */
+  getFields: async (templateId: string): Promise<{ fields: FieldConfig[] }> => {
+    const response = await api.get(`/templates/${templateId}/fields`);
     return response.data;
   },
 };

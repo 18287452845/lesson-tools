@@ -6,9 +6,12 @@ See WORD_EXPORT_FIX.md for details.
 """
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 from docxtpl import DocxTemplate
+from docx import Document
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 
 from ..config import settings
 
@@ -73,6 +76,138 @@ class DocumentRenderer:
 
         # Save the rendered document
         template.save(output_path)
+
+        return output_path
+
+    def render_lesson_plans_document(
+        self,
+        template_path: str,
+        lesson_plans_data: List[Dict[str, Any]],
+        course_name: str,
+        document_number: int,
+    ) -> str:
+        """
+        Render multiple lesson plans into a single document with continuous layout.
+
+        This is used for batch generation where each document contains
+        multiple lesson plans (default 2).
+
+        Args:
+            template_path: Path to the template file
+            lesson_plans_data: List of lesson plan data dictionaries
+            course_name: Course name for file naming
+            document_number: Document sequence number (1, 2, 3...)
+
+        Returns:
+            Path to the generated document (named: course_name_01.docx)
+        """
+        if not lesson_plans_data:
+            raise ValueError("lesson_plans_data cannot be empty")
+
+        # Render each lesson plan to a temporary document
+        temp_docs = []
+        for idx, lesson_data in enumerate(lesson_plans_data):
+            # Add lesson_number to the title if not already present
+            lesson_number = lesson_data.get("lesson_number")
+            if lesson_number:
+                # Update topic to include lesson number in title
+                original_topic = lesson_data.get("topic", "")
+                lesson_data["lesson_title"] = f"教案{lesson_number}：{original_topic}"
+            else:
+                lesson_data["lesson_title"] = lesson_data.get("topic", "")
+
+            # Process data
+            processed_data = self._process_data(lesson_data)
+
+            # Ensure lesson_title is in processed data
+            processed_data["lesson_title"] = lesson_data.get("lesson_title", lesson_data.get("topic", ""))
+
+            # Handle None values
+            for key, value in list(processed_data.items()):
+                if value is None:
+                    processed_data[key] = []
+                elif isinstance(value, dict):
+                    for sub_key, sub_value in value.items():
+                        if sub_value is None:
+                            value[sub_key] = []
+
+            # Load and render template
+            template = DocxTemplate(template_path)
+            template.render(processed_data)
+
+            # Save to temporary path
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            temp_filename = f"_temp_{course_name}_{document_number}_{idx}_{timestamp}.docx"
+            temp_path = str(self.output_dir / temp_filename)
+            template.save(temp_path)
+            temp_docs.append(temp_path)
+
+        # Combine documents (continuous layout, no page breaks)
+        output_path = self._combine_documents_continuous(
+            temp_docs, course_name, document_number
+        )
+
+        # Clean up temporary files
+        for temp_path in temp_docs:
+            try:
+                Path(temp_path).unlink()
+            except Exception as e:
+                logger.warning(f"Failed to delete temp file {temp_path}: {e}")
+
+        return output_path
+
+    def _combine_documents_continuous(
+        self,
+        doc_paths: List[str],
+        course_name: str,
+        document_number: int,
+    ) -> str:
+        """
+        Combine multiple documents into one (continuous layout, no page breaks).
+
+        This follows the reference template format where multiple lesson plans
+        are placed continuously in the same document.
+
+        Args:
+            doc_paths: List of paths to documents to combine
+            course_name: Course name for output filename
+            document_number: Document sequence number (1, 2, 3...)
+
+        Returns:
+            Path to the combined document (named: course_name_01.docx)
+        """
+        if len(doc_paths) == 0:
+            raise ValueError("No documents to combine")
+
+        # Generate output filename: course_name_01.docx, course_name_02.docx, etc.
+        output_filename = f"{course_name}_{document_number:02d}.docx"
+        output_path = str(self.output_dir / output_filename)
+
+        if len(doc_paths) == 1:
+            # Only one document, just copy it
+            import shutil
+            shutil.copy(doc_paths[0], output_path)
+            return output_path
+
+        # Load the first document as base
+        combined_doc = Document(doc_paths[0])
+
+        # Append remaining documents WITHOUT page breaks (continuous layout)
+        for doc_path in doc_paths[1:]:
+            # Load the document to append
+            sub_doc = Document(doc_path)
+
+            # Copy all body elements directly (no page break)
+            for element in sub_doc.element.body:
+                # Skip sectPr (section properties) as we don't want multiple sections
+                if element.tag.endswith('sectPr'):
+                    continue
+                combined_doc.element.body.append(element)
+
+        # Save combined document
+        combined_doc.save(output_path)
+
+        logger.info(f"Combined {len(doc_paths)} lesson plans into: {output_path}")
 
         return output_path
 

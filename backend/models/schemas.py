@@ -266,10 +266,10 @@ class ExportResponse(BaseModel):
 
 class ChapterInfo(BaseModel):
     """Chapter information for batch generation."""
-    week: int
-    topic: str
-    content_summary: str
-    key_concepts: List[str]
+    lesson_number: int = Field(..., ge=1, description="教案序号（1, 2, 3...）")
+    topic: str = Field(..., description="课题/章节标题")
+    content_summary: str = Field(default="", description="内容概述")
+    key_concepts: List[str] = Field(default_factory=list, description="核心概念")
 
 
 class ChapterSplitRequest(BaseModel):
@@ -277,14 +277,16 @@ class ChapterSplitRequest(BaseModel):
     course_name: str
     subject: str
     grade: str
-    start_week: int = Field(..., ge=1, description="Starting week number")
-    end_week: int = Field(..., ge=1, description="Ending week number")
+    total_hours: int = Field(..., ge=2, description="总课时数（如64、72）")
+    hours_per_lesson: int = Field(default=2, ge=1, description="每份教案课时")
+    chapters_input: Optional[str] = Field(None, description="用户手动输入的章节（每行一个，可选）")
     additional_info: Optional[str] = None
 
 
 class ChapterSplitResponse(BaseModel):
     """Response from chapter splitting."""
     chapters: List[ChapterInfo]
+    total_lessons: int = Field(..., description="教案总数")
 
 
 class BatchTaskCreateRequest(BaseModel):
@@ -293,8 +295,8 @@ class BatchTaskCreateRequest(BaseModel):
     subject: str
     grade: str
     template_id: str
-    start_week: int = Field(..., ge=1)
-    end_week: int = Field(..., ge=1)
+    total_hours: int = Field(..., ge=2, description="总课时数")
+    hours_per_lesson: int = Field(default=2, ge=1, description="每份教案课时")
     chapters: List[ChapterInfo]
     additional_requirements: Optional[str] = None
 
@@ -312,8 +314,8 @@ class BatchTask(BaseModel):
     subject: str
     grade: str
     template_id: str
-    start_week: int
-    end_week: int
+    total_hours: int
+    hours_per_lesson: int = 2
     chapters: List[ChapterInfo]
     status: Literal["pending", "processing", "completed", "failed", "cancelled"]
     total_count: int
@@ -331,7 +333,7 @@ class BatchLessonPlan(BaseModel):
     id: str
     batch_task_id: str
     lesson_plan_id: str
-    week_number: int
+    lesson_number: int
     topic: str
     status: Literal["pending", "processing", "completed", "failed"]
     file_path: Optional[str] = None
@@ -351,9 +353,8 @@ class CourseChapterTemplate(BaseModel):
     course_name: str
     subject: str
     grade: str
-    start_week: int
-    end_week: int
-    total_weeks: int
+    total_hours: int
+    hours_per_lesson: int = 2
     chapters: List[ChapterInfo]
     use_count: int
     created_at: str

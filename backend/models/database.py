@@ -108,8 +108,8 @@ class Database:
                 subject TEXT NOT NULL,
                 grade TEXT NOT NULL,
                 template_id TEXT NOT NULL,
-                start_week INTEGER NOT NULL,
-                end_week INTEGER NOT NULL,
+                total_hours INTEGER NOT NULL,
+                hours_per_lesson INTEGER DEFAULT 2,
                 chapters TEXT NOT NULL,
                 status TEXT DEFAULT 'pending',
                 total_count INTEGER NOT NULL,
@@ -130,7 +130,7 @@ class Database:
                 id TEXT PRIMARY KEY,
                 batch_task_id TEXT NOT NULL,
                 lesson_plan_id TEXT NOT NULL,
-                week_number INTEGER NOT NULL,
+                lesson_number INTEGER NOT NULL,
                 topic TEXT NOT NULL,
                 status TEXT DEFAULT 'pending',
                 file_path TEXT,
@@ -148,14 +148,13 @@ class Database:
                 course_name TEXT NOT NULL,
                 subject TEXT NOT NULL,
                 grade TEXT NOT NULL,
-                start_week INTEGER NOT NULL,
-                end_week INTEGER NOT NULL,
-                total_weeks INTEGER NOT NULL,
+                total_hours INTEGER NOT NULL,
+                hours_per_lesson INTEGER DEFAULT 2,
                 chapters TEXT NOT NULL,
                 use_count INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(course_name, subject, grade, start_week, end_week)
+                UNIQUE(course_name, subject, grade, total_hours, hours_per_lesson)
             )
         """)
 
@@ -164,8 +163,49 @@ class Database:
             db, "lesson_plans", "batch_task_id", "TEXT"
         )
         await self._add_column_if_not_exists(
-            db, "lesson_plans", "week_number", "INTEGER"
+            db, "lesson_plans", "lesson_number", "INTEGER"
         )
+
+        # Add hours-based columns to batch_tasks if upgrading from week-based
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "total_hours", "INTEGER"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "hours_per_lesson", "INTEGER DEFAULT 2"
+        )
+
+        # Add hours-based columns to course_chapter_templates if upgrading
+        await self._add_column_if_not_exists(
+            db, "course_chapter_templates", "total_hours", "INTEGER"
+        )
+        await self._add_column_if_not_exists(
+            db, "course_chapter_templates", "hours_per_lesson", "INTEGER DEFAULT 2"
+        )
+
+        # Add lesson_number column to batch_lesson_plans if upgrading
+        await self._add_column_if_not_exists(
+            db, "batch_lesson_plans", "lesson_number", "INTEGER"
+        )
+
+        # Template versions table (for version history)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS template_versions (
+                id TEXT PRIMARY KEY,
+                template_id TEXT NOT NULL,
+                version_number INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                user TEXT DEFAULT '系统',
+                comment TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (template_id) REFERENCES templates(id) ON DELETE CASCADE
+            )
+        """)
+
+        # Create index for template_versions
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_template_versions_template_id
+            ON template_versions(template_id)
+        """)
 
     async def _add_column_if_not_exists(
         self,

@@ -18,6 +18,14 @@ from ..models.schemas import (
     generate_id,
 )
 from ..services.template_parser import TemplateParser
+from ..services.template_versioning import (
+    save_version,
+    get_versions,
+    get_version_content,
+    compare_versions,
+    restore_version,
+    delete_old_versions,
+)
 
 router = APIRouter(prefix="/templates", tags=["templates"])
 
@@ -144,6 +152,26 @@ async def list_templates(
     return templates
 
 
+@router.get("/standard-fields")
+async def get_standard_fields():
+    """
+    Get standard field mappings for reference.
+    Returns predefined field configurations with Chinese display names.
+    """
+    from ..services.template_parser import TemplateParser
+
+    standard_fields = []
+    for name, config in TemplateParser.STANDARD_FIELDS.items():
+        standard_fields.append({
+            "name": name,
+            "display_name": config["display"],
+            "field_type": config["type"],
+            "required": config["required"],
+        })
+
+    return {"fields": standard_fields}
+
+
 @router.get("/{template_id}", response_model=TemplateInfo)
 async def get_template(template_id: str):
     """
@@ -262,6 +290,37 @@ async def get_template_fields(template_id: str):
 
     fields_config = json.loads(row["fields_config"]) if row["fields_config"] else []
     return {"fields": fields_config}
+
+
+class UpdateFieldsRequest(BaseModel):
+    fields: list[dict]
+
+
+@router.put("/{template_id}/fields")
+async def update_template_fields(template_id: str, request: UpdateFieldsRequest = Body(...)):
+    """
+    Update fields configuration for a template.
+    """
+    # Check if template exists
+    row = await db.fetch_one(
+        "SELECT id FROM templates WHERE id = ?",
+        (template_id,),
+    )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    # Convert fields to JSON
+    fields_config_json = json.dumps(request.fields)
+
+    # Update fields_config
+    await db.execute(
+        "UPDATE templates SET fields_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (fields_config_json, template_id),
+        commit=True,
+    )
+
+    return {"success": True, "fields": request.fields}
 
 
 @router.patch("/{template_id}")
@@ -448,6 +507,20 @@ async def save_template_html(template_id: str, request: SaveHtmlRequest = Body(.
         from htmldocx import HtmlToDocx
         from docx import Document
 
+        # 保存版本记录（在修改DOCX之前）
+        version_comment = "保存更新"
+        version_user = "用户"
+        if request.metadata:
+            version_comment = request.metadata.get("version_comment", version_comment)
+            version_user = request.metadata.get("user", version_user)
+
+        await save_version(
+            template_id=template_id,
+            content=request.html,
+            user=version_user,
+            comment=version_comment
+        )
+
         # Create a new document
         doc = Document()
 
@@ -504,16 +577,40 @@ async def save_template_html(template_id: str, request: SaveHtmlRequest = Body(.
 async def preview_template_html(template_id: str, request: PreviewHtmlRequest = Body(...)):
     """
     Preview HTML with sample data rendered using Jinja2.
+    Uses sandboxed environment to prevent SSTI attacks.
     """
-    from jinja2 import Environment, TemplateSyntaxError
+    from jinja2 import Environment, TemplateSyntaxError, select_autoescape
+    from jinja2.sandbox import SandboxedEnvironment
 
     try:
-        env = Environment()
+        # Use sandboxed environment to prevent SSTI attacks
+        env = SandboxedEnvironment(
+            autoescape=select_autoescape(['html', 'xml']),
+        )
 
-        # Render template with sample data
+        # Sanitize sample_data - only allow basic types
+        def sanitize_data(data, max_depth=5):
+            if max_depth <= 0:
+                return str(data)
+            if data is None:
+                return None
+            if isinstance(data, (str, int, float, bool)):
+                return data
+            if isinstance(data, list):
+                return [sanitize_data(item, max_depth - 1) for item in data[:100]]
+            if isinstance(data, dict):
+                return {
+                    str(k): sanitize_data(v, max_depth - 1)
+                    for k, v in list(data.items())[:50]
+                }
+            return str(data)
+
+        safe_data = sanitize_data(request.sample_data)
+
+        # Render template with sanitized sample data
         try:
             template = env.from_string(request.html)
-            preview_html = template.render(**request.sample_data)
+            preview_html = template.render(**safe_data)
         except TemplateSyntaxError as e:
             raise HTTPException(
                 status_code=400,
@@ -536,3 +633,202 @@ async def preview_template_html(template_id: str, request: PreviewHtmlRequest = 
             status_code=500,
             detail=f"Preview generation failed: {str(e)}",
         )
+
+
+# ============================================================================
+# Template Version History API Endpoints
+# ============================================================================
+
+class VersionCompareRequest(BaseModel):
+    version_id_1: str
+    version_id_2: str
+
+
+class ExportHtmlRequest(BaseModel):
+    html: str
+
+
+@router.get("/{template_id}/versions")
+async def list_template_versions(
+    template_id: str,
+    limit: int = Query(50, le=100),
+    offset: int = Query(0),
+):
+    """
+    获取模板的版本历史列表
+    """
+    # 验证模板存在
+    row = await db.fetch_one(
+        "SELECT id FROM templates WHERE id = ?",
+        (template_id,),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    versions = await get_versions(template_id, limit, offset)
+    return {"versions": versions}
+
+
+@router.get("/{template_id}/versions/{version_id}")
+async def get_template_version(template_id: str, version_id: str):
+    """
+    获取指定版本的内容
+    """
+    content = await get_version_content(version_id)
+    if not content:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return {"content": content}
+
+
+@router.post("/{template_id}/versions/{version_id}/restore")
+async def restore_template_version(template_id: str, version_id: str):
+    """
+    恢复到指定版本
+    """
+    try:
+        # 恢复版本（创建新版本记录）
+        new_version_id = await restore_version(template_id, version_id)
+
+        # 同时需要将HTML内容同步回DOCX文件
+        content = await get_version_content(version_id)
+        if content:
+            row = await db.fetch_one(
+                "SELECT file_path FROM templates WHERE id = ?",
+                (template_id,),
+            )
+            if row and os.path.exists(row["file_path"]):
+                try:
+                    from htmldocx import HtmlToDocx
+                    from docx import Document
+
+                    # 备份原文件
+                    backup_path = row["file_path"] + ".backup"
+                    shutil.copy2(row["file_path"], backup_path)
+
+                    try:
+                        # 转换HTML为DOCX
+                        doc = Document()
+                        parser = HtmlToDocx()
+                        parser.add_html_to_document(content, doc)
+                        doc.save(row["file_path"])
+                        os.remove(backup_path)
+                    except Exception:
+                        # 恢复备份
+                        shutil.copy2(backup_path, row["file_path"])
+                        os.remove(backup_path)
+                        raise
+                except ImportError:
+                    pass  # 如果htmldocx不可用，仅恢复版本记录
+
+        return {
+            "success": True,
+            "new_version_id": new_version_id,
+            "message": "版本恢复成功"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"恢复版本失败: {str(e)}")
+
+
+@router.post("/{template_id}/versions/compare")
+async def compare_template_versions(
+    template_id: str,
+    request: VersionCompareRequest = Body(...),
+):
+    """
+    对比两个版本的差异
+    """
+    try:
+        result = await compare_versions(
+            request.version_id_1,
+            request.version_id_2
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"对比版本失败: {str(e)}")
+
+
+@router.delete("/{template_id}/versions/cleanup")
+async def cleanup_template_versions(
+    template_id: str,
+    keep_count: int = Query(20, ge=1, le=100),
+):
+    """
+    清理旧版本，只保留最新的N个版本
+    """
+    deleted_count = await delete_old_versions(template_id, keep_count)
+    return {
+        "success": True,
+        "deleted_count": deleted_count,
+        "message": f"已删除 {deleted_count} 个旧版本"
+    }
+
+
+# ============================================================================
+# HTML Export API
+# ============================================================================
+
+@router.post("/{template_id}/export/html")
+async def export_template_html(template_id: str, request: ExportHtmlRequest = Body(...)):
+    """
+    导出模板的HTML内容为文件下载
+    """
+    row = await db.fetch_one(
+        "SELECT name FROM templates WHERE id = ?",
+        (template_id,),
+    )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    try:
+        from datetime import datetime
+
+        # 生成文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name = row["name"].replace(" ", "_").replace("/", "_")
+        filename = f"{safe_name}_{timestamp}.html"
+
+        # 保存到输出目录
+        output_path = str(settings.output_dir / filename)
+
+        # 添加HTML包装
+        full_html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{row["name"]}</title>
+    <style>
+        body {{ font-family: 'Microsoft YaHei', SimSun, sans-serif; margin: 40px; line-height: 1.6; }}
+        table {{ border-collapse: collapse; width: 100%; margin: 16px 0; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        th {{ background-color: #f5f5f5; }}
+        .jinja-placeholder {{ background-color: #e6f7ff; border: 1px solid #1890ff;
+                             border-radius: 3px; padding: 2px 6px; font-family: monospace; }}
+        h1, h2, h3, h4, h5, h6 {{ color: #333; }}
+    </style>
+</head>
+<body>
+{request.html}
+</body>
+</html>"""
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(full_html)
+
+        return {
+            "success": True,
+            "filename": filename,
+            "download_url": f"/static/{filename}"
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"导出HTML失败: {str(e)}"
+        )
+

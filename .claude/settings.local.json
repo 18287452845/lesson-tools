@@ -41,7 +41,9 @@
       "Bash(venvScriptspython:*)",
       "Bash(./venv/Scripts/python.exe -m pip install:*)",
       "Bash(./start.sh:*)",
-      "Bash(ps:*)"
+      "Bash(ps:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

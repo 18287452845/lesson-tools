@@ -1,18 +1,22 @@
-import sqlite3
-conn = sqlite3.connect('storage/database.db')
-conn.row_factory = sqlite3.Row
-cursor = conn.cursor()
+import asyncio
+import sys
+sys.path.insert(0, '/home/liyang/lesson-tools')
 
-# List all tables
-cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-print("Tables:", [r[0] for r in cursor.fetchall()])
+from backend.models.database import get_db
 
-# Check templates
-cursor.execute('SELECT * FROM templates')
-templates = cursor.fetchall()
-print(f"\nFound {len(templates)} templates:")
-for t in templates:
-    print(f"  ID: {t['id']}")
-    print(f"  Name: {t['name']}")
-    print(f"  File: {t['file_path']}")
-    print()
+async def check_templates():
+    db = await get_db()
+    
+    # Query templates
+    rows = await db.fetch_all("SELECT id, name, subject, grade, file_path FROM templates")
+    
+    print(f"Found {len(rows)} templates:")
+    for row in rows:
+        print(f"  ID: {dict(row)['id']}")
+        print(f"  Name: {dict(row)['name']}")
+        print(f"  Subject: {dict(row)['subject']}")
+        print(f"  Grade: {dict(row)['grade']}")
+        print(f"  File: {dict(row)['file_path']}")
+        print()
+
+asyncio.run(check_templates())

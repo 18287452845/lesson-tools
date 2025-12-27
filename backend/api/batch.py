@@ -1,5 +1,7 @@
 """
 Batch lesson plan generation API endpoints.
+
+Updated to support hours-based generation instead of week-based.
 """
 import json
 import logging
@@ -36,19 +38,36 @@ router = APIRouter(tags=["batch"])
 @router.post("/batch/split-chapters", response_model=ChapterSplitResponse)
 async def split_chapters(request: ChapterSplitRequest):
     """
-    Split a course into weekly chapters using AI or cached template.
+    Generate lesson plan chapters based on total hours.
 
-    This endpoint first checks if there's a matching template in the database.
-    If found, it returns the cached chapters. Otherwise, it calls AI to generate
-    new chapters and saves them to the database for future use.
+    Supports two modes:
+    - If chapters_input is provided: Parse user-provided chapter titles
+    - Otherwise: AI generates chapters automatically
+
+    Also checks for cached templates to avoid regeneration.
     """
     try:
-        total_weeks = request.end_week - request.start_week + 1
+        num_lessons = request.total_hours // request.hours_per_lesson
 
         logger.info(
-            f"Splitting course '{request.course_name}' into chapters "
-            f"(weeks {request.start_week}-{request.end_week})"
+            f"Splitting course '{request.course_name}' into {num_lessons} lessons "
+            f"({request.total_hours} hours, {request.hours_per_lesson} hours/lesson)"
         )
+
+        # If user provided chapters, parse them directly (no caching)
+        if request.chapters_input and request.chapters_input.strip():
+            logger.info("Using user-provided chapters")
+            splitter = ChapterSplitter()
+            chapters = await splitter.split_course_chapters(
+                course_name=request.course_name,
+                subject=request.subject,
+                grade=request.grade,
+                total_hours=request.total_hours,
+                hours_per_lesson=request.hours_per_lesson,
+                chapters_input=request.chapters_input,
+                additional_info=request.additional_info,
+            )
+            return ChapterSplitResponse(chapters=chapters, total_lessons=num_lessons)
 
         # Step 1: Check if template exists in database
         db = await get_db()
@@ -56,14 +75,14 @@ async def split_chapters(request: ChapterSplitRequest):
             """
             SELECT * FROM course_chapter_templates
             WHERE course_name = ? AND subject = ? AND grade = ?
-            AND start_week = ? AND end_week = ?
+            AND total_hours = ? AND hours_per_lesson = ?
             """,
             (
                 request.course_name,
                 request.subject,
                 request.grade,
-                request.start_week,
-                request.end_week,
+                request.total_hours,
+                request.hours_per_lesson,
             )
         )
 
@@ -88,7 +107,7 @@ async def split_chapters(request: ChapterSplitRequest):
                 f"use_count={existing['use_count'] + 1})"
             )
 
-            return ChapterSplitResponse(chapters=chapters)
+            return ChapterSplitResponse(chapters=chapters, total_lessons=num_lessons)
 
         # Step 2: No cached template, call AI to generate
         logger.info("No cached template found, calling AI...")
@@ -103,8 +122,8 @@ async def split_chapters(request: ChapterSplitRequest):
             course_name=request.course_name,
             subject=request.subject,
             grade=request.grade,
-            start_week=request.start_week,
-            end_week=request.end_week,
+            total_hours=request.total_hours,
+            hours_per_lesson=request.hours_per_lesson,
             additional_info=request.additional_info,
         )
 
@@ -113,18 +132,17 @@ async def split_chapters(request: ChapterSplitRequest):
         await db.execute(
             """
             INSERT INTO course_chapter_templates (
-                id, course_name, subject, grade, start_week, end_week,
-                total_weeks, chapters, use_count, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, course_name, subject, grade, total_hours, hours_per_lesson,
+                chapters, use_count, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 template_id,
                 request.course_name,
                 request.subject,
                 request.grade,
-                request.start_week,
-                request.end_week,
-                total_weeks,
+                request.total_hours,
+                request.hours_per_lesson,
                 json.dumps([c.model_dump() for c in chapters], ensure_ascii=False),
                 0,
                 datetime.now().isoformat(),
@@ -138,7 +156,7 @@ async def split_chapters(request: ChapterSplitRequest):
             f"(template_id={template_id})"
         )
 
-        return ChapterSplitResponse(chapters=chapters)
+        return ChapterSplitResponse(chapters=chapters, total_lessons=num_lessons)
 
     except Exception as e:
         logger.error(f"Failed to split chapters: {str(e)}", exc_info=True)
@@ -159,7 +177,8 @@ async def create_batch_task(request: BatchTaskCreateRequest):
 
         logger.info(
             f"Creating batch task {task_id}: "
-            f"{request.course_name} ({total_count} lesson plans)"
+            f"{request.course_name} ({total_count} lesson plans, "
+            f"{request.total_hours} hours)"
         )
 
         # Validate chapters
@@ -169,10 +188,10 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 detail="Chapters list cannot be empty"
             )
 
-        if total_count > 30:
+        if total_count > 100:
             raise HTTPException(
                 status_code=400,
-                detail="Cannot generate more than 30 lesson plans in one batch"
+                detail="Cannot generate more than 100 lesson plans in one batch"
             )
 
         # Create task record in database
@@ -181,7 +200,7 @@ async def create_batch_task(request: BatchTaskCreateRequest):
             """
             INSERT INTO batch_tasks (
                 id, course_name, subject, grade, template_id,
-                start_week, end_week, chapters, status, total_count,
+                total_hours, hours_per_lesson, chapters, status, total_count,
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -191,8 +210,8 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 request.subject,
                 request.grade,
                 request.template_id,
-                request.start_week,
-                request.end_week,
+                request.total_hours,
+                request.hours_per_lesson,
                 json.dumps([c.model_dump() for c in request.chapters], ensure_ascii=False),
                 "pending",
                 total_count,
@@ -207,6 +226,7 @@ async def create_batch_task(request: BatchTaskCreateRequest):
             provider=settings.ai_provider,
             api_key=settings.get_active_api_key(),
             model=settings.get_active_model(),
+            hours_per_lesson=request.hours_per_lesson,
         )
 
         run_in_background(

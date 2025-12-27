@@ -2,9 +2,12 @@
 Lesson plan generation API endpoints.
 """
 import json
+import re
+import asyncio
 from typing import Optional
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from datetime import datetime
 
 from ..models.database import db
@@ -22,6 +25,27 @@ from ..services.document_renderer import DocumentRenderer
 from ..utils.ai_config import get_ai_generator
 
 router = APIRouter(prefix="/generate", tags=["generate"])
+
+
+def extract_json_from_content(content: str, is_array: bool = False) -> any:
+    """
+    Extract JSON data from AI-generated content.
+
+    Args:
+        content: The raw content string that may contain JSON
+        is_array: If True, looks for array [...], otherwise looks for object {...}
+
+    Returns:
+        Parsed JSON data
+
+    Raises:
+        json.JSONDecodeError: If JSON parsing fails
+    """
+    pattern = r"\[.*\]" if is_array else r"\{.*\}"
+    json_match = re.search(pattern, content, re.DOTALL)
+    if json_match:
+        return json.loads(json_match.group(0))
+    return json.loads(content)
 
 
 @router.post("", response_model=LessonPlanResponse)
@@ -104,6 +128,125 @@ async def generate_lesson_plan(request: LessonPlanGenerateRequest):
     )
 
 
+@router.post("/stream")
+async def generate_lesson_plan_stream(request: LessonPlanGenerateRequest):
+    """
+    Generate a lesson plan with real-time progress updates using Server-Sent Events.
+    """
+    async def event_generator():
+        try:
+            # Send initial status
+            yield f"data: {json.dumps({'type': 'status', 'message': '正在验证模板...'})}\n\n"
+            await asyncio.sleep(0.1)
+
+            # Verify template exists
+            template = await db.fetch_one(
+                "SELECT * FROM templates WHERE id = ?",
+                (request.template_id,),
+            )
+
+            if not template:
+                yield f"data: {json.dumps({'type': 'error', 'message': '模板不存在'})}\n\n"
+                return
+
+            yield f"data: {json.dumps({'type': 'status', 'message': '模板验证成功'})}\n\n"
+            await asyncio.sleep(0.1)
+
+            # Parse field configs
+            field_configs = None
+            try:
+                fields_config_str = template["fields_config"] if "fields_config" in template.keys() else None
+                if fields_config_str:
+                    configs_data = json.loads(fields_config_str)
+                    field_configs = [FieldConfig(**config) for config in configs_data]
+            except Exception as e:
+                print(f"Warning: Failed to parse field_configs: {e}")
+
+            # Generate content with progress updates
+            yield f"data: {json.dumps({'type': 'status', 'message': '正在连接AI服务...', 'progress': 10})}\n\n"
+            await asyncio.sleep(0.1)
+
+            try:
+                generator = await get_ai_generator()
+                yield f"data: {json.dumps({'type': 'status', 'message': '开始生成教学目标...', 'progress': 20})}\n\n"
+                await asyncio.sleep(0.1)
+
+                content = await generator.generate_lesson_plan(request, field_configs)
+
+                yield f"data: {json.dumps({'type': 'status', 'message': '生成教学重难点...', 'progress': 40})}\n\n"
+                await asyncio.sleep(0.1)
+
+                yield f"data: {json.dumps({'type': 'status', 'message': '生成教学步骤...', 'progress': 60})}\n\n"
+                await asyncio.sleep(0.1)
+
+                yield f"data: {json.dumps({'type': 'status', 'message': '完善作业布置和板书设计...', 'progress': 80})}\n\n"
+                await asyncio.sleep(0.1)
+
+            except ValueError as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                return
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'AI生成失败: {str(e)}'})}\n\n"
+                return
+
+            # Save to database
+            yield f"data: {json.dumps({'type': 'status', 'message': '正在保存教案...', 'progress': 90})}\n\n"
+            await asyncio.sleep(0.1)
+
+            lesson_plan_id = generate_id()
+            timestamp = datetime.now().isoformat()
+
+            input_data = json.dumps(request.model_dump())
+            generated_data = json.dumps(content.model_dump())
+
+            await db.execute(
+                """
+                INSERT INTO lesson_plans
+                (id, template_id, title, subject, grade, topic, input_data, generated_content, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    lesson_plan_id,
+                    request.template_id,
+                    f"{request.grade} {request.subject} - {request.topic}",
+                    request.subject,
+                    request.grade,
+                    request.topic,
+                    input_data,
+                    generated_data,
+                    "generated",
+                ),
+                commit=True,
+            )
+
+            # Update template use count
+            await db.execute(
+                "UPDATE templates SET use_count = use_count + 1 WHERE id = ?",
+                (request.template_id,),
+                commit=True,
+            )
+
+            # Send completion event with data
+            response_data = {
+                'type': 'complete',
+                'message': '教案生成完成！',
+                'progress': 100,
+                'data': {
+                    'id': lesson_plan_id,
+                    'template_id': request.template_id,
+                    'content': content.model_dump(),
+                    'status': 'generated',
+                    'created_at': timestamp,
+                }
+            }
+            yield f"data: {json.dumps(response_data, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'生成过程出错: {str(e)}'})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @router.post("/{lesson_plan_id}/regenerate-field")
 async def regenerate_field(
     lesson_plan_id: str,
@@ -142,28 +285,10 @@ async def regenerate_field(
     # Handle different field types
     if field_name == "teaching_steps":
         # Parse JSON array
-        import re
-        json_match = re.search(r"\[.*\]", new_content, re.DOTALL)
-        if json_match:
-            current_content[field_name] = json.loads(json_match.group(0))
-        else:
-            current_content[field_name] = json.loads(new_content)
-    elif field_name == "teaching_goals":
+        current_content[field_name] = extract_json_from_content(new_content, is_array=True)
+    elif field_name in ("teaching_goals", "homework"):
         # Parse JSON object
-        import re
-        json_match = re.search(r"\{.*\}", new_content, re.DOTALL)
-        if json_match:
-            current_content[field_name] = json.loads(json_match.group(0))
-        else:
-            current_content[field_name] = json.loads(new_content)
-    elif field_name == "homework":
-        # Parse JSON object
-        import re
-        json_match = re.search(r"\{.*\}", new_content, re.DOTALL)
-        if json_match:
-            current_content[field_name] = json.loads(json_match.group(0))
-        else:
-            current_content[field_name] = json.loads(new_content)
+        current_content[field_name] = extract_json_from_content(new_content, is_array=False)
     else:
         current_content[field_name] = new_content
 

@@ -47,6 +47,7 @@ npm-debug.log*
 # Build outputs
 *.docx
 !backend/templates/*.docx
+!storage/templates/*.docx
 
 # OS files
 .DS_Store

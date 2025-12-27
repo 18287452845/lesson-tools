@@ -141,11 +141,16 @@ const BatchDownloads: React.FC = () => {
       ),
     },
     {
-      title: '周数范围',
-      key: 'weeks',
+      title: '课时信息',
+      key: 'hours',
       width: 120,
       render: (_: any, record: BatchTask) => (
-        <Text>第{record.start_week}-{record.end_week}周</Text>
+        <div>
+          <div>{record.total_hours}课时</div>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {record.total_count}份教案
+          </Text>
+        </div>
       ),
     },
     {

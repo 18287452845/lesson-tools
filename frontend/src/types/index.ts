@@ -193,7 +193,7 @@ export const DURATION_OPTIONS = [
 // ============================================================================
 
 export interface ChapterInfo {
-  week: number;
+  lesson_number: number;
   topic: string;
   content_summary: string;
   key_concepts: string[];
@@ -203,13 +203,15 @@ export interface ChapterSplitRequest {
   course_name: string;
   subject: string;
   grade: string;
-  start_week: number;
-  end_week: number;
+  total_hours: number;
+  hours_per_lesson?: number;
+  chapters_input?: string;
   additional_info?: string;
 }
 
 export interface ChapterSplitResponse {
   chapters: ChapterInfo[];
+  total_lessons: number;
 }
 
 export interface BatchTaskCreateRequest {
@@ -217,8 +219,8 @@ export interface BatchTaskCreateRequest {
   subject: string;
   grade: string;
   template_id: string;
-  start_week: number;
-  end_week: number;
+  total_hours: number;
+  hours_per_lesson?: number;
   chapters: ChapterInfo[];
   additional_requirements?: string;
 }
@@ -241,8 +243,8 @@ export interface BatchTask {
   subject: string;
   grade: string;
   template_id: string;
-  start_week: number;
-  end_week: number;
+  total_hours: number;
+  hours_per_lesson: number;
   chapters: ChapterInfo[];
   status: BatchTaskStatus;
   total_count: number;
@@ -259,7 +261,7 @@ export interface BatchLessonPlan {
   id: string;
   batch_task_id: string;
   lesson_plan_id: string;
-  week_number: number;
+  lesson_number: number;
   topic: string;
   status: 'pending' | 'processing' | 'completed' | 'failed';
   file_path?: string;
@@ -277,9 +279,8 @@ export interface CourseChapterTemplate {
   course_name: string;
   subject: string;
   grade: string;
-  start_week: number;
-  end_week: number;
-  total_weeks: number;
+  total_hours: number;
+  hours_per_lesson: number;
   chapters: ChapterInfo[];
   use_count: number;
   created_at: string;
@@ -289,4 +290,66 @@ export interface CourseChapterTemplate {
 export interface ChapterTemplateListResponse {
   templates: CourseChapterTemplate[];
   total: number;
+}
+
+// ============================================================================
+// Template Editor Types
+// ============================================================================
+
+export interface TemplateVersion {
+  id: string;
+  version_number: number;
+  user: string;
+  comment: string;
+  created_at: string;
+  content_size: number;
+}
+
+export interface VersionListResponse {
+  versions: TemplateVersion[];
+}
+
+export interface VersionCompareResult {
+  version_1: string;
+  version_2: string;
+  diff: string;
+  added_lines: number;
+  removed_lines: number;
+  total_changes: number;
+}
+
+export interface TemplateHtmlResponse {
+  html: string;
+  metadata: TemplateMetadata;
+  messages: string[];
+  name: string;
+}
+
+export interface TemplateMetadata {
+  title?: string;
+  subject?: string;
+  author?: string;
+  created?: string;
+  modified?: string;
+  file_size?: number;
+  file_name?: string;
+  paragraphs_count?: number;
+  tables_count?: number;
+}
+
+export interface JinjaValidationResult {
+  valid: boolean;
+  errors: string[];
+  variables: string[];
+}
+
+export interface JinjaVariable {
+  name: string;
+  type: string;
+}
+
+export interface HtmlExportResponse {
+  success: boolean;
+  filename: string;
+  download_url: string;
 }

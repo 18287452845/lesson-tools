@@ -15,6 +15,7 @@ import {
   Spin,
   Alert,
   Divider,
+  Progress,
 } from 'antd';
 import { ArrowLeftOutlined, LoadingOutlined } from '@ant-design/icons';
 import { useTemplateStore } from '@/stores/templateStore';
@@ -34,8 +35,10 @@ function NewLessonPlan() {
     isGenerating,
     isRegenerating,
     regeneratingField,
+    generationProgress,
+    generationMessage,
     error,
-    generateLessonPlan,
+    generateLessonPlanStream,
     regenerateField,
     updateField,
     exportLessonPlan,
@@ -64,7 +67,7 @@ function NewLessonPlan() {
         ]);
         return;
       }
-      await generateLessonPlan(values);
+      await generateLessonPlanStream(values);
       setCurrentStep(2);
     } catch (err) {
       // Error is handled by the store
@@ -206,9 +209,28 @@ function NewLessonPlan() {
             <Card>
               <div style={{ textAlign: 'center', padding: '40px' }}>
                 <Spin indicator={<LoadingOutlined style={{ fontSize: 48 }} spin />} />
-                <div style={{ marginTop: 16 }}>
-                  <Text>正在生成教案，请稍候...</Text>
+                <div style={{ marginTop: 24, marginBottom: 16 }}>
+                  <Progress
+                    percent={generationProgress}
+                    status="active"
+                    strokeColor={{
+                      '0%': '#108ee9',
+                      '100%': '#87d068',
+                    }}
+                  />
                 </div>
+                <div style={{ marginTop: 16 }}>
+                  <Text strong style={{ fontSize: 16 }}>
+                    {generationMessage || '正在生成教案，请稍候...'}
+                  </Text>
+                </div>
+                {generationProgress > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <Text type="secondary">
+                      已完成 {generationProgress}%
+                    </Text>
+                  </div>
+                )}
               </div>
             </Card>
           ) : (
