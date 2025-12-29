@@ -11,7 +11,8 @@ from typing import Optional, List
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+import asyncio
 
 from ..config import settings
 from ..models.database import get_db
@@ -163,6 +164,154 @@ async def split_chapters(request: ChapterSplitRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/batch/split-chapters-stream")
+async def split_chapters_stream(request: ChapterSplitRequest):
+    """
+    流式生成章节，使用 Server-Sent Events (SSE) 返回进度。
+
+    SSE 事件类型:
+    - progress: {"current": 3, "total": 16, "message": "生成第 3/16 个章节"}
+    - chapter: {"lesson_number": 3, "topic": "...", "content_summary": "...", "key_concepts": [...]}
+    - complete: {"chapters": [...], "total_lessons": 16}
+    - error: {"message": "错误详情"}
+    """
+    async def event_generator():
+        try:
+            num_lessons = request.total_hours // request.hours_per_lesson
+
+            # 发送初始进度
+            yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': num_lessons, 'message': f'准备生成 {num_lessons} 份教案...'}, ensure_ascii=False)}\n\n"
+
+            db = await get_db()
+
+            # 如果用户提供了章节输入，直接解析（不缓存）
+            if request.chapters_input and request.chapters_input.strip():
+                splitter = ChapterSplitter()
+                chapters = await splitter.split_course_chapters(
+                    course_name=request.course_name,
+                    subject=request.subject,
+                    grade=request.grade,
+                    total_hours=request.total_hours,
+                    hours_per_lesson=request.hours_per_lesson,
+                    chapters_input=request.chapters_input,
+                    additional_info=request.additional_info,
+                )
+
+                # 流式返回解析的章节
+                for idx, chapter in enumerate(chapters, 1):
+                    yield f"event: progress\ndata: {json.dumps({'current': idx, 'total': num_lessons, 'message': f'解析第 {idx}/{num_lessons} 个章节'}, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0.02)  # 小延迟用于视觉反馈
+                    yield f"event: chapter\ndata: {json.dumps(chapter.model_dump(), ensure_ascii=False)}\n\n"
+
+                yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters], 'total_lessons': num_lessons}, ensure_ascii=False)}\n\n"
+                return
+
+            # 检查是否有缓存的模板
+            existing = await db.fetch_one(
+                """
+                SELECT * FROM course_chapter_templates
+                WHERE course_name = ? AND subject = ? AND grade = ?
+                AND total_hours = ? AND hours_per_lesson = ?
+                """,
+                (
+                    request.course_name,
+                    request.subject,
+                    request.grade,
+                    request.total_hours,
+                    request.hours_per_lesson,
+                )
+            )
+
+            if existing:
+                # 有缓存 - 流式返回缓存的章节
+                chapters_json = json.loads(existing["chapters"])
+                chapters = [ChapterInfo(**c) for c in chapters_json]
+
+                # 更新使用计数
+                await db.execute(
+                    """
+                    UPDATE course_chapter_templates
+                    SET use_count = use_count + 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (datetime.now().isoformat(), existing["id"]),
+                    commit=True,
+                )
+
+                # 模拟进度流式返回
+                for idx, chapter in enumerate(chapters, 1):
+                    yield f"event: progress\ndata: {json.dumps({'current': idx, 'total': num_lessons, 'message': f'加载第 {idx}/{num_lessons} 个章节'}, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0.05)  # 小延迟用于视觉反馈
+                    yield f"event: chapter\ndata: {json.dumps(chapter.model_dump(), ensure_ascii=False)}\n\n"
+
+                yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters], 'total_lessons': num_lessons}, ensure_ascii=False)}\n\n"
+                return
+
+            # AI 生成模式 - 流式生成
+            splitter = ChapterSplitter(
+                provider=settings.ai_provider,
+                api_key=settings.get_active_api_key(),
+                model=settings.get_active_model(),
+            )
+
+            chapters = []
+            chapter_count = 0
+
+            async for chapter in splitter._generate_ai_chapters_stream(
+                course_name=request.course_name,
+                subject=request.subject,
+                grade=request.grade,
+                total_hours=request.total_hours,
+                hours_per_lesson=request.hours_per_lesson,
+                num_lessons=num_lessons,
+                additional_info=request.additional_info,
+            ):
+                chapter_count += 1
+                yield f"event: progress\ndata: {json.dumps({'current': chapter_count, 'total': num_lessons, 'message': f'生成第 {chapter_count}/{num_lessons} 个章节'}, ensure_ascii=False)}\n\n"
+                yield f"event: chapter\ndata: {json.dumps(chapter.model_dump(), ensure_ascii=False)}\n\n"
+                chapters.append(chapter)
+
+            # 保存到数据库
+            template_id = str(uuid4())
+            await db.execute(
+                """
+                INSERT INTO course_chapter_templates (
+                    id, course_name, subject, grade, total_hours, hours_per_lesson,
+                    chapters, use_count, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    template_id,
+                    request.course_name,
+                    request.subject,
+                    request.grade,
+                    request.total_hours,
+                    request.hours_per_lesson,
+                    json.dumps([c.model_dump() for c in chapters], ensure_ascii=False),
+                    0,
+                    datetime.now().isoformat(),
+                    datetime.now().isoformat(),
+                ),
+                commit=True,
+            )
+
+            yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters[:num_lessons]], 'total_lessons': num_lessons}, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            logger.error(f"Stream chapter generation failed: {str(e)}", exc_info=True)
+            yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+        }
+    )
+
+
 @router.post("/batch/create-task", response_model=BatchTaskCreateResponse)
 async def create_batch_task(request: BatchTaskCreateRequest):
     """
@@ -194,15 +343,26 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 detail="Cannot generate more than 100 lesson plans in one batch"
             )
 
-        # Create task record in database
+        # Query class names from class_ids
         db = await get_db()
+        class_names = []
+        if request.class_ids:
+            placeholders = ",".join(["?"] * len(request.class_ids))
+            class_rows = await db.fetch_all(
+                f"SELECT name FROM classes WHERE id IN ({placeholders})",
+                tuple(request.class_ids)
+            )
+            class_names = [row["name"] for row in class_rows]
+
+        # Create task record in database
         await db.execute(
             """
             INSERT INTO batch_tasks (
                 id, course_name, subject, grade, template_id,
-                total_hours, hours_per_lesson, chapters, status, total_count,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                total_hours, hours_per_lesson, chapters, start_week, class_ids,
+                location, textbook_name, online_resources, generate_reflection, class_names,
+                status, total_count, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -213,6 +373,13 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 request.total_hours,
                 request.hours_per_lesson,
                 json.dumps([c.model_dump() for c in request.chapters], ensure_ascii=False),
+                request.start_week,
+                json.dumps(request.class_ids, ensure_ascii=False),
+                request.location or "",
+                request.textbook_name or "",
+                request.online_resources or "",
+                1 if request.generate_reflection else 0,
+                ",".join(class_names) if class_names else "",
                 "pending",
                 total_count,
                 datetime.now().isoformat(),

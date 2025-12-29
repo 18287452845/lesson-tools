@@ -10,6 +10,7 @@ import type {
   BatchTask,
   BatchTaskListResponse,
   ChapterTemplateListResponse,
+  ChapterInfo,
 } from '@/types';
 
 const api = axios.create({
@@ -51,6 +52,88 @@ export const batchApi = {
   async splitChapters(data: ChapterSplitRequest): Promise<ChapterSplitResponse> {
     const response = await api.post<ChapterSplitResponse>('/batch/split-chapters', data);
     return response.data;
+  },
+
+  /**
+   * Split chapters with Server-Sent Events streaming
+   *
+   * @param data - Chapter split request
+   * @param onProgress - Callback for progress updates: (current, total, message) => void
+   * @param onChapter - Callback for each chapter: (chapter) => void
+   * @param onComplete - Callback when complete: (response) => void
+   * @param onError - Callback on error: (errorMessage) => void
+   */
+  async splitChaptersStream(
+    data: ChapterSplitRequest,
+    onProgress: (current: number, total: number, message: string) => void,
+    onChapter: (chapter: ChapterInfo) => void,
+    onComplete: (response: ChapterSplitResponse) => void,
+    onError: (errorMessage: string) => void
+  ): Promise<void> {
+    const response = await fetch(`${api.defaults.baseURL}/batch/split-chapters-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+
+    if (!reader) {
+      throw new Error('Response body is null');
+    }
+
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE messages (separated by \n\n)
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || ''; // Keep incomplete message in buffer
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          // Parse SSE format: "event: xxx\ndata: {...}"
+          const eventMatch = line.match(/^event: (.+)$/m);
+          const dataMatch = line.match(/^data: (.+)$/m);
+
+          if (eventMatch && dataMatch) {
+            const eventType = eventMatch[1];
+            const data = JSON.parse(dataMatch[1]);
+
+            switch (eventType) {
+              case 'progress':
+                onProgress(data.current, data.total, data.message);
+                break;
+              case 'chapter':
+                onChapter(data);
+                break;
+              case 'complete':
+                onComplete(data);
+                return;
+              case 'error':
+                onError(data.message);
+                return;
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   },
 
   /**

@@ -1,6 +1,10 @@
 import asyncio
 import sys
-sys.path.insert(0, '/home/liyang/lesson-tools')
+from pathlib import Path
+
+# Add project root to path (cross-platform)
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
 
 from backend.models.database import get_db
 

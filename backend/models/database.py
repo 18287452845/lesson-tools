@@ -187,6 +187,17 @@ class Database:
             db, "batch_lesson_plans", "lesson_number", "INTEGER"
         )
 
+        # Classes table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS classes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Template versions table (for version history)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS template_versions (
@@ -206,6 +217,36 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_template_versions_template_id
             ON template_versions(template_id)
         """)
+
+        # Add start_week and class_ids to batch_tasks
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "start_week", "INTEGER DEFAULT 1"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "class_ids", "TEXT"
+        )
+
+        # Add additional batch task fields for location, textbook, resources
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "location", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "textbook_name", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "online_resources", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "generate_reflection", "INTEGER DEFAULT 0"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "class_names", "TEXT"
+        )
+
+        # Add class_ids to lesson_plans
+        await self._add_column_if_not_exists(
+            db, "lesson_plans", "class_ids", "TEXT"
+        )
 
     async def _add_column_if_not_exists(
         self,

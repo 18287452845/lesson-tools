@@ -5,10 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+import logging
 
 from .config import settings
 from .models.database import init_db
-from .api import templates, generate, edit, documents, settings as settings_api, batch
+from .api import templates, generate, edit, documents, settings as settings_api, batch, classes
+from .services.template_sync import sync_templates_on_startup
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -16,6 +20,13 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Initialize database on startup
     await init_db()
+
+    # Sync templates from storage/templates/ folder to database
+    try:
+        await sync_templates_on_startup()
+    except Exception as e:
+        logger.error(f"模板同步失败: {str(e)}")
+
     yield
     # Cleanup on shutdown
 
@@ -47,6 +58,7 @@ app.include_router(edit.router, prefix=settings.api_prefix, tags=["edit"])
 app.include_router(documents.router, prefix=settings.api_prefix, tags=["documents"])
 app.include_router(settings_api.router, prefix=settings.api_prefix, tags=["settings"])
 app.include_router(batch.router, prefix=settings.api_prefix, tags=["batch"])
+app.include_router(classes.router, prefix=settings.api_prefix, tags=["classes"])
 
 
 @app.get("/")

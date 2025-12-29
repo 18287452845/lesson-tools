@@ -5,6 +5,7 @@ Uses docxtpl (not python-docx) for template rendering to preserve document struc
 See WORD_EXPORT_FIX.md for details.
 """
 import logging
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
@@ -30,6 +31,74 @@ class DocumentRenderer:
         """Initialize the document renderer."""
         self.template_dir = settings.template_dir
         self.output_dir = settings.output_dir
+
+    def _parse_duration_number(self, duration: str) -> float:
+        """
+        Parse numeric value from duration string.
+        Examples: "2课时" -> 2.0, "1.5课时" -> 1.5, "45分钟" -> 45
+
+        Args:
+            duration: Duration string with number and unit
+
+        Returns:
+            Numeric value as float
+        """
+        if not duration or not isinstance(duration, str):
+            return 0.0
+
+        # Match number (including decimals) at the start of string
+        match = re.match(r'^(\d+(?:\.\d+)?)', duration.strip())
+        if match:
+            return float(match.group(1))
+
+        return 0.0
+
+    def _strip_markdown(self, text: str) -> str:
+        """
+        Clean markdown formatting markers from text to make it suitable for Word documents.
+
+        Args:
+            text: Text that may contain markdown formatting
+
+        Returns:
+            Text with markdown markers removed, content preserved
+
+        Cleaning rules:
+        - **bold** → bold (preserve content)
+        - *italic* → italic
+        - # Header → Header
+        - ## Header → Header
+        - [text](url) → text
+        """
+        if not text or not isinstance(text, str):
+            return text or ""
+
+        # Cleaning order matters - from complex to simple patterns
+
+        # 1. Clean links [text](url) → text
+        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+
+        # 2. Clean images ![alt](url) → alt
+        text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', text)
+
+        # 3. Clean bold **text** or __text__
+        text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+        text = re.sub(r'__([^_]+)__', r'\1', text)
+
+        # 4. Clean italic *text* or _text_ (avoid matching already cleaned bold)
+        text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'\1', text)
+        text = re.sub(r'(?<!_)_([^_]+)_(?!_)', r'\1', text)
+
+        # 5. Clean headers # ## ### etc (at line start)
+        text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
+
+        # 6. Clean strikethrough ~~text~~
+        text = re.sub(r'~~([^~]+)~~', r'\1', text)
+
+        # 7. Clean inline code `code`
+        text = re.sub(r'`([^`]+)`', r'\1', text)
+
+        return text
 
     def render_lesson_plan(
         self,
@@ -85,6 +154,7 @@ class DocumentRenderer:
         lesson_plans_data: List[Dict[str, Any]],
         course_name: str,
         document_number: int,
+        week_number: int = 1,
     ) -> str:
         """
         Render multiple lesson plans into a single document with continuous layout.
@@ -97,9 +167,10 @@ class DocumentRenderer:
             lesson_plans_data: List of lesson plan data dictionaries
             course_name: Course name for file naming
             document_number: Document sequence number (1, 2, 3...)
+            week_number: Week number for display (default 1)
 
         Returns:
-            Path to the generated document (named: course_name_01.docx)
+            Path to the generated document (named: 第1周_course_name_01.docx)
         """
         if not lesson_plans_data:
             raise ValueError("lesson_plans_data cannot be empty")
@@ -144,7 +215,7 @@ class DocumentRenderer:
 
         # Combine documents (continuous layout, no page breaks)
         output_path = self._combine_documents_continuous(
-            temp_docs, course_name, document_number
+            temp_docs, course_name, document_number, week_number
         )
 
         # Clean up temporary files
@@ -161,6 +232,7 @@ class DocumentRenderer:
         doc_paths: List[str],
         course_name: str,
         document_number: int,
+        week_number: int = 1,
     ) -> str:
         """
         Combine multiple documents into one (continuous layout, no page breaks).
@@ -172,15 +244,17 @@ class DocumentRenderer:
             doc_paths: List of paths to documents to combine
             course_name: Course name for output filename
             document_number: Document sequence number (1, 2, 3...)
+            week_number: Week number for display (default 1)
 
         Returns:
-            Path to the combined document (named: course_name_01.docx)
+            Path to the combined document (named: 第1周_course_name_01.docx)
         """
         if len(doc_paths) == 0:
             raise ValueError("No documents to combine")
 
-        # Generate output filename: course_name_01.docx, course_name_02.docx, etc.
-        output_filename = f"{course_name}_{document_number:02d}.docx"
+        # Generate output filename: 第1周_course_name_01.docx
+        week_display = f"第{week_number}周"
+        output_filename = f"{week_display}_{course_name}_{document_number:02d}.docx"
         output_path = str(self.output_dir / output_filename)
 
         if len(doc_paths) == 1:
@@ -216,12 +290,15 @@ class DocumentRenderer:
         Process data for template filling.
 
         Converts complex data structures into formats suitable for Jinja2 rendering.
+        Also strips markdown formatting from text content.
         """
         processed = {}
 
-        # Copy all simple fields
+        # Copy all simple fields with markdown cleaning
         for key, value in data.items():
-            if isinstance(value, (str, int, float, bool)) or value is None:
+            if isinstance(value, str):
+                processed[key] = self._strip_markdown(value)
+            elif isinstance(value, (int, float, bool)) or value is None:
                 processed[key] = value if value is not None else ""
 
         # Process teaching_goals
@@ -250,11 +327,24 @@ class DocumentRenderer:
         if "teaching_steps" in data:
             steps = data["teaching_steps"]
             if isinstance(steps, list):
-                processed["teaching_steps"] = steps
+                # Clean markdown from each step's text fields
+                cleaned_steps = []
+                for step in steps:
+                    if isinstance(step, dict):
+                        cleaned_step = {}
+                        for key, value in step.items():
+                            if isinstance(value, str):
+                                cleaned_step[key] = self._strip_markdown(value)
+                            else:
+                                cleaned_step[key] = value
+                        cleaned_steps.append(cleaned_step)
+                    else:
+                        cleaned_steps.append(step)
+                processed["teaching_steps"] = cleaned_steps
 
                 # Also create combined text versions for templates without loops
                 step_texts = []
-                for i, step in enumerate(steps):
+                for i, step in enumerate(cleaned_steps):
                     if isinstance(step, dict):
                         stage = step.get("stage", "") or step.get("title", "")
                         duration = step.get("duration", "")
@@ -281,8 +371,8 @@ class DocumentRenderer:
 
                 processed["teaching_steps_text"] = "\n\n".join(step_texts)
             elif isinstance(steps, str):
-                processed["teaching_steps"] = steps
-                processed["teaching_steps_text"] = steps
+                processed["teaching_steps"] = self._strip_markdown(steps)
+                processed["teaching_steps_text"] = self._strip_markdown(steps)
             else:
                 processed["teaching_steps"] = []
                 processed["teaching_steps_text"] = ""
@@ -304,8 +394,9 @@ class DocumentRenderer:
             processed["teaching_topic"] = data["topic"]
         if "duration" in data:
             processed["teaching_hours"] = data["duration"]
-        if "grade" in data:
-            processed["class_name"] = data["grade"]
+            # Also add numeric duration for templates that only need the number
+            duration_value = self._parse_duration_number(data["duration"])
+            processed["duration_hours"] = duration_value
         if "teaching_methods" in data:
             processed["teaching_methods_content"] = data["teaching_methods"]
         if "teaching_tools" in data:
@@ -319,7 +410,7 @@ class DocumentRenderer:
             "student_analysis", "textbook_analysis",
             "blackboard_design", "reflection",
             "week_number", "location", "references",
-            "ideological_political"
+            "ideological_political", "class_name"
         ]:
             if key in data and key not in processed:
                 value = data[key]

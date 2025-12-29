@@ -22,6 +22,7 @@ import {
   InputNumber,
   Button,
   Table,
+  List,
   message,
   Progress,
   Spin,
@@ -32,6 +33,9 @@ import {
   Radio,
   Divider,
   Alert,
+  Checkbox,
+  Row,
+  Col,
 } from 'antd';
 import {
   FileTextOutlined,
@@ -48,13 +52,14 @@ import type {
   BatchTask,
   TemplateInfo,
   CourseChapterTemplate,
+  ClassInfo,
 } from '@/types';
 import {
   SUBJECT_OPTIONS,
   GRADE_OPTIONS,
 } from '@/types';
 import { batchApi } from '@/services/batchApi';
-import { templateApi } from '@/services/api';
+import { templateApi, classApi } from '@/services/api';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -75,6 +80,7 @@ const BatchGenerate: React.FC = () => {
   // Step 1: Basic information
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [cachedTemplates, setCachedTemplates] = useState<CourseChapterTemplate[]>([]);
+  const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [loading, setLoading] = useState(false);
 
   // Saved form values (preserved across step changes)
@@ -85,6 +91,10 @@ const BatchGenerate: React.FC = () => {
   const [splittingChapters, setSplittingChapters] = useState(false);
   const [totalLessons, setTotalLessons] = useState(0);
 
+  // Streaming state
+  const [streamProgress, setStreamProgress] = useState({ current: 0, total: 0, message: '' });
+  const [streamedChapters, setStreamedChapters] = useState<ChapterInfo[]>([]);
+
   // Step 3: Progress
   const [batchTask, setBatchTask] = useState<BatchTask | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -93,6 +103,7 @@ const BatchGenerate: React.FC = () => {
   useEffect(() => {
     loadTemplates();
     loadCachedTemplates();
+    loadClasses();
   }, []);
 
   // Poll task status in step 3
@@ -131,6 +142,15 @@ const BatchGenerate: React.FC = () => {
     } catch (error) {
       console.error('Failed to load cached templates:', error);
       message.error('加载缓存模板失败');
+    }
+  };
+
+  const loadClasses = async () => {
+    try {
+      const data = await classApi.listClasses();
+      setClasses(data.classes);
+    } catch (error) {
+      console.error('Failed to load classes:', error);
     }
   };
 
@@ -186,16 +206,38 @@ const BatchGenerate: React.FC = () => {
     };
 
     setSplittingChapters(true);
+    setStreamedChapters([]);
+    setStreamProgress({ current: 0, total: 0, message: '初始化中...' });
+
     try {
-      const response = await batchApi.splitChapters(request);
-      setChapters(response.chapters);
-      setTotalLessons(response.total_lessons);
-      setCurrentStep(1);
-      const numDocs = Math.ceil(response.total_lessons / 2);
-      message.success(`成功生成 ${response.total_lessons} 份教案（${numDocs} 个文档）`);
+      // Use streaming API
+      await batchApi.splitChaptersStream(
+        request,
+        // onProgress callback
+        (current: number, total: number, message: string) => {
+          setStreamProgress({ current, total, message });
+        },
+        // onChapter callback
+        (chapter: ChapterInfo) => {
+          setStreamedChapters((prev) => [...prev, chapter]);
+        },
+        // onComplete callback
+        (response: ChapterSplitResponse) => {
+          setChapters(response.chapters);
+          setTotalLessons(response.total_lessons);
+          setCurrentStep(1);
+          const numDocs = Math.ceil(response.total_lessons / 2);
+          message.success(`成功生成 ${response.total_lessons} 份教案（${numDocs} 个文档）`);
+          setSplittingChapters(false);
+        },
+        // onError callback
+        (errorMessage: string) => {
+          message.error(errorMessage || '章节生成失败');
+          setSplittingChapters(false);
+        }
+      );
     } catch (error: any) {
       message.error(error.message || '章节生成失败');
-    } finally {
       setSplittingChapters(false);
     }
   };
@@ -234,7 +276,10 @@ const BatchGenerate: React.FC = () => {
       total_hours: values.total_hours,
       hours_per_lesson: values.hours_per_lesson || 2,
       chapters: chapters,
+      start_week: values.start_week || 1,
+      class_ids: values.class_ids || [],
       additional_requirements: values.additional_requirements,
+      generate_reflection: values.generate_reflection || false,
     };
 
     setLoading(true);
@@ -363,162 +408,330 @@ const BatchGenerate: React.FC = () => {
             }}
             preserve={true}
           >
-            {/* Mode selection */}
-            <Form.Item label="选择方式">
+            {/* Mode Selection Card */}
+            <Card
+              title={
+                <Space>
+                  <FileTextOutlined />
+                  <span>选择创建方式</span>
+                </Space>
+              }
+              style={{ marginBottom: 16 }}
+            >
               <Radio.Group
                 value={mode}
                 onChange={(e) => {
                   setMode(e.target.value);
                   setChapters([]);
                   setTotalLessons(0);
+                  // Reset form when switching modes
+                  form.resetFields(['course_name', 'subject', 'grade', 'total_hours', 'hours_per_lesson']);
                 }}
                 size="large"
+                style={{ width: '100%' }}
               >
-                <Radio.Button value="new">
-                  <FileTextOutlined /> 创建新课程
-                </Radio.Button>
-                <Radio.Button value="existing">
-                  <HistoryOutlined /> 使用已有模板
-                </Radio.Button>
+                <Row gutter={[16, 16]}>
+                  <Col span={12}>
+                    <Radio.Button value="new" style={{ width: '100%', textAlign: 'center' }}>
+                      <FileTextOutlined /> 创建新课程
+                    </Radio.Button>
+                  </Col>
+                  <Col span={12}>
+                    <Radio.Button value="existing" style={{ width: '100%', textAlign: 'center' }}>
+                      <HistoryOutlined /> 使用已有模板
+                    </Radio.Button>
+                  </Col>
+                </Row>
               </Radio.Group>
-            </Form.Item>
 
-            {/* Existing template selection */}
-            {mode === 'existing' && (
-              <>
-                <Form.Item label="选择课程章节模板">
-                  <Select
-                    placeholder="选择已有的课程章节模板"
-                    size="large"
-                    showSearch
-                    filterOption={(input, option) =>
-                      (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                    }
-                    options={cachedTemplates.map((t) => ({
-                      label: `${t.course_name} - ${t.subject} - ${t.grade} (${t.total_hours}课时, ${t.chapters?.length || 0}份教案, 使用${t.use_count}次)`,
-                      value: t.id,
-                    }))}
-                    onChange={handleSelectCachedTemplate}
-                  />
-                  <div style={{ marginTop: 8 }}>
-                    <Text type="secondary">
-                      选择后将自动填充课程信息和章节内容，您只需选择教案模板即可
-                    </Text>
-                  </div>
-                </Form.Item>
-                <Divider>或者继续填写表单创建新课程</Divider>
-              </>
-            )}
+              {/* Existing template selection */}
+              {mode === 'existing' && (
+                <div style={{ marginTop: 16 }}>
+                  <Form.Item label="选择课程章节模板" style={{ marginBottom: 0 }}>
+                    <Select
+                      placeholder="选择已有的课程章节模板"
+                      size="large"
+                      showSearch
+                      filterOption={(input, option) =>
+                        (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                      }
+                      options={cachedTemplates.map((t) => ({
+                        label: `${t.course_name} - ${t.subject} - ${t.grade} (${t.total_hours}课时, ${t.chapters?.length || 0}份教案, 使用${t.use_count}次)`,
+                        value: t.id,
+                      }))}
+                      onChange={handleSelectCachedTemplate}
+                    />
+                    <div style={{ marginTop: 8 }}>
+                      <Text type="secondary">
+                        选择后将自动填充课程信息和章节内容
+                      </Text>
+                    </div>
+                  </Form.Item>
+                </div>
+              )}
+            </Card>
 
-            <Form.Item
-              name="course_name"
-              label="课程名称"
-              rules={[{ required: true, message: '请输入课程名称' }]}
+            {/* Course Information Card */}
+            <Card
+              title={
+                <Space>
+                  <FileTextOutlined />
+                  <span>课程基本信息</span>
+                </Space>
+              }
+              style={{ marginBottom: 16 }}
             >
-              <Input placeholder="例如：Java程序设计" size="large" disabled={mode === 'existing' && chapters.length > 0} />
-            </Form.Item>
+              <Row gutter={16}>
+                <Col span={24}>
+                  <Form.Item
+                    name="course_name"
+                    label="课程名称"
+                    rules={[{ required: true, message: '请输入课程名称' }]}
+                  >
+                    <Input
+                      placeholder="例如：Java程序设计"
+                      size="large"
+                      disabled={mode === 'existing' && chapters.length > 0}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
 
-            <Space style={{ width: '100%' }} size="large">
-              <Form.Item
-                name="subject"
-                label="学科"
-                rules={[{ required: true, message: '请选择学科' }]}
-                style={{ width: 200 }}
-              >
-                <Select
-                  placeholder="选择学科"
-                  options={SUBJECT_OPTIONS.map((s) => ({ label: s, value: s }))}
-                  showSearch
-                  disabled={mode === 'existing' && chapters.length > 0}
-                />
-              </Form.Item>
+              <Row gutter={16}>
+                <Col xs={24} sm={8}>
+                  <Form.Item
+                    name="subject"
+                    label="学科"
+                    rules={[{ required: true, message: '请选择学科' }]}
+                  >
+                    <Select
+                      placeholder="选择学科"
+                      size="large"
+                      options={SUBJECT_OPTIONS.map((s) => ({ label: s, value: s }))}
+                      showSearch
+                      disabled={mode === 'existing' && chapters.length > 0}
+                    />
+                  </Form.Item>
+                </Col>
 
-              <Form.Item
-                name="grade"
-                label="年级"
-                rules={[{ required: true, message: '请选择年级' }]}
-                style={{ width: 200 }}
-              >
-                <Select
-                  placeholder="选择年级"
-                  options={GRADE_OPTIONS.map((g) => ({ label: g, value: g }))}
-                  showSearch
-                  disabled={mode === 'existing' && chapters.length > 0}
-                />
-              </Form.Item>
+                <Col xs={24} sm={8}>
+                  <Form.Item
+                    name="grade"
+                    label="年级"
+                    rules={[{ required: true, message: '请选择年级' }]}
+                  >
+                    <Select
+                      placeholder="选择年级"
+                      size="large"
+                      options={GRADE_OPTIONS.map((g) => ({ label: g, value: g }))}
+                      showSearch
+                      disabled={mode === 'existing' && chapters.length > 0}
+                    />
+                  </Form.Item>
+                </Col>
 
-              <Form.Item
-                name="template_id"
-                label="教案模板"
-                rules={[{ required: true, message: '请选择模板' }]}
-                style={{ width: 300 }}
-              >
-                <Select
-                  placeholder="选择模板"
-                  showSearch
-                >
-                  {templates.map((t) => (
-                    <Select.Option key={t.id} value={t.id}>
-                      {t.name}
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Space>
+                <Col xs={24} sm={8}>
+                  <Form.Item
+                    name="template_id"
+                    label="教案模板"
+                    rules={[{ required: true, message: '请选择模板' }]}
+                  >
+                    <Select
+                      placeholder="选择模板"
+                      size="large"
+                      showSearch
+                    >
+                      {templates.map((t) => (
+                        <Select.Option key={t.id} value={t.id}>
+                          {t.name}
+                        </Select.Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Card>
 
-            <Space size="large" align="start">
-              <Form.Item
-                name="total_hours"
-                label="总课时数"
-                rules={[{ required: true, type: 'number', min: 2, message: '请输入总课时数' }]}
-              >
-                <InputNumber
-                  min={2}
-                  max={200}
-                  step={2}
-                  disabled={mode === 'existing' && chapters.length > 0}
-                  addonAfter="课时"
-                  style={{ width: 150 }}
-                />
-              </Form.Item>
+            {/* Hours Configuration Card */}
+            <Card
+              title={
+                <Space>
+                  <ClockCircleOutlined />
+                  <span>课时配置</span>
+                </Space>
+              }
+              style={{ marginBottom: 16 }}
+            >
+              <Row gutter={16}>
+                <Col xs={24} sm={8}>
+                  <Form.Item
+                    name="total_hours"
+                    label="总课时数"
+                    rules={[{ required: true, type: 'number', min: 2, message: '请输入总课时数' }]}
+                  >
+                    <InputNumber
+                      min={2}
+                      max={200}
+                      step={2}
+                      disabled={mode === 'existing' && chapters.length > 0}
+                      addonAfter="课时"
+                      size="large"
+                      style={{ width: '100%' }}
+                    />
+                  </Form.Item>
+                </Col>
 
-              <Form.Item
-                name="hours_per_lesson"
-                label="每份教案课时"
-                rules={[{ required: true, type: 'number', min: 1 }]}
-              >
-                <InputNumber
-                  min={1}
-                  max={4}
-                  disabled={mode === 'existing' && chapters.length > 0}
-                  addonAfter="课时"
-                  style={{ width: 150 }}
-                />
-              </Form.Item>
+                <Col xs={24} sm={8}>
+                  <Form.Item
+                    name="hours_per_lesson"
+                    label="每份教案课时"
+                    rules={[{ required: true, type: 'number', min: 1 }]}
+                  >
+                    <InputNumber
+                      min={1}
+                      max={4}
+                      disabled={mode === 'existing' && chapters.length > 0}
+                      addonAfter="课时"
+                      size="large"
+                      style={{ width: '100%' }}
+                    />
+                  </Form.Item>
+                </Col>
 
-              <Form.Item label="生成统计" style={{ marginTop: 0 }}>
-                <Alert
-                  message={(() => {
-                    const totalHours = form.getFieldValue('total_hours') || 64;
-                    const hoursPerLesson = form.getFieldValue('hours_per_lesson') || 2;
-                    const numLessons = Math.floor(totalHours / hoursPerLesson);
-                    const numDocs = Math.ceil(numLessons / 2);
-                    return `将生成 ${numLessons} 份教案，共 ${numDocs} 个文档`;
-                  })()}
-                  type="info"
-                  showIcon
-                />
-              </Form.Item>
-            </Space>
+                <Col xs={24} sm={8}>
+                  <Form.Item
+                    name="start_week"
+                    label="起始周次"
+                    initialValue={1}
+                    tooltip="第1个文档对应的周次"
+                  >
+                    <InputNumber
+                      min={1}
+                      max={20}
+                      disabled={mode === 'existing' && chapters.length > 0}
+                      addonAfter="周"
+                      size="large"
+                      style={{ width: '100%' }}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
 
-            {/* Chapter input mode for new courses */}
+              <Alert
+                message={(() => {
+                  const totalHours = form.getFieldValue('total_hours') || 64;
+                  const hoursPerLesson = form.getFieldValue('hours_per_lesson') || 2;
+                  const numLessons = Math.floor(totalHours / hoursPerLesson);
+                  const numDocs = Math.ceil(numLessons / 2);
+                  return `预计生成 ${numLessons} 份教案，共 ${numDocs} 个文档`;
+                })()}
+                type="info"
+                showIcon
+              />
+            </Card>
+
+            {/* Class & Options Card */}
+            <Card
+              title={
+                <Space>
+                  <CheckCircleOutlined />
+                  <span>授课设置</span>
+                </Space>
+              }
+              style={{ marginBottom: 16 }}
+            >
+              <Row gutter={16}>
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    name="class_ids"
+                    label="授课班级"
+                    tooltip="可多选，留空则不显示授课班级"
+                  >
+                    <Select
+                      mode="multiple"
+                      placeholder="选择班级（可多选）"
+                      size="large"
+                      disabled={mode === 'existing' && chapters.length > 0}
+                      options={classes.map((c) => ({ label: c.name, value: c.id }))}
+                      allowClear
+                      showSearch
+                      filterOption={(input, option) =>
+                        (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    name="location"
+                    label="授课地点"
+                    tooltip="所有教案共用同一地点"
+                  >
+                    <Input
+                      placeholder="例如：教学楼301教室"
+                      size="large"
+                      disabled={mode === 'existing' && chapters.length > 0}
+                    />
+                  </Form.Item>
+                </Col>
+
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    name="textbook_name"
+                    label="教材名称"
+                  >
+                    <Input
+                      placeholder="例如：《Python程序设计基础》第3版"
+                      size="large"
+                      disabled={mode === 'existing' && chapters.length > 0}
+                    />
+                  </Form.Item>
+                </Col>
+
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    name="online_resources"
+                    label="网络资源（AI生成）"
+                    tooltip="留空则由AI根据每个教案课题自动生成相关网络资源，也可手动填写（所有教案共用）"
+                    extra="留空由AI生成，或手动填写（所有教案共用）"
+                  >
+                    <Input
+                      placeholder="留空由AI生成，或填写：慕课平台、教学视频链接等"
+                      size="large"
+                      disabled={mode === 'existing' && chapters.length > 0}
+                    />
+                  </Form.Item>
+                </Col>
+
+                <Col xs={24}>
+                  <Form.Item
+                    name="generate_reflection"
+                    valuePropName="checked"
+                    tooltip="勾选后将在生成教案时包含教学反思内容"
+                  >
+                    <Checkbox style={{ fontSize: 16 }}>同时生成教学反思</Checkbox>
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Card>
+
+            {/* Chapter Content Card (for new courses only) */}
             {mode === 'new' && (
-              <>
-                <Divider orientation="left">章节内容</Divider>
+              <Card
+                title={
+                  <Space>
+                    <EditOutlined />
+                    <span>章节内容</span>
+                  </Space>
+                }
+                style={{ marginBottom: 16 }}
+              >
                 <Form.Item label="章节来源">
                   <Radio.Group
                     value={chapterInputMode}
                     onChange={(e) => setChapterInputMode(e.target.value)}
+                    size="large"
                   >
                     <Radio value="ai">
                       <FileTextOutlined /> AI自动生成章节
@@ -542,61 +755,125 @@ const BatchGenerate: React.FC = () => {
                     />
                   </Form.Item>
                 )}
+              </Card>
+            )}
+
+            {/* Additional Information Card */}
+            <Card
+              title={
+                <Space>
+                  <ExclamationCircleOutlined />
+                  <span>补充信息</span>
+                </Space>
+              }
+              style={{ marginBottom: 16 }}
+            >
+              <Row gutter={16}>
+                <Col span={24}>
+                  <Form.Item name="additional_info" label="补充说明（可选）">
+                    <TextArea
+                      rows={3}
+                      placeholder="例如：本课程侧重实践操作，每周需包含实验环节..."
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={24}>
+                  <Form.Item name="additional_requirements" label="额外要求（可选）">
+                    <TextArea
+                      rows={3}
+                      placeholder="对生成的教案有特殊要求，例如：教学方法、重点难点等..."
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Card>
+
+            {/* Action Buttons */}
+            {mode === 'new' && (
+              <>
+                <Form.Item style={{ marginBottom: 0 }}>
+                  <Space size="large">
+                    <Button
+                      type="primary"
+                      htmlType="submit"
+                      size="large"
+                      loading={splittingChapters}
+                      icon={<FileTextOutlined />}
+                    >
+                      {splittingChapters ? '生成中...' : (chapterInputMode === 'ai' ? '下一步：AI生成章节' : '下一步：解析章节')}
+                    </Button>
+                    <Button size="large" onClick={() => navigate('/')}>
+                      取消
+                    </Button>
+                  </Space>
+                </Form.Item>
+
+                {/* Streaming Progress Display */}
+                {splittingChapters && (
+                  <Card style={{ marginTop: 16 }} bordered={false}>
+                    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                      <Progress
+                        percent={streamProgress.total > 0 ? Math.round((streamProgress.current / streamProgress.total) * 100) : 0}
+                        status="active"
+                        strokeColor={{
+                          '0%': '#108ee9',
+                          '100%': '#87d068',
+                        }}
+                        trailColor="rgba(0, 0, 0, 0.06)"
+                      />
+                      <div style={{ textAlign: 'center' }}>
+                        <Text type={streamProgress.message ? 'secondary' : undefined}>
+                          {streamProgress.message || '正在生成章节...'}
+                        </Text>
+                      </div>
+                      {streamedChapters.length > 0 && (
+                        <div style={{ marginTop: 16 }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            已生成 {streamedChapters.length} 个章节：
+                          </Text>
+                          <List
+                            size="small"
+                            dataSource={streamedChapters}
+                            renderItem={(chapter) => (
+                              <List.Item style={{ padding: '4px 0' }}>
+                                <Space>
+                                  <Tag color="blue">教案{chapter.lesson_number}</Tag>
+                                  <Text>{chapter.topic}</Text>
+                                </Space>
+                              </List.Item>
+                            )}
+                            style={{
+                              marginTop: 8,
+                              maxHeight: 200,
+                              overflow: 'auto',
+                              backgroundColor: '#fafafa',
+                              borderRadius: 4,
+                              padding: '8px 12px',
+                            }}
+                          />
+                        </div>
+                      )}
+                    </Space>
+                  </Card>
+                )}
               </>
             )}
 
-            <Form.Item name="additional_info" label="补充说明（可选）">
-              <TextArea
-                rows={3}
-                placeholder="例如：本课程侧重实践操作，每周需包含实验环节..."
-              />
-            </Form.Item>
-
-            <Form.Item name="additional_requirements" label="额外要求（可选）">
-              <TextArea
-                rows={3}
-                placeholder="对生成的教案有特殊要求，例如：教学方法、重点难点等..."
-              />
-            </Form.Item>
-
-            {mode === 'new' && (
-              <Form.Item>
-                <Space>
-                  <Button
-                    type="primary"
-                    htmlType="submit"
-                    size="large"
-                    loading={splittingChapters}
-                    icon={<FileTextOutlined />}
-                  >
-                    {splittingChapters ? '生成中...' : (chapterInputMode === 'ai' ? '下一步：AI生成章节' : '下一步：解析章节')}
-                  </Button>
-                  <Button size="large" onClick={() => navigate('/')}>
-                    取消
-                  </Button>
-                </Space>
-              </Form.Item>
-            )}
-
             {mode === 'existing' && chapters.length > 0 && (
-              <Form.Item>
-                <Space>
+              <Form.Item style={{ marginBottom: 0 }}>
+                <Space size="large">
                   <Button
                     type="primary"
                     size="large"
                     icon={<CheckCircleOutlined />}
                     onClick={() => {
-                      // Validate required fields
                       const values = form.getFieldsValue();
-
                       if (!values.template_id) {
                         message.error('请先选择教案模板');
                         return;
                       }
-
                       form.validateFields(['template_id', 'course_name', 'subject', 'grade', 'total_hours', 'hours_per_lesson'])
                         .then(() => {
-                          // Save form values before switching step
                           setSavedFormValues(values);
                           setCurrentStep(1);
                           message.success('进入章节确认步骤');
@@ -620,52 +897,61 @@ const BatchGenerate: React.FC = () => {
         {/* Step 2: Review Chapters */}
         {currentStep === 1 && (
           <div>
-            <Title level={4}>
-              已准备 {chapters.length} 份教案，请审核并修改：
-            </Title>
+            <Title level={4}>确认章节信息</Title>
             <Paragraph type="secondary">
-              您可以直接在表格中编辑课题和内容概述。每份教案 {savedFormValues.hours_per_lesson || 2} 课时，每个文档包含2份教案。
+              已准备 {chapters.length} 份教案，请审核并修改课题和内容概述
             </Paragraph>
 
-            {/* Show course info and template selection */}
-            <Card style={{ marginBottom: 16, backgroundColor: '#f5f5f5' }}>
-              <Space direction="vertical" style={{ width: '100%' }}>
-                <div>
-                  <Text strong>课程信息：</Text>
-                  <Text style={{ marginLeft: 8 }}>
-                    {savedFormValues.course_name} - {savedFormValues.subject} - {savedFormValues.grade}
-                  </Text>
-                  <Text style={{ marginLeft: 16 }}>
-                    （{savedFormValues.total_hours}课时，{chapters.length}份教案，{Math.ceil(chapters.length / 2)}个文档）
-                  </Text>
-                </div>
-
-                <div>
-                  <Text strong>教案模板：</Text>
-                  {savedFormValues.template_id ? (
-                    <Text style={{ marginLeft: 8, color: '#52c41a' }}>
-                      ✓ {templates.find(t => t.id === savedFormValues.template_id)?.name || '已选择'}
+            {/* Course Summary Card */}
+            <Card
+              style={{ marginBottom: 16, backgroundColor: '#f0f5ff', borderColor: '#adc6ff' }}
+            >
+              <Row gutter={16}>
+                <Col xs={24} sm={12}>
+                  <Space direction="vertical" size={4}>
+                    <Text type="secondary">课程信息</Text>
+                    <Text strong style={{ fontSize: 16 }}>
+                      {savedFormValues.course_name} - {savedFormValues.subject} - {savedFormValues.grade}
                     </Text>
-                  ) : (
-                    <Text style={{ marginLeft: 8, color: '#ff4d4f' }}>
-                      <ExclamationCircleOutlined /> 请返回上一步选择教案模板
+                    <Text type="secondary">
+                      {savedFormValues.total_hours}课时 / {chapters.length}份教案 / {Math.ceil(chapters.length / 2)}个文档
                     </Text>
-                  )}
-                </div>
-              </Space>
+                  </Space>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Space direction="vertical" size={4}>
+                    <Text type="secondary">教案模板</Text>
+                    {savedFormValues.template_id ? (
+                      <>
+                        <Text strong style={{ fontSize: 16, color: '#52c41a' }}>
+                          <CheckCircleOutlined /> {templates.find(t => t.id === savedFormValues.template_id)?.name || '已选择'}
+                        </Text>
+                        <Text type="secondary">每份教案 {savedFormValues.hours_per_lesson || 2} 课时</Text>
+                      </>
+                    ) : (
+                      <Text type="danger" strong>
+                        <ExclamationCircleOutlined /> 请返回上一步选择教案模板
+                      </Text>
+                    )}
+                  </Space>
+                </Col>
+              </Row>
             </Card>
 
-            <Table
-              columns={chapterColumns}
-              dataSource={chapters}
-              rowKey="lesson_number"
-              pagination={false}
-              scroll={{ y: 400 }}
-              style={{ marginTop: 16 }}
-            />
+            {/* Chapter Edit Table */}
+            <Card title="章节列表" style={{ marginBottom: 16 }}>
+              <Table
+                columns={chapterColumns}
+                dataSource={chapters}
+                rowKey="lesson_number"
+                pagination={false}
+                scroll={{ y: 400 }}
+              />
+            </Card>
 
-            <div style={{ marginTop: 24 }}>
-              <Space>
+            {/* Action Buttons */}
+            <Card bordered={false}>
+              <Space size="large">
                 <Button
                   type="primary"
                   size="large"
@@ -679,8 +965,11 @@ const BatchGenerate: React.FC = () => {
                 <Button size="large" onClick={() => setCurrentStep(0)}>
                   上一步
                 </Button>
+                <Button size="large" onClick={() => navigate('/')}>
+                  取消
+                </Button>
               </Space>
-            </div>
+            </Card>
           </div>
         )}
 
@@ -689,68 +978,137 @@ const BatchGenerate: React.FC = () => {
           <div>
             <Title level={4}>生成进度</Title>
 
-            <Card style={{ marginTop: 16 }}>
-              <Space direction="vertical" style={{ width: '100%' }} size="large">
-                <div>
-                  <Text strong>课程名称：</Text>
-                  <Text>{batchTask.course_name}</Text>
-                  <Text style={{ marginLeft: 24 }} strong>状态：</Text>
-                  {getStatusBadge(batchTask.status)}
+            {/* Status Card */}
+            <Card
+              style={{ marginBottom: 16 }}
+            >
+              <Row gutter={16} align="middle">
+                <Col xs={24} sm={12}>
+                  <Space direction="vertical" size={4}>
+                    <Text type="secondary">课程名称</Text>
+                    <Text strong style={{ fontSize: 18 }}>{batchTask.course_name}</Text>
+                  </Space>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Space direction="vertical" size={4}>
+                    <Text type="secondary">状态</Text>
+                    {getStatusBadge(batchTask.status)}
+                  </Space>
+                </Col>
+              </Row>
+            </Card>
+
+            {/* Progress Card */}
+            <Card
+              title={
+                <Space>
+                  <ClockCircleOutlined />
+                  <span>生成进度</span>
+                </Space>
+              }
+              style={{ marginBottom: 16 }}
+            >
+              <Progress
+                percent={Math.round((batchTask.completed_count / batchTask.total_count) * 100)}
+                status={
+                  batchTask.status === 'completed'
+                    ? 'success'
+                    : batchTask.status === 'failed'
+                    ? 'exception'
+                    : 'active'
+                }
+                strokeColor={{
+                  '0%': '#108ee9',
+                  '100%': '#87d068',
+                }}
+              />
+              <div style={{ marginTop: 16, textAlign: 'center' }}>
+                <Text strong style={{ fontSize: 16 }}>
+                  {batchTask.completed_count} / {batchTask.total_count}
+                </Text>
+                <Text type="secondary" style={{ marginLeft: 8 }}>
+                  份教案已生成
+                </Text>
+              </div>
+
+              {batchTask.failed_count > 0 && (
+                <Alert
+                  message={`${batchTask.failed_count} 份教案生成失败，请稍后重试`}
+                  type="warning"
+                  showIcon
+                  style={{ marginTop: 16 }}
+                />
+              )}
+
+              {batchTask.error_message && (
+                <Alert
+                  message={`错误：${batchTask.error_message}`}
+                  type="error"
+                  showIcon
+                  style={{ marginTop: 16 }}
+                />
+              )}
+
+              {batchTask.status === 'processing' && (
+                <div style={{ marginTop: 16, textAlign: 'center' }}>
+                  <Spin /> <Text type="secondary">正在生成教案，请稍候...</Text>
                 </div>
+              )}
 
-                <div>
-                  <Text strong style={{ marginBottom: 8, display: 'block' }}>
-                    生成进度：{batchTask.completed_count} / {batchTask.total_count}
-                  </Text>
-                  <Progress
-                    percent={Math.round((batchTask.completed_count / batchTask.total_count) * 100)}
-                    status={
-                      batchTask.status === 'completed'
-                        ? 'success'
-                        : batchTask.status === 'failed'
-                        ? 'exception'
-                        : 'active'
-                    }
-                  />
-                </div>
+              {batchTask.status === 'completed' && (
+                <Alert
+                  message="批量生成完成！"
+                  type="success"
+                  showIcon
+                  style={{ marginTop: 16 }}
+                />
+              )}
+            </Card>
 
-                {batchTask.failed_count > 0 && (
-                  <div>
-                    <Text type="warning">失败：{batchTask.failed_count} 个</Text>
-                  </div>
-                )}
-
-                {batchTask.error_message && (
-                  <div>
-                    <Text type="danger">错误信息：{batchTask.error_message}</Text>
-                  </div>
-                )}
-
+            {/* Action Buttons */}
+            <Card bordered={false}>
+              <Space size="large">
                 {batchTask.status === 'completed' && (
-                  <div>
-                    <Text type="success" strong>✓ 批量生成完成！</Text>
-                    <div style={{ marginTop: 16 }}>
-                      <Space>
-                        <Button
-                          type="primary"
-                          size="large"
-                          onClick={() => navigate('/batch-downloads')}
-                          icon={<FileTextOutlined />}
-                        >
-                          前往下载页面
-                        </Button>
-                        <Button size="large" onClick={() => navigate('/')}>
-                          返回首页
-                        </Button>
-                      </Space>
-                    </div>
-                  </div>
+                  <>
+                    <Button
+                      type="primary"
+                      size="large"
+                      onClick={() => navigate('/batch-downloads')}
+                      icon={<FileTextOutlined />}
+                    >
+                      前往下载页面
+                    </Button>
+                    <Button
+                      size="large"
+                      onClick={() => navigate('/')}
+                    >
+                      返回首页
+                    </Button>
+                  </>
                 )}
-
                 {batchTask.status === 'processing' && (
-                  <div>
-                    <Spin /> <Text type="secondary">正在生成教案，请稍候...</Text>
-                  </div>
+                  <Button
+                    size="large"
+                    onClick={() => navigate('/')}
+                  >
+                    返回首页
+                  </Button>
+                )}
+                {batchTask.status === 'failed' && (
+                  <>
+                    <Button
+                      size="large"
+                      onClick={() => setCurrentStep(0)}
+                    >
+                      返回上一步
+                    </Button>
+                    <Button
+                      size="large"
+                      onClick={() => navigate('/')}
+                    >
+                      返回首页
+                    </Button>
+                  </>
                 )}
               </Space>
             </Card>

@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Button,
   Card,
+  Checkbox,
   Form,
   Input,
   Select,
@@ -21,6 +22,8 @@ import { ArrowLeftOutlined, LoadingOutlined } from '@ant-design/icons';
 import { useTemplateStore } from '@/stores/templateStore';
 import { useGeneratorStore } from '@/stores/generatorStore';
 import { SUBJECT_OPTIONS, GRADE_OPTIONS, DURATION_OPTIONS } from '@/types';
+import type { ClassInfo } from '@/types';
+import { classApi } from '@/services/api';
 import GeneratedContent from '@/components/generator/GeneratedContent';
 
 const { Title, Text } = Typography;
@@ -48,11 +51,22 @@ function NewLessonPlan() {
 
   const [currentStep, setCurrentStep] = useState(0);
   const [form] = Form.useForm();
+  const [classes, setClasses] = useState<ClassInfo[]>([]);
 
-  // Fetch templates on mount
+  // Fetch templates and classes on mount
   useEffect(() => {
     fetchTemplates();
+    loadClasses();
   }, [fetchTemplates]);
+
+  const loadClasses = async () => {
+    try {
+      const data = await classApi.listClasses();
+      setClasses(data.classes);
+    } catch (error) {
+      console.error('Failed to load classes:', error);
+    }
+  };
 
   const handleGenerate = async () => {
     try {
@@ -156,16 +170,62 @@ function NewLessonPlan() {
                 options={DURATION_OPTIONS.map((d) => ({ label: d, value: d }))}
               />
             </Form.Item>
+
+            <Form.Item
+              name="class_ids"
+              label="授课班级"
+              tooltip="可多选，留空则不显示授课班级"
+            >
+              <Select
+                mode="multiple"
+                placeholder="选择班级"
+                options={classes.map((c) => ({ label: c.name, value: c.id }))}
+                allowClear
+                showSearch
+                filterOption={(input, option) =>
+                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="generateReflection"
+              valuePropName="checked"
+              tooltip="勾选后将在生成教案时包含教学反思内容，否则显示为「（待课后填写）」"
+            >
+              <Checkbox>同时生成教学反思</Checkbox>
+            </Form.Item>
+          </Space>
+
+          <Divider />
+
+          <Title level={5}>教学设置（可选）</Title>
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <Form.Item label="授课地点" name="location">
+              <Input placeholder="例如：教学楼301教室" />
+            </Form.Item>
+
+            <Form.Item label="教材名称" name="textbook_name">
+              <Input placeholder="例如：《Python程序设计基础》第3版" />
+            </Form.Item>
+
+            <Form.Item
+              label="网络资源（AI生成）"
+              name="online_resources"
+              tooltip="留空则由AI根据课题自动生成相关网络资源，也可手动填写"
+              extra="留空将由AI自动生成，或手动填写相关链接"
+            >
+              <TextArea
+                rows={2}
+                placeholder="留空由AI生成，或填写：https://www.example.com, 慕课平台相关课程等"
+              />
+            </Form.Item>
           </Space>
 
           <Divider />
 
           <Title level={5}>教材信息（可选）</Title>
           <Space direction="vertical" style={{ width: '100%' }} size="middle">
-            <Form.Item label="教材版本" name="textbook_version">
-              <Input placeholder="例如：人教版" />
-            </Form.Item>
-
             <Form.Item label="单元名称" name="unit_name">
               <Input placeholder="例如：第三单元 分数的初步认识" />
             </Form.Item>

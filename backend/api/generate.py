@@ -78,7 +78,7 @@ async def generate_lesson_plan(request: LessonPlanGenerateRequest):
     # Generate content using AI
     try:
         generator = await get_ai_generator()
-        content = await generator.generate_lesson_plan(request, field_configs)
+        content = await generator.generate_lesson_plan(request, field_configs, request.generate_reflection)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -171,7 +171,7 @@ async def generate_lesson_plan_stream(request: LessonPlanGenerateRequest):
                 yield f"data: {json.dumps({'type': 'status', 'message': '开始生成教学目标...', 'progress': 20})}\n\n"
                 await asyncio.sleep(0.1)
 
-                content = await generator.generate_lesson_plan(request, field_configs)
+                content = await generator.generate_lesson_plan(request, field_configs, request.generate_reflection)
 
                 yield f"data: {json.dumps({'type': 'status', 'message': '生成教学重难点...', 'progress': 40})}\n\n"
                 await asyncio.sleep(0.1)
@@ -378,6 +378,17 @@ async def export_lesson_plan(lesson_plan_id: str):
     input_data = json.loads(row["input_data"])
 
     # Prepare data for rendering
+    # Build references from textbook_name and online_resources
+    # Use user-provided online_resources, otherwise use AI-generated
+    online_resources = input_data.get("online_resources") or content.get("online_resources", "")
+
+    references_parts = []
+    if input_data.get("textbook_name"):
+        references_parts.append(f"教材：{input_data['textbook_name']}")
+    if online_resources:
+        references_parts.append(f"网络资源：{online_resources}")
+    references = "\n".join(references_parts) if references_parts else ""
+
     render_data = {
         "subject": input_data.get("subject", ""),
         "grade": input_data.get("grade", ""),
@@ -386,8 +397,8 @@ async def export_lesson_plan(lesson_plan_id: str):
         "duration": input_data.get("duration", ""),
         "class_name": input_data.get("grade", ""),  # For template compatibility
         "week_number": "",  # For template compatibility
-        "location": "",  # For template compatibility
-        "references": "",  # For template compatibility
+        "location": input_data.get("location", ""),  # Use actual value
+        "references": references,  # Use built references
         "ideological_political": "",  # For template compatibility
         **content,
     }

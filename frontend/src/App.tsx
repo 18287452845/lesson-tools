@@ -13,6 +13,7 @@ import LessonPlanDetail from './pages/LessonPlanDetail';
 import Settings from './pages/Settings';
 import BatchGenerate from './pages/BatchGenerate';
 import BatchDownloads from './pages/BatchDownloads';
+import ClassManager from './pages/ClassManager';
 
 const { Content } = Layout;
 
@@ -31,6 +32,7 @@ function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/batch-generate" element={<BatchGenerate />} />
           <Route path="/batch-downloads" element={<BatchDownloads />} />
+          <Route path="/classes" element={<ClassManager />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Content>

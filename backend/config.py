@@ -39,7 +39,20 @@ class Settings(BaseSettings):
 
     # AI Settings
     ai_max_tokens: int = 4096
+    ai_max_tokens_batch: int = int(os.getenv("AI_MAX_TOKENS_BATCH", "16384"))  # 批量生成章节时使用更大的token限制
     ai_temperature: float = 0.7
+    ai_timeout: float = float(os.getenv("AI_TIMEOUT", "180.0"))  # AI 请求超时（秒）
+
+    # AI Retry Settings
+    ai_max_retries: int = int(os.getenv("AI_MAX_RETRIES", "2"))  # 最大重试次数（2次重试=3次尝试）
+    ai_retry_delay: float = float(os.getenv("AI_RETRY_DELAY", "1.0"))  # 重试延迟（秒）
+    ai_retry_backoff: float = float(os.getenv("AI_RETRY_BACKOFF", "2.0"))  # 指数退避倍数
+
+    # Batch Processing Concurrency Settings
+    batch_max_concurrent_documents: int = int(os.getenv("BATCH_MAX_CONCURRENT_DOCUMENTS", "5"))  # Maximum documents to generate concurrently
+    batch_max_concurrent_lessons: int = int(os.getenv("BATCH_MAX_CONCURRENT_LESSONS", "10"))  # Maximum lesson plans to generate concurrently
+    batch_connection_pool_size: int = int(os.getenv("BATCH_CONNECTION_POOL_SIZE", "50"))  # HTTP connection pool size
+    batch_connection_keepalive: float = float(os.getenv("BATCH_CONNECTION_KEEPALIVE", "30.0"))  # HTTP connection keepalive timeout (seconds)
 
     def get_active_model(self) -> str:
         """获取当前激活的AI模型"""

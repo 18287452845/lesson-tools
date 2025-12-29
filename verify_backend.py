@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 后端环境验证脚本
 
@@ -6,6 +7,7 @@
 """
 import sys
 import os
+import platform
 
 def check_dependencies():
     """检查所有依赖是否已安装"""
@@ -167,11 +169,16 @@ def main():
     print("=" * 60)
 
     if all(results):
-        print("✅ 后端环境配置完成，可以启动服务")
+        print("后端环境配置完成，可以启动服务")
         print("\n启动命令:")
         print("  python run_backend.py")
         print("  或")
-        print("  source venv/bin/activate && uvicorn backend.main:app --reload")
+
+        # Platform-specific venv activation
+        if platform.system() == "Windows":
+            print("  venv\\Scripts\\activate && uvicorn backend.main:app --reload")
+        else:
+            print("  source venv/bin/activate && uvicorn backend.main:app --reload")
         return 0
     else:
         print("❌ 后端环境配置不完整，请检查上述错误")

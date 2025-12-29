@@ -53,12 +53,13 @@ class AIGenerator:
 ```json
 {{
   "teaching_goals": {{
-    "knowledge": ["知识目标1", "知识目标2"],
-    "ability": ["能力目标1", "能力目标2"],
-    "emotion": ["情感态度价值观目标1"]
+    "knowledge": ["具体的知识目标1（至少2-3条）", "知识目标2"],
+    "ability": ["具体的能力目标1（至少2-3条）", "能力目标2"],
+    "quality": ["具体的素质目标1（至少2条）", "素质目标2"]
   }},
   "key_points": "教学重点内容，要具体明确",
   "difficult_points": "教学难点内容，说明难在哪里",
+  "ideological_political": "结合本节课内容，挖掘课程思政元素，如：工匠精神、生态意识、家国情怀等",
   "teaching_tools": "教具和学具准备清单",
   "teaching_methods": "采用的教学方法",
   "student_analysis": "学情分析，包括认知基础、可能的困难",
@@ -67,29 +68,36 @@ class AIGenerator:
     {{
       "stage": "导入新课",
       "duration": "5分钟",
-      "teacher_activity": "教师具体做什么、说什么",
-      "student_activity": "学生具体做什么",
+      "teacher_activity": "【教师】教师具体做什么、说什么",
+      "student_activity": "【学生】学生具体做什么",
       "design_intent": "这样设计的教育目的"
+    }},
+    {{
+      "stage": "问题导入",
+      "duration": "5分钟",
+      "teacher_activity": "【教师】...",
+      "student_activity": "【学生】...",
+      "design_intent": "..."
     }},
     {{
       "stage": "探究新知",
       "duration": "20分钟",
-      "teacher_activity": "...",
-      "student_activity": "...",
+      "teacher_activity": "【教师】...",
+      "student_activity": "【学生】...",
       "design_intent": "..."
     }},
     {{
       "stage": "巩固练习",
       "duration": "12分钟",
-      "teacher_activity": "...",
-      "student_activity": "...",
+      "teacher_activity": "【教师】...",
+      "student_activity": "【学生】...",
       "design_intent": "..."
     }},
     {{
       "stage": "课堂小结",
       "duration": "3分钟",
-      "teacher_activity": "...",
-      "student_activity": "...",
+      "teacher_activity": "【教师】...",
+      "student_activity": "【学生】...",
       "design_intent": "..."
     }}
   ],
@@ -98,7 +106,8 @@ class AIGenerator:
     "optional": "选做作业/拓展"
   }},
   "blackboard_design": "板书设计的文字描述或结构",
-  "reflection": "（待课后填写）"
+  "reflection": "（待课后填写）",
+  "online_resources": "与本课相关的网络资源链接，如在线课程、教学视频、参考资料网站等（提供2-4个有效的URL链接或资源名称）"
 }}
 ```
 
@@ -133,6 +142,7 @@ class AIGenerator:
         self,
         input_data: LessonPlanInput,
         field_configs: Optional[List[FieldConfig]] = None,
+        generate_reflection: bool = False,
     ) -> GeneratedContent:
         """
         Generate a complete lesson plan.
@@ -145,7 +155,7 @@ class AIGenerator:
         Returns:
             Generated lesson plan content
         """
-        prompt = self._build_generation_prompt(input_data, field_configs)
+        prompt = self._build_generation_prompt(input_data, field_configs, generate_reflection)
 
         content = await generate_with_ai(
             prompt=prompt,
@@ -224,26 +234,29 @@ class AIGenerator:
         self,
         input_data: LessonPlanInput,
         field_configs: Optional[List[FieldConfig]] = None,
+        generate_reflection: bool = False,
     ) -> str:
         """Build the full lesson plan generation prompt with dynamic fields support."""
         extra_info = ""
-        if input_data.textbook_version:
-            extra_info += f"- 教材版本：{input_data.textbook_version}\n"
+        if input_data.textbook_name:
+            extra_info += f"- 教材：{input_data.textbook_name}\n"
         if input_data.unit_name:
             extra_info += f"- 单元：{input_data.unit_name}\n"
+        if input_data.location:
+            extra_info += f"- 授课地点：{input_data.location}\n"
 
         prior_knowledge = input_data.prior_knowledge or "无特殊说明"
         additional_requirements = input_data.additional_requirements or "无特殊要求"
 
         # Build JSON template based on field configs
         if field_configs:
-            json_template = self._build_dynamic_json_template(field_configs)
-            notes = self._build_field_generation_notes(field_configs)
+            json_template = self._build_dynamic_json_template(field_configs, generate_reflection)
+            notes = self._build_field_generation_notes(field_configs, generate_reflection)
             required_fields_note = self._build_required_fields_note(field_configs)
         else:
             # Fallback to default template
-            json_template = self._get_default_json_template()
-            notes = self._get_default_generation_notes()
+            json_template = self._get_default_json_template(generate_reflection)
+            notes = self._get_default_generation_notes(generate_reflection)
             required_fields_note = ""
 
         return f"""你是一位资深的{input_data.subject}学科教研专家，拥有20年教学经验。
@@ -309,6 +322,7 @@ class AIGenerator:
             "teaching_goals": "教学目标",
             "key_points": "教学重点",
             "difficult_points": "教学难点",
+            "ideological_political": "课程思政",
             "teaching_tools": "教具准备",
             "teaching_methods": "教学方法",
             "student_analysis": "学情分析",
@@ -346,7 +360,10 @@ class AIGenerator:
                     prompt += f"- 知识与技能：{'、'.join(goals['knowledge'])}\n"
                 if goals.get("ability"):
                     prompt += f"- 过程与方法：{'、'.join(goals['ability'])}\n"
-                if goals.get("emotion"):
+                # Support both quality and emotion for backward compatibility
+                if goals.get("quality"):
+                    prompt += f"- 素质目标：{'、'.join(goals['quality'])}\n"
+                elif goals.get("emotion"):
                     prompt += f"- 情感态度价值观：{'、'.join(goals['emotion'])}\n"
 
         # Add specific instructions based on field
@@ -369,12 +386,12 @@ class AIGenerator:
         elif field_name == "teaching_goals":
             prompt += """
 ## 教学目标要求
-请返回JSON格式的教学目标：
+请返回JSON格式的教学目标，包含knowledge（知识目标）、ability（能力目标）、quality（素质目标）三个子字段：
 ```json
 {
-  "knowledge": ["知识目标1", "知识目标2"],
-  "ability": ["能力目标1", "能力目标2"],
-  "emotion": ["情感态度价值观目标1"]
+  "knowledge": ["具体的知识目标1（至少2-3条）", "知识目标2"],
+  "ability": ["具体的能力目标1（至少2-3条）", "能力目标2"],
+  "quality": ["具体的素质目标1（至少2条）", "素质目标2"]
 }
 ```
 """
@@ -429,7 +446,7 @@ class AIGenerator:
 请直接输出优化后的内容，不要添加其他说明。
 """
 
-    def _build_dynamic_json_template(self, field_configs: List[FieldConfig]) -> str:
+    def _build_dynamic_json_template(self, field_configs: List[FieldConfig], generate_reflection: bool = False) -> str:
         """Build JSON template based on field configurations."""
         template_parts = []
 
@@ -444,41 +461,47 @@ class AIGenerator:
     "ability": ["具体的能力目标1（至少2-3条）", "能力目标2"],
     "quality": ["具体的素质目标1（至少2条）", "素质目标2"]
   }"""
+            elif field_name == "reflection":
+                # Use different reflection description based on generate_reflection
+                if generate_reflection:
+                    sample = '"对本节课教学效果的反思，包括成功之处、不足及改进措施（至少2-3条）"'
+                else:
+                    sample = '"（待课后填写）"'
             elif field_name == "teaching_steps":
                 sample = """[
     {
       "stage": "新课预热",
       "duration": "3-5分钟",
-      "teacher_activity": "课前准备、复习旧知、激发兴趣的具体活动（详细描述）",
-      "student_activity": "回顾、准备、参与互动的具体活动（详细描述）",
+      "teacher_activity": "【教师】课前准备、复习旧知、激发兴趣的具体活动（详细描述）",
+      "student_activity": "【学生】回顾、准备、参与互动的具体活动（详细描述）",
       "design_intent": "激发学习兴趣，做好知识衔接"
     },
     {
       "stage": "问题导入",
       "duration": "5-8分钟",
-      "teacher_activity": "提出核心问题、创设情境、引导思考的具体内容（详细描述）",
-      "student_activity": "观察、思考、讨论问题的具体活动（详细描述）",
+      "teacher_activity": "【教师】提出核心问题、创设情境、引导思考的具体内容（详细描述）",
+      "student_activity": "【学生】观察、思考、讨论问题的具体活动（详细描述）",
       "design_intent": "引出本课主题，激发探究欲望"
     },
     {
       "stage": "传授新知",
       "duration": "20-25分钟",
-      "teacher_activity": "讲解核心概念、演示操作、组织探究的详细内容...",
-      "student_activity": "听讲、记录、思考、提问、探究的详细内容...",
+      "teacher_activity": "【教师】讲解核心概念、演示操作、组织探究的详细内容...",
+      "student_activity": "【学生】听讲、记录、思考、提问、探究的详细内容...",
       "design_intent": "帮助学生理解核心概念，掌握关键方法..."
     },
     {
       "stage": "课堂实践",
       "duration": "15-20分钟",
-      "teacher_activity": "布置练习任务、巡视指导、组织交流的详细内容...",
-      "student_activity": "动手实践、小组合作、展示成果的详细内容...",
+      "teacher_activity": "【教师】布置练习任务、巡视指导、组织交流的详细内容...",
+      "student_activity": "【学生】动手实践、小组合作、展示成果的详细内容...",
       "design_intent": "巩固所学知识，培养应用能力和协作精神..."
     },
     {
       "stage": "课堂总结",
       "duration": "5分钟",
-      "teacher_activity": "系统总结要点、强调重难点、布置作业的详细内容...",
-      "student_activity": "回顾总结、自我评价、提出疑问的详细内容...",
+      "teacher_activity": "【教师】系统总结要点、强调重难点、布置作业的详细内容...",
+      "student_activity": "【学生】回顾总结、自我评价、提出疑问的详细内容...",
       "design_intent": "帮助学生梳理知识体系，形成完整认知..."
     }
   ]"""
@@ -506,13 +529,18 @@ class AIGenerator:
 
         return "{\n" + ",\n".join(template_parts) + "\n}"
 
-    def _build_field_generation_notes(self, field_configs: List[FieldConfig]) -> str:
+    def _build_field_generation_notes(self, field_configs: List[FieldConfig], generate_reflection: bool = False) -> str:
         """Build generation notes for custom fields."""
         notes = []
+
+        # Add reflection to notes if generate_reflection is True
+        if generate_reflection:
+            notes.append("- reflection（教学反思）：对本节课教学效果的反思（至少2-3条）")
 
         custom_fields = [f for f in field_configs if f.name not in [
             "subject", "grade", "topic", "duration",
             "teaching_goals", "key_points", "difficult_points",
+            "ideological_political",
             "teaching_tools", "teaching_methods", "student_analysis",
             "textbook_analysis", "teaching_steps", "homework",
             "blackboard_design", "reflection"
@@ -602,67 +630,91 @@ class AIGenerator:
             # Use field name as hint
             return f"生成与'{field_name}'相关的适当内容"
 
-    def _get_default_json_template(self) -> str:
+    def _get_default_json_template(self, generate_reflection: bool = False) -> str:
         """Get the default JSON template for backward compatibility."""
-        return """{
-  "teaching_goals": {
-    "knowledge": ["知识目标1", "知识目标2"],
-    "ability": ["能力目标1", "能力目标2"],
-    "emotion": ["情感态度价值观目标1"]
-  },
+        # Set reflection description based on parameter
+        reflection_desc = (
+            "对本节课教学效果的反思，包括成功之处、不足及改进措施（至少2-3条）"
+            if generate_reflection
+            else "（待课后填写）"
+        )
+
+        return """{{
+  "teaching_goals": {{
+    "knowledge": ["具体的知识目标1（至少2-3条）", "知识目标2"],
+    "ability": ["具体的能力目标1（至少2-3条）", "能力目标2"],
+    "quality": ["具体的素质目标1（至少2条）", "素质目标2"]
+  }},
   "key_points": "教学重点内容，要具体明确",
   "difficult_points": "教学难点内容，说明难在哪里",
+  "ideological_political": "结合本节课内容，挖掘课程思政元素，如：工匠精神、生态意识、家国情怀等",
   "teaching_tools": "教具和学具准备清单",
   "teaching_methods": "采用的教学方法",
   "student_analysis": "学情分析，包括认知基础、可能的困难",
   "textbook_analysis": "教材分析，说明本课在单元/教材中的地位",
   "teaching_steps": [
-    {
+    {{
       "stage": "导入新课",
       "duration": "5分钟",
-      "teacher_activity": "教师具体做什么、说什么",
-      "student_activity": "学生具体做什么",
+      "teacher_activity": "【教师】教师具体做什么、说什么",
+      "student_activity": "【学生】学生具体做什么",
       "design_intent": "这样设计的教育目的"
-    },
-    {
+    }},
+    {{
+      "stage": "问题导入",
+      "duration": "5分钟",
+      "teacher_activity": "【教师】...",
+      "student_activity": "【学生】...",
+      "design_intent": "..."
+    }},
+    {{
       "stage": "探究新知",
       "duration": "20分钟",
-      "teacher_activity": "...",
-      "student_activity": "...",
+      "teacher_activity": "【教师】...",
+      "student_activity": "【学生】...",
       "design_intent": "..."
-    },
-    {
+    }},
+    {{
       "stage": "巩固练习",
       "duration": "12分钟",
-      "teacher_activity": "...",
-      "student_activity": "...",
+      "teacher_activity": "【教师】...",
+      "student_activity": "【学生】...",
       "design_intent": "..."
-    },
-    {
+    }},
+    {{
       "stage": "课堂小结",
       "duration": "3分钟",
-      "teacher_activity": "...",
-      "student_activity": "...",
+      "teacher_activity": "【教师】...",
+      "student_activity": "【学生】...",
       "design_intent": "..."
-    }
+    }}
   ],
-  "homework": {
+  "homework": {{
     "required": "必做作业",
     "optional": "选做作业/拓展"
-  },
+  }},
   "blackboard_design": "板书设计的文字描述或结构",
-  "reflection": "（待课后填写）"
-}"""
+  "reflection": "{reflection_desc}",
+  "online_resources": "与本课相关的网络资源链接，如在线课程、教学视频、参考资料网站等（提供2-4个有效的URL链接或资源名称）"
+}}""".format(reflection_desc=reflection_desc)
 
-    def _get_default_generation_notes(self) -> str:
+    def _get_default_generation_notes(self, generate_reflection: bool = False) -> str:
         """Get default generation notes."""
-        return ""
+        notes = """
+- online_resources（网络资源）：与本课相关的网络资源链接，如在线课程、教学视频、参考资料网站等（提供2-4个有效的URL链接或资源名称）
+"""
+        if generate_reflection:
+            notes += """
+- reflection（教学反思）：对本节课教学效果的反思（至少2-3条）
+"""
+        return notes
 
     def _parse_json_response(self, content: str) -> Dict[str, Any]:
         """
-        Parse JSON from AI response.
+        Parse JSON from AI response with robust error handling.
 
-        Handles cases where JSON is wrapped in markdown code blocks.
+        Handles cases where JSON is wrapped in markdown code blocks
+        and tries to fix common JSON formatting issues.
         """
         # Try to extract JSON from markdown code blocks
         json_match = re.search(r"```json\s*(.*?)\s*```", content, re.DOTALL)
@@ -673,21 +725,76 @@ class AIGenerator:
             json_match = re.search(r"```\s*(.*?)\s*```", content, re.DOTALL)
             if json_match:
                 content = json_match.group(1)
+            else:
+                # Try to find JSON object directly (look for opening { and closing })
+                start_idx = content.find('{')
+                if start_idx != -1:
+                    # Find matching closing brace
+                    brace_count = 0
+                    in_string = False
+                    escape_next = False
+                    for i in range(start_idx, len(content)):
+                        char = content[i]
+                        if escape_next:
+                            escape_next = False
+                            continue
+                        if char == '\\':
+                            escape_next = True
+                            continue
+                        if char == '"' and not escape_next:
+                            in_string = not in_string
+                        elif not in_string:
+                            if char == '{':
+                                brace_count += 1
+                            elif char == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    content = content[start_idx:i+1]
+                                    break
 
-        # Parse JSON
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError as e:
-            # Try to fix common JSON errors
-            # Remove trailing commas
-            content = re.sub(r",\s*([}\]])", r"\1", content)
-            # Fix unquoted keys
-            content = re.sub(r"(\w+)\s*:", r'"\1":', content)
+        # Parse JSON with multiple fallback attempts
+        attempts = [
+            # 1. Try parsing as-is
+            lambda c: json.loads(c),
+            # 2. Try after removing trailing commas
+            lambda c: json.loads(re.sub(r",\s*([}\]])", r"\1", c)),
+            # 3. Try after fixing unquoted keys (only for simple cases)
+            lambda c: json.loads(re.sub(r"(\w+)\s*:", r'"\1":', c)),
+            # 4. Try after removing control characters
+            lambda c: json.loads(re.sub(r'[\x00-\x1f\x7f-\x9f]', '', c)),
+            # 5. Try after fixing comments (// style)
+            lambda c: json.loads(re.sub(r'//.*?(\n|$)', '', c)),
+            # 6. Try after adding missing commas between array items and object properties
+            lambda c: json.loads(re.sub(r'([}\]])\s*\n\s*"', r'\1,\n  "', c)),
+            lambda c: json.loads(re.sub(r'([}\]])\s*\n\s*(\d+)', r'\1,\n  \2', c)),
+            lambda c: json.loads(re.sub(r'([}\]])\s*\n\s*\{', r'\1,\n  {', c)),
+            lambda c: json.loads(re.sub(r'"([a-zA-Z_]+)"\s*\n\s*\{', r'"\1": {', c)),
+            # 7. Try aggressive comma fixing (no newline)
+            lambda c: json.loads(re.sub(r'([}\]])\s+"', r'\1, "', c)),
+            lambda c: json.loads(re.sub(r'([}\]])\s+\{', r'\1, {', c)),
+            lambda c: json.loads(re.sub(r'"(\w+)"\s+\{', r'"\1": {', c)),
+            # 8. Try fixing multiline string issues
+            lambda c: json.loads(re.sub(r'\n\s+', ' ', c)),
+        ]
 
+        last_error = None
+        for attempt in attempts:
             try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                raise ValueError(f"Failed to parse AI response as JSON: {e}")
+                result = attempt(content)
+                # Validate the result has expected structure
+                if isinstance(result, dict) and 'teaching_steps' in result:
+                    return result
+                elif isinstance(result, dict):
+                    return result
+            except (json.JSONDecodeError, ValueError) as e:
+                last_error = e
+                continue
+
+        # If all attempts failed, raise the last error
+        raise ValueError(
+            f"Failed to parse AI response as JSON. Last error: {last_error}\n"
+            f"Content preview (first 500 chars): {content[:500]}..."
+        )
 
 
 async def generate_lesson_plan(
@@ -695,6 +802,7 @@ async def generate_lesson_plan(
     provider: Optional[str] = None,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
+    generate_reflection: bool = False,
 ) -> GeneratedContent:
     """
     Convenience function to generate a lesson plan.
@@ -709,4 +817,4 @@ async def generate_lesson_plan(
         Generated content
     """
     generator = AIGenerator(provider, api_key, model)
-    return await generator.generate_lesson_plan(input_data)
+    return await generator.generate_lesson_plan(input_data, generate_reflection=generate_reflection)

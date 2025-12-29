@@ -1,12 +1,42 @@
-# 智能教案助手
+# 智能教案助手 (Intelligent Lesson Plan Assistant)
 
-一款基于 AI 的教案生成与编辑工具，支持模板管理、智能生成和在线编辑功能。
+<div align="center">
+
+一款基于 AI 的教案生成与编辑工具，支持模板管理、智能生成、批量生产和在线编辑功能。
+
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+[![Node](https://img.shields.io/badge/Node-16+-green.svg)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/18287452845/lesson-tools)
+
+[功能特性](#-功能特性) • [快速开始](#-快速开始) • [使用指南](#-使用指南) • [API文档](#-api-文档) • [常见问题](#-常见问题)
+
+</div>
+
+---
+
+## 📸 功能预览
+
+| 模板管理 | 批量生成 | 可视化编辑 |
+|:---:|:---:|:---:|
+| 上传和管理 Word 模板 | 一键生成整学期教案 | TipTap 富文本编辑器 |
+
+## 简介
+
+智能教案助手是一款专为教育工作者设计的全栈 Web 应用，通过人工智能技术大幅简化教案创建流程。无论是单份教案还是整学期批量生成，都能在几分钟内完成专业质量的教案文档。
+
+**核心优势：**
+- 🚀 **高效** - 批量生成整学期教案，节省 90% 时间
+- 🎨 **专业** - 完美保留 Word 格式，符合学校规范
+- 🔄 **灵活** - 可视化模板编辑，自定义教案结构
+- 💾 **智能** - AI 优化内容，自动扩展重写
 
 ## ✨ 功能特性
 
 ### 核心功能
 - **📝 模板管理** - 上传、预览和管理教案模板 (.docx)
 - **🤖 智能生成** - 基于 AI 自动生成教案内容
+- **📦 批量生成** - 按课时数批量生成整学期教案，支持章节缓存
 - **✏️ 在线编辑** - 富文本编辑器支持模板内容在线编辑
 - **🎨 可视化编辑** - TipTap 富文本编辑器，支持表格、颜色、字体等
 - **🔄 版本管理** - 自动保存编辑历史，支持版本对比和回滚
@@ -23,6 +53,14 @@
 - **自动保存** - 3秒防抖自动保存，避免数据丢失
 - **语法验证** - 实时验证 Jinja2 语法错误
 - **DOCX ↔ HTML** - 双向无损转换，保留原始格式
+
+### 批量生成特性
+- **课时数驱动** - 输入总课时（如64、72），自动计算教案数量
+- **灵活分组** - 可配置每份教案课时数（默认2课时/教案）
+- **章节缓存** - 生成的章节模板自动缓存，支持快速复用
+- **多种输入方式** - AI自动生成章节或手动输入章节标题
+- **实时进度** - 后台生成，实时查看进度和状态
+- **ZIP打包** - 所有教案自动打包下载，文件命名清晰
 
 ## 📋 系统要求
 
@@ -109,6 +147,39 @@ npm run dev
 ```
 
 前端将在 `http://localhost:5173` 启动
+
+### 管理脚本（便捷启动/停止）
+
+项目提供了跨平台的管理脚本来简化启动和停止操作：
+
+**Windows:**
+```batch
+# 启动前后端服务
+start.bat
+
+# 查看服务状态
+status.bat
+
+# 停止服务
+stop.bat
+```
+
+**Linux/Mac:**
+```bash
+# 启动前后端服务
+./start.sh
+
+# 查看服务状态
+./status.sh
+
+# 停止服务
+./stop.sh
+```
+
+**脚本功能：**
+- `start.bat/sh` - 后台启动前后端服务，日志保存在 `logs/` 目录
+- `status.bat/sh` - 查看服务运行状态和端口监听情况
+- `stop.bat/sh` - 停止所有服务并清理遗留进程
 
 ### 方式二：桌面应用模式
 
@@ -218,7 +289,8 @@ lesson-tools/
 │   │   ├── generate.py        # AI 教案生成 API
 │   │   ├── edit.py            # AI 编辑 API
 │   │   ├── documents.py       # 文档管理 API
-│   │   └── settings.py        # 设置管理 API
+│   │   ├── settings.py        # 设置管理 API
+│   │   └── batch.py           # 批量生成 API 📦
 │   ├── models/                # 数据模型
 │   │   ├── database.py        # 数据库连接和表定义
 │   │   └── schemas.py         # Pydantic 数据模型
@@ -230,7 +302,10 @@ lesson-tools/
 │   │   ├── document_renderer.py # 文档渲染（docxtpl）
 │   │   ├── docx_converter.py  # DOCX ↔ HTML 双向转换
 │   │   ├── jinja_protector.py # Jinja2 语法保护
-│   │   └── template_versioning.py # 版本历史管理
+│   │   ├── template_versioning.py # 版本历史管理
+│   │   ├── chapter_splitter.py # 课程章节拆分服务 📦
+│   │   ├── batch_processor.py # 批量生成处理器 📦
+│   │   └── background_runner.py # 后台任务运行器 📦
 │   ├── utils/                 # 工具函数
 │   ├── config.py              # 配置管理（Pydantic Settings）
 │   ├── main.py                # FastAPI 应用入口
@@ -256,10 +331,13 @@ lesson-tools/
 │       │   ├── TemplateEditor.tsx  # 模板编辑器 ⭐
 │       │   ├── NewLessonPlan.tsx   # 新建教案
 │       │   ├── EditLessonPlan.tsx  # 编辑教案
+│       │   ├── BatchGenerate.tsx  # 批量生成 📦
+│       │   ├── BatchDownloads.tsx # 批量下载 📦
 │       │   ├── History.tsx    # 历史记录
 │       │   └── Settings.tsx   # 设置
 │       ├── services/          # API 服务
 │       │   ├── api.ts         # 主 API 客户端
+│       │   ├── batchApi.ts    # 批量生成 API 客户端 📦
 │       │   └── settingsApi.ts # 设置 API
 │       ├── stores/            # Zustand 状态管理
 │       │   ├── templateStore.ts       # 模板状态
@@ -278,6 +356,9 @@ lesson-tools/
 │
 ├── run_backend.py             # 后端启动脚本
 ├── verify_backend.py          # 后端环境验证脚本
+├── start.bat / start.sh       # 启动前后端服务（Windows/Linux）
+├── status.bat / status.sh     # 查看服务状态
+├── stop.bat / stop.sh         # 停止服务
 ├── .env                       # 环境变量配置（需创建）
 ├── CLAUDE.md                  # Claude Code 项目说明
 ├── BACKEND_SETUP_COMPLETE.md  # 后端配置完成报告
@@ -339,6 +420,17 @@ lesson-tools/
 |------|------|------|
 | `/api/settings/ai-provider` | GET/POST | 获取/设置 AI 提供商 |
 | `/api/settings/ai-providers` | GET | 获取可用 AI 提供商列表 |
+
+#### 批量生成 📦
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/batch/split-chapters` | POST | 根据总课时拆分章节 |
+| `/api/batch/create-task` | POST | 创建批量生成任务 |
+| `/api/batch/tasks/{id}` | GET | 获取任务状态和进度 |
+| `/api/batch/tasks` | GET | 获取批量任务列表 |
+| `/api/batch/tasks/{id}/download` | GET | 下载生成的 ZIP 文件 |
+| `/api/batch/tasks/{id}` | DELETE | 取消或删除任务 |
+| `/api/batch/chapter-templates` | GET | 获取缓存的章节模板列表 |
 
 ## 📖 使用指南
 
@@ -416,6 +508,41 @@ lesson-tools/
 4. 文档保存在 `storage/outputs/` 目录
 5. 可直接下载使用
 
+### 6. 批量生成教案 📦
+
+批量生成功能可以一次性创建整学期的所有教案：
+
+#### 步骤 1: 填写课程信息
+- **课程名称**: 如 "Java程序设计"
+- **学科/年级**: 选择对应的学科和年级
+- **总课时数**: 如 64 课时（自动计算教案数量）
+- **每份教案课时**: 默认 2 课时（可调整）
+- **章节来源**:
+  - **AI 自动生成**: AI 根据课程信息自动拆分章节
+  - **手动输入**: 每行输入一个章节标题
+
+#### 步骤 2: 确认章节
+- 查看 AI 生成的章节列表
+- 可直接在表格中编辑课题和内容概述
+- 确认教案模板是否已选择
+
+#### 步骤 3: 监控生成进度
+- 后台自动生成所有教案
+- 实时显示进度条（已完成/总数）
+- 完成后可前往下载页面获取 ZIP 文件
+
+#### 使用已有模板
+如果之前生成过相同课程，可选择"使用已有模板"：
+- 自动加载历史章节配置
+- 一键复用，节省时间
+- 模板使用次数会自动记录
+
+#### 下载说明
+- 所有教案打包为 ZIP 文件
+- 文件命名: `课程名称_批量教案_时间戳.zip`
+- 内部文档: `课程名称_01.docx`, `课程名称_02.docx` ...
+- 每个文档包含 2 份教案（可配置）
+
 ## ❓ 常见问题
 
 ### 安装和启动
@@ -472,11 +599,48 @@ A: 模板语法错误，检查：
 2. 所有 `{% for %}` 都有对应的 `{% endfor %}`
 3. 所有 `{% if %}` 都有对应的 `{% endif %}`
 
+**Q: 为什么 storage/templates/ 中的模板不显示？**
+
+A: 后端会在启动时自动扫描 `storage/templates/` 文件夹并导入新模板：
+- 只需将 `.docx` 文件放入该文件夹
+- 重启后端服务即可自动导入
+- 已导入的模板不会重复导入
+
+**Q: 如何手动导入现有模板？**
+
+A: 运行导入脚本：
+```bash
+python import_templates.py
+```
+这会扫描 `storage/templates/` 文件夹并导入所有未在数据库中的模板。
+
 **Q: Word 导出后格式丢失？**
 
 A: 项目已修复此问题（使用 `docxtpl` 库），确保：
 - `backend/services/document_renderer.py` 使用 `DocxTemplate`
 - 如果问题依然存在，运行测试：`python test_docxtpl.py`
+
+### 批量生成相关
+
+**Q: 批量生成需要多长时间？**
+
+A: 取决于教案数量和 AI 响应速度：
+- 单份教案约 10-30 秒
+- 32 份教案约 5-15 分钟
+- 建议使用章节缓存功能加速
+
+**Q: 批量生成失败怎么办？**
+
+A: 系统会记录失败数量，已生成的教案不会丢失：
+- 查看错误信息了解原因
+- 检查 API 密钥是否有效
+- 可以重新创建任务
+
+**Q: 如何修改已缓存的章节模板？**
+
+A: 目前不支持直接修改，可以：
+- 创建新任务时手动调整章节
+- 或联系管理员删除缓存后重新生成
 
 ## 🧪 开发
 
@@ -539,6 +703,21 @@ python verify_backend.py
 
 MIT License
 
+## 📝 更新日志
+
+### v1.0.0 (最新)
+- ✨ 新增批量生成功能 - 按课时数批量生成整学期教案
+- ✨ 新增章节缓存系统 - 支持快速复用历史章节配置
+- ✨ 新增可视化模板编辑器 - TipTap 富文本编辑器
+- ✨ 新增版本历史管理 - 支持版本对比和回滚
+- 🔧 优化 Word 导出 - 使用 `docxtpl` 完美保留格式
+- 🔧 添加跨平台管理脚本 - Windows .bat 和 Linux .sh
+- 🔧 多 AI 提供商支持 - DeepSeek 和 Anthropic Claude
+
+---
+
+**开始使用智能教案助手，让 AI 助力教学！** 🎓✨
+
 ## 🤝 贡献
 
 欢迎贡献！请遵循以下步骤：
@@ -569,4 +748,10 @@ MIT License
 
 ---
 
+<div align="center">
+
 **开始使用智能教案助手，让 AI 助力教学！** 🎓✨
+
+[⬆ 返回顶部](#智能教案助手-intelligent-lesson-plan-assistant)
+
+</div>

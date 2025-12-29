@@ -9,8 +9,9 @@ import json
 import re
 from typing import List, Optional
 
+from ..config import settings
 from ..models.schemas import ChapterInfo
-from .ai_provider import generate_with_ai
+from .ai_provider import generate_with_ai, AIProviderFactory
 
 
 class ChapterSplitter:
@@ -195,6 +196,10 @@ class ChapterSplitter:
         """
         Generate chapters using AI.
 
+        Uses batch generation to stay within API token limits.
+        DeepSeek has a max output of 8192 tokens, so we generate
+        in batches of ~12 lessons at a time.
+
         Args:
             course_name: Name of the course
             subject: Subject area
@@ -212,64 +217,247 @@ class ChapterSplitter:
         if additional_info:
             additional_info_section = f"\n- 补充说明：{additional_info}"
 
-        # Build prompt
-        prompt = self.CHAPTER_SPLIT_PROMPT.format(
-            course_name=course_name,
-            subject=subject,
-            grade=grade,
-            total_hours=total_hours,
-            hours_per_lesson=hours_per_lesson,
-            num_lessons=num_lessons,
-            additional_info=additional_info_section,
-        )
+        # Batch size: max 12 lessons per batch to stay within token limits
+        BATCH_SIZE = 12
+        all_chapters = []
 
-        # Call AI
-        response = await generate_with_ai(
-            prompt=prompt,
-            system_prompt=self.SYSTEM_PROMPT,
-            provider=self.provider,
-            api_key=self.api_key,
-            model=self.model,
-        )
+        # Generate in batches
+        batch_start = 1
+        while batch_start <= num_lessons:
+            batch_end = min(batch_start + BATCH_SIZE - 1, num_lessons)
+            batch_count = batch_end - batch_start + 1
 
-        # Parse response
-        chapters_data = self._parse_json_response(response)
+            # Build batch-specific prompt
+            batch_prompt = self.CHAPTER_SPLIT_PROMPT.format(
+                course_name=course_name,
+                subject=subject,
+                grade=grade,
+                total_hours=total_hours,
+                hours_per_lesson=hours_per_lesson,
+                num_lessons=batch_count,
+                additional_info=additional_info_section,
+            )
 
-        # Validate and convert to ChapterInfo objects
-        chapters = []
-        for idx, data in enumerate(chapters_data):
-            # Validate and fix lesson_number
-            expected_number = idx + 1
-            if data.get("lesson_number") != expected_number:
-                data["lesson_number"] = expected_number
+            # Add context for continuation
+            if batch_start > 1:
+                batch_prompt += f"\n\n注意：这是第{batch_start}-{batch_end}课，请延续之前的内容继续生成。"
 
-            # Ensure required fields exist
-            if "content_summary" not in data:
-                data["content_summary"] = ""
-            if "key_concepts" not in data:
-                data["key_concepts"] = []
+            # Call AI
+            response = await generate_with_ai(
+                prompt=batch_prompt,
+                system_prompt=self.SYSTEM_PROMPT,
+                provider=self.provider,
+                api_key=self.api_key,
+                model=self.model,
+                max_tokens=settings.ai_max_tokens_batch,
+            )
 
-            try:
-                chapter = ChapterInfo(**data)
-                chapters.append(chapter)
-            except Exception as e:
-                raise ValueError(
-                    f"Failed to parse chapter {idx + 1}: {str(e)}\nData: {data}"
-                )
+            # Parse response
+            chapters_data = self._parse_json_response(response)
 
-        # Final validation
-        if len(chapters) != num_lessons:
-            # If AI generated fewer chapters, fill with generic titles
-            while len(chapters) < num_lessons:
-                lesson_num = len(chapters) + 1
-                chapters.append(ChapterInfo(
+            # Validate and convert to ChapterInfo objects
+            for idx, data in enumerate(chapters_data):
+                lesson_num = batch_start + idx
+                data["lesson_number"] = lesson_num
+
+                # Ensure required fields exist
+                if "content_summary" not in data:
+                    data["content_summary"] = ""
+                if "key_concepts" not in data:
+                    data["key_concepts"] = []
+
+                try:
+                    chapter = ChapterInfo(**data)
+                    all_chapters.append(chapter)
+                except Exception as e:
+                    raise ValueError(
+                        f"Failed to parse chapter {lesson_num}: {str(e)}\nData: {data}"
+                    )
+
+            batch_start = batch_end + 1
+
+        # Final validation - ensure we have the exact number requested
+        if len(all_chapters) < num_lessons:
+            # Fill missing with generic titles
+            while len(all_chapters) < num_lessons:
+                lesson_num = len(all_chapters) + 1
+                all_chapters.append(ChapterInfo(
                     lesson_number=lesson_num,
                     topic=f"第{lesson_num}课",
                     content_summary="",
                     key_concepts=[]
                 ))
 
-        return chapters[:num_lessons]  # Trim if too many
+        return all_chapters[:num_lessons]  # Trim if too many
+
+    async def _generate_ai_chapters_stream(
+        self,
+        course_name: str,
+        subject: str,
+        grade: str,
+        total_hours: int,
+        hours_per_lesson: int,
+        num_lessons: int,
+        additional_info: Optional[str] = None,
+    ):
+        """
+        流式生成章节，逐个 yield ChapterInfo。
+
+        Uses batch generation to stay within API token limits.
+
+        Args:
+            course_name: Name of the course
+            subject: Subject area
+            grade: Grade level
+            total_hours: Total course hours
+            hours_per_lesson: Hours per lesson plan
+            num_lessons: Number of lessons to generate
+            additional_info: Optional additional information
+
+        Yields:
+            ChapterInfo objects as they are generated
+        """
+        # Build additional info section
+        additional_info_section = ""
+        if additional_info:
+            additional_info_section = f"\n- 补充说明：{additional_info}"
+
+        # Batch size: max 12 lessons per batch to stay within token limits
+        BATCH_SIZE = 12
+        yielded_chapters = set()  # Track which chapters we've already yielded
+
+        # Generate in batches
+        batch_start = 1
+        while batch_start <= num_lessons:
+            batch_end = min(batch_start + BATCH_SIZE - 1, num_lessons)
+            batch_count = batch_end - batch_start + 1
+
+            # Build batch-specific prompt
+            batch_prompt = self.CHAPTER_SPLIT_PROMPT.format(
+                course_name=course_name,
+                subject=subject,
+                grade=grade,
+                total_hours=total_hours,
+                hours_per_lesson=hours_per_lesson,
+                num_lessons=batch_count,
+                additional_info=additional_info_section,
+            )
+
+            # Add context for continuation
+            if batch_start > 1:
+                batch_prompt += f"\n\n注意：这是第{batch_start}-{batch_end}课，请延续之前的内容继续生成。"
+
+            # Get provider with batch max_tokens
+            provider = AIProviderFactory.create_provider(
+                self.provider, self.api_key, self.model, settings.ai_max_tokens_batch
+            )
+
+            # Accumulate streaming response
+            full_response = ""
+
+            # Use streaming if available
+            if hasattr(provider, 'generate_stream'):
+                async for chunk in provider.generate_stream(batch_prompt, self.SYSTEM_PROMPT):
+                    # Parse SSE format (data: {...})
+                    if chunk.startswith("data: "):
+                        data_str = chunk[6:]  # Remove "data: " prefix
+                        if data_str.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk_data = json.loads(data_str)
+
+                            # Handle DeepSeek/OpenAI format
+                            if "choices" in chunk_data and len(chunk_data["choices"]) > 0:
+                                delta = chunk_data["choices"][0].get("delta", {})
+                                content = delta.get("content", "")
+                                full_response += content
+
+                                # Try to parse partial JSON and yield any complete chapters
+                                partial_chapters = self._try_parse_partial_chapters(full_response)
+                                for chapter in partial_chapters:
+                                    # Adjust lesson_number for overall sequence
+                                    chapter.lesson_number = batch_start + (chapter.lesson_number - 1)
+                                    if chapter.lesson_number not in yielded_chapters:
+                                        yielded_chapters.add(chapter.lesson_number)
+                                        yield chapter
+
+                            # Handle Anthropic format
+                            elif "delta" in chunk_data:
+                                if "text" in chunk_data["delta"]:
+                                    full_response += chunk_data["delta"]["text"]
+                                    partial_chapters = self._try_parse_partial_chapters(full_response)
+                                    for chapter in partial_chapters:
+                                        chapter.lesson_number = batch_start + (chapter.lesson_number - 1)
+                                        if chapter.lesson_number not in yielded_chapters:
+                                            yielded_chapters.add(chapter.lesson_number)
+                                            yield chapter
+
+                        except json.JSONDecodeError:
+                            # Ignore unparseable chunks during streaming
+                            continue
+
+            # Parse final response and yield remaining chapters from this batch
+            chapters_data = self._parse_json_response(full_response)
+            for idx, data in enumerate(chapters_data):
+                lesson_num = batch_start + idx
+                data["lesson_number"] = lesson_num
+
+                # Ensure required fields exist
+                if "content_summary" not in data:
+                    data["content_summary"] = ""
+                if "key_concepts" not in data:
+                    data["key_concepts"] = []
+
+                chapter = ChapterInfo(**data)
+                if chapter.lesson_number not in yielded_chapters:
+                    yielded_chapters.add(chapter.lesson_number)
+                    yield chapter
+
+            batch_start = batch_end + 1
+
+        # Fill missing chapters if AI generated fewer than expected
+        for lesson_num in range(1, num_lessons + 1):
+            if lesson_num not in yielded_chapters:
+                filler_chapter = ChapterInfo(
+                    lesson_number=lesson_num,
+                    topic=f"第{lesson_num}课",
+                    content_summary="",
+                    key_concepts=[]
+                )
+                yield filler_chapter
+
+    def _try_parse_partial_chapters(self, content: str) -> List[ChapterInfo]:
+        """
+        尝试解析部分完成的 JSON 数组。
+
+        Returns list of complete chapters that can be parsed.
+        """
+        chapters = []
+
+        # Try to match JSON array pattern
+        array_match = re.search(r'\[.*?\]', content, re.DOTALL)
+        if not array_match:
+            return chapters
+
+        try:
+            # Try parsing as-is
+            data = json.loads(array_match.group(0))
+            if isinstance(data, list):
+                chapters = [ChapterInfo(**d) for d in data]
+        except json.JSONDecodeError:
+            pass
+
+        if not chapters:
+            # Try fixing trailing commas
+            fixed = re.sub(r',\s*([}\]])', r'\1', array_match.group(0))
+            try:
+                data = json.loads(fixed)
+                if isinstance(data, list):
+                    chapters = [ChapterInfo(**d) for d in data]
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        return chapters
 
     def _parse_json_response(self, content: str) -> List[dict]:
         """

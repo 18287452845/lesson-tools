@@ -56,7 +56,6 @@ Thumbs.db
 # Storage (user data)
 storage/exports/
 storage/uploads/
-storage/database.db
 storage/outputs/
 
 # Temporary files

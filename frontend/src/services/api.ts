@@ -17,6 +17,10 @@ import type {
   VersionCompareResult,
   HtmlExportResponse,
   FieldConfig,
+  ClassInfo,
+  ClassCreateRequest,
+  ClassUpdateRequest,
+  ClassListResponse,
 } from '@/types';
 
 const api = axios.create({
@@ -282,6 +286,54 @@ export const editApi = {
   getEditHistory: async (documentId: string): Promise<{ document_id: string; edits: any[] }> => {
     const response = await api.get(`/edit/${documentId}/history`);
     return response.data;
+  },
+};
+
+// ============================================================================
+// Class Management API
+// ============================================================================
+
+export const classApi = {
+  /**
+   * List all classes
+   */
+  listClasses: async (params?: {
+    page?: number;
+    limit?: number;
+  }): Promise<ClassListResponse> => {
+    const response = await api.get('/classes', { params });
+    return response.data;
+  },
+
+  /**
+   * Create a new class
+   */
+  createClass: async (data: ClassCreateRequest): Promise<ClassInfo> => {
+    const response = await api.post('/classes', data);
+    return response.data;
+  },
+
+  /**
+   * Get a specific class
+   */
+  getClass: async (id: string): Promise<ClassInfo> => {
+    const response = await api.get(`/classes/${id}`);
+    return response.data;
+  },
+
+  /**
+   * Update a class
+   */
+  updateClass: async (id: string, data: ClassUpdateRequest): Promise<ClassInfo> => {
+    const response = await api.put(`/classes/${id}`, data);
+    return response.data;
+  },
+
+  /**
+   * Delete a class
+   */
+  deleteClass: async (id: string): Promise<void> => {
+    await api.delete(`/classes/${id}`);
   },
 };
 

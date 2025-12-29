@@ -39,12 +39,16 @@ export interface LessonPlanInput {
   grade: string;
   topic: string;
   duration: string;
-  textbook_version?: string;
+  textbook_name?: string;
+  location?: string;
+  online_resources?: string;
   unit_name?: string;
   prior_knowledge?: string;
   focus_areas?: string;
   teaching_style?: string;
   additional_requirements?: string;
+  class_ids?: string[];
+  generateReflection?: boolean;  // Whether to generate teaching reflection
 }
 
 export interface TeachingGoal {
@@ -189,6 +193,33 @@ export const DURATION_OPTIONS = [
 ];
 
 // ============================================================================
+// Class Management Types
+// ============================================================================
+
+export interface ClassInfo {
+  id: string;
+  name: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClassCreateRequest {
+  name: string;
+  description?: string;
+}
+
+export interface ClassUpdateRequest {
+  name?: string;
+  description?: string;
+}
+
+export interface ClassListResponse {
+  classes: ClassInfo[];
+  total: number;
+}
+
+// ============================================================================
 // Batch Generation Types
 // ============================================================================
 
@@ -222,7 +253,13 @@ export interface BatchTaskCreateRequest {
   total_hours: number;
   hours_per_lesson?: number;
   chapters: ChapterInfo[];
+  start_week?: number;
+  class_ids?: string[];
+  location?: string;
+  textbook_name?: string;
+  online_resources?: string;
   additional_requirements?: string;
+  generate_reflection?: boolean;
 }
 
 export interface BatchTaskCreateResponse {

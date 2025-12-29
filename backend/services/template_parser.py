@@ -34,12 +34,12 @@ class TemplateParser:
     # Pattern for Jinja2-style variables
     VARIABLE_PATTERN = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
-    # Pattern for loop structures
-    LOOP_START_PATTERN = re.compile(r"\{%\s*for\s+(\w+)\s+in\s+(\w+)\s*%\}")
+    # Pattern for loop structures - updated to support nested attributes
+    LOOP_START_PATTERN = re.compile(r"\{%\s*for\s+(\w+)\s+in\s+([\w.]+)\s*%\}")
     LOOP_END_PATTERN = re.compile(r"\{%\s*endfor\s*%\}")
 
-    # Pattern for conditionals
-    IF_START_PATTERN = re.compile(r"\{%\s*if\s+(\w+)\s*%\}")
+    # Pattern for conditionals - updated to support complex expressions
+    IF_START_PATTERN = re.compile(r"\{%\s*if\s+.*?%\}")
     IF_END_PATTERN = re.compile(r"\{%\s*endif\s*%\}")
 
     # Standard field mappings
@@ -51,6 +51,7 @@ class TemplateParser:
         "teaching_goals": {"display": "教学目标", "type": "textarea", "required": True},
         "key_points": {"display": "教学重点", "type": "textarea", "required": True},
         "difficult_points": {"display": "教学难点", "type": "textarea", "required": True},
+        "ideological_political": {"display": "课程思政", "type": "textarea", "required": True},
         "teaching_tools": {"display": "教具准备", "type": "textarea", "required": False},
         "teaching_methods": {"display": "教学方法", "type": "textarea", "required": False},
         "student_analysis": {"display": "学情分析", "type": "textarea", "required": False},
@@ -139,10 +140,10 @@ class TemplateParser:
         # Find conditionals
         if self.IF_START_PATTERN.search(text):
             match = self.IF_START_PATTERN.search(text)
-            condition_var = match.group(1)
+            # New regex doesn't have capture groups, use empty string for name
             self.fields.append(
                 TemplateField(
-                    name=condition_var,
+                    name="",
                     raw_placeholder=match.group(0),
                     field_type="conditional",
                     line_number=line_number,
@@ -255,13 +256,14 @@ class TemplateParser:
         if if_starts != if_ends:
             errors.append(f"Mismatched if tags: {if_starts} start, {if_ends} end")
 
-        # Check for required fields
+        # Check for recommended fields (not strictly required)
         found_fields = {f.name for f in self.fields}
-        required_fields = {"subject", "grade", "topic", "duration"}
-        missing_fields = required_fields - found_fields
+        recommended_fields = {"subject", "grade", "topic", "teaching_topic", "duration"}
+        missing_recommended = recommended_fields - found_fields
 
-        if missing_fields:
-            errors.append(f"Missing required fields: {', '.join(missing_fields)}")
+        # Only warn if ALL recommended fields are missing (template might be empty)
+        if missing_recommended == recommended_fields and len(found_fields) < 3:
+            errors.append("模板缺少常见字段（subject, grade, topic, teaching_topic, duration），请确认模板设计正确")
 
         return len(errors) == 0, errors
 

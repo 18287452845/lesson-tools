@@ -60,6 +60,38 @@ class TemplateUploadResponse(BaseModel):
 
 
 # ============================================================================
+# Class Management Models
+# ============================================================================
+
+
+class ClassInfo(BaseModel):
+    """Class information for lesson plan assignment."""
+    id: str
+    name: str
+    description: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class ClassCreateRequest(BaseModel):
+    """Request to create a new class."""
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = None
+
+
+class ClassUpdateRequest(BaseModel):
+    """Request to update a class."""
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = None
+
+
+class ClassListResponse(BaseModel):
+    """Response for listing classes."""
+    classes: List[ClassInfo]
+    total: int
+
+
+# ============================================================================
 # Lesson Plan Generation Models
 # ============================================================================
 
@@ -71,17 +103,21 @@ class LessonPlanInput(BaseModel):
     grade: str
     topic: str
     duration: str
-    textbook_version: Optional[str] = None
+    textbook_name: Optional[str] = None
+    location: Optional[str] = None
+    online_resources: Optional[str] = None
     unit_name: Optional[str] = None
     prior_knowledge: Optional[str] = None
     focus_areas: Optional[str] = None
     teaching_style: Optional[str] = None
     additional_requirements: Optional[str] = None
+    class_ids: List[str] = Field(default_factory=list, description="授课班级ID列表")
+    class_name: Optional[str] = None
 
 
 class LessonPlanGenerateRequest(LessonPlanInput):
     """Request to generate a lesson plan."""
-    pass
+    generate_reflection: bool = False  # Whether to generate teaching reflection
 
 
 class TeachingGoal(BaseModel):
@@ -298,7 +334,13 @@ class BatchTaskCreateRequest(BaseModel):
     total_hours: int = Field(..., ge=2, description="总课时数")
     hours_per_lesson: int = Field(default=2, ge=1, description="每份教案课时")
     chapters: List[ChapterInfo]
+    start_week: int = Field(default=1, ge=1, description="起始周次")
+    class_ids: List[str] = Field(default_factory=list, description="授课班级ID列表")
+    location: Optional[str] = Field(None, description="授课地点")
+    textbook_name: Optional[str] = Field(None, description="教材名称")
+    online_resources: Optional[str] = Field(None, description="网络资源")
     additional_requirements: Optional[str] = None
+    generate_reflection: bool = Field(default=False, description="是否生成教学反思")
 
 
 class BatchTaskCreateResponse(BaseModel):
@@ -317,6 +359,13 @@ class BatchTask(BaseModel):
     total_hours: int
     hours_per_lesson: int = 2
     chapters: List[ChapterInfo]
+    start_week: int = 1
+    class_ids: List[str] = []
+    location: Optional[str] = None
+    textbook_name: Optional[str] = None
+    online_resources: Optional[str] = None
+    generate_reflection: bool = False
+    class_names: Optional[str] = None
     status: Literal["pending", "processing", "completed", "failed", "cancelled"]
     total_count: int
     completed_count: int
