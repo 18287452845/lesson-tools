@@ -1,1 +1,3 @@
-"""Tests package initialization."""
+"""
+Backend tests package.
+"""

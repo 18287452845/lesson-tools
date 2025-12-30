@@ -48,6 +48,16 @@ async def split_chapters(request: ChapterSplitRequest):
     Also checks for cached templates to avoid regeneration.
     """
     try:
+        # Debug logging to identify validation issues
+        logger.info(
+            f"Chapter split request received: "
+            f"course_name={request.course_name} (type: {type(request.course_name).__name__}), "
+            f"subject={request.subject} (type: {type(request.subject).__name__}), "
+            f"grade={request.grade} (type: {type(request.grade).__name__}), "
+            f"total_hours={request.total_hours} (type: {type(request.total_hours).__name__}), "
+            f"hours_per_lesson={request.hours_per_lesson} (type: {type(request.hours_per_lesson).__name__})"
+        )
+
         num_lessons = request.total_hours // request.hours_per_lesson
 
         logger.info(
@@ -437,6 +447,15 @@ async def get_batch_task(task_id: str):
         # Parse chapters JSON
         task_dict["chapters"] = json.loads(task_dict["chapters"])
 
+        # Parse class_ids from JSON if present, otherwise set to empty list
+        if task_dict.get("class_ids") and task_dict["class_ids"] != "null":
+            task_dict["class_ids"] = json.loads(task_dict["class_ids"])
+        else:
+            task_dict["class_ids"] = []
+
+        # Convert generate_reflection from INTEGER to boolean
+        task_dict["generate_reflection"] = bool(task_dict.get("generate_reflection", 0))
+
         return BatchTask(**task_dict)
 
     except HTTPException:
@@ -486,8 +505,19 @@ async def list_batch_tasks(
         tasks = []
         for row in rows:
             task_dict = dict(row)
+
             # Parse chapters JSON
             task_dict["chapters"] = json.loads(task_dict["chapters"])
+
+            # Parse class_ids from JSON if present, otherwise set to empty list
+            if task_dict.get("class_ids") and task_dict["class_ids"] != "null":
+                task_dict["class_ids"] = json.loads(task_dict["class_ids"])
+            else:
+                task_dict["class_ids"] = []
+
+            # Convert generate_reflection from INTEGER to boolean
+            task_dict["generate_reflection"] = bool(task_dict.get("generate_reflection", 0))
+
             tasks.append(BatchTask(**task_dict))
 
         logger.debug(f"Listed {len(tasks)} batch tasks (page {page}, total {total})")

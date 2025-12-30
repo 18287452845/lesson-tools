@@ -32,6 +32,8 @@ import {
 } from '@ant-design/icons';
 import { useEditorStore } from '@/stores/editorStore';
 import { downloadBlob } from '@/services/fileService';
+import TipTapEditor from '@/components/Editor/TipTapEditor';
+import EditorToolbar from '@/components/Editor/EditorToolbar';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -63,6 +65,10 @@ function EditLessonPlan() {
   const [editForm] = Form.useForm();
   const [addForm] = Form.useForm();
 
+  // Rich text editor content state
+  const [editorContent, setEditorContent] = useState('');
+  const [addEditorContent, setAddEditorContent] = useState('');
+
   const sectionNames: Record<string, string> = {
     teaching_goals: '教学目标',
     key_points: '教学重点',
@@ -90,11 +96,14 @@ function EditLessonPlan() {
   const handleEditSection = (sectionName: string) => {
     setSelectedSection(sectionName);
     const section = parsedSections[sectionName];
+    const content = section?.content || '';
     editForm.setFieldsValue({
       operation: 'ai_modify',
-      content: section?.content || '',
+      content: content,
       ai_instruction: '',
     });
+    // Set rich text editor content
+    setEditorContent(content);
     setEditModalOpen(true);
   };
 
@@ -106,7 +115,7 @@ function EditLessonPlan() {
       await editSection({
         section_name: selectedSection,
         operation: values.operation,
-        content: values.content,
+        content: editorContent, // Use rich text editor content
         ai_instruction: values.ai_instruction,
       });
       message.success('编辑成功');
@@ -122,11 +131,12 @@ function EditLessonPlan() {
       await addSection(
         values.section_name,
         true,
-        values.manual_content
+        addEditorContent // Use rich text editor content
       );
       message.success('添加成功');
       setAddModalOpen(false);
       addForm.resetFields();
+      setAddEditorContent(''); // Reset editor content
     } catch (err) {
       // Error is handled by the store
     }
@@ -347,7 +357,7 @@ function EditLessonPlan() {
         onOk={handleEditSubmit}
         onCancel={() => setEditModalOpen(false)}
         confirmLoading={isEditing}
-        width={600}
+        width={900}
       >
         <Form form={editForm} layout="vertical">
           <Form.Item label="编辑方式" name="operation">
@@ -360,13 +370,19 @@ function EditLessonPlan() {
 
           <Form.Item label="修改说明" name="ai_instruction">
             <TextArea
-              rows={3}
+              rows={2}
               placeholder="描述您希望如何修改，例如：增加实践环节、简化表述等..."
             />
           </Form.Item>
 
-          <Form.Item label="内容预览" name="content">
-            <TextArea rows={6} placeholder="原内容..." />
+          <Form.Item label="内容编辑">
+            <div style={{ border: '1px solid #d9d9d9', borderRadius: '6px' }}>
+              <TipTapEditor
+                content={editorContent}
+                onChange={setEditorContent}
+                editable={true}
+              />
+            </div>
           </Form.Item>
         </Form>
       </Modal>
@@ -378,6 +394,7 @@ function EditLessonPlan() {
         onOk={handleAddSection}
         onCancel={() => setAddModalOpen(false)}
         confirmLoading={isEditing}
+        width={900}
       >
         <Form form={addForm} layout="vertical">
           <Form.Item label="部分名称" name="section_name">
@@ -393,7 +410,13 @@ function EditLessonPlan() {
           </Form.Item>
 
           <Form.Item label="手动输入内容（可选）">
-            <TextArea rows={6} placeholder="留空则由AI自动生成" />
+            <div style={{ border: '1px solid #d9d9d9', borderRadius: '6px' }}>
+              <TipTapEditor
+                content={addEditorContent}
+                onChange={setAddEditorContent}
+                editable={true}
+              />
+            </div>
           </Form.Item>
         </Form>
       </Modal>

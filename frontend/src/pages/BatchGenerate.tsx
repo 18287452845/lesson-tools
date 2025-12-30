@@ -167,7 +167,7 @@ const BatchGenerate: React.FC = () => {
         subject: selected.subject,
         grade: selected.grade,
         total_hours: selected.total_hours,
-        hours_per_lesson: selected.hours_per_lesson || 2,
+        hours_per_lesson: selected.hours_per_lesson ?? 2,
       };
 
       // Only include template_id if it has a value (to preserve user's selection)
@@ -200,7 +200,7 @@ const BatchGenerate: React.FC = () => {
       subject: values.subject,
       grade: values.grade,
       total_hours: values.total_hours,
-      hours_per_lesson: values.hours_per_lesson || 2,
+      hours_per_lesson: values.hours_per_lesson ?? 2,
       chapters_input: chapterInputMode === 'manual' ? values.chapters_input : undefined,
       additional_info: values.additional_info,
     };
@@ -274,12 +274,15 @@ const BatchGenerate: React.FC = () => {
       grade: values.grade,
       template_id: values.template_id,
       total_hours: values.total_hours,
-      hours_per_lesson: values.hours_per_lesson || 2,
+      hours_per_lesson: values.hours_per_lesson ?? 2,
       chapters: chapters,
-      start_week: values.start_week || 1,
-      class_ids: values.class_ids || [],
+      start_week: values.start_week ?? 1,
+      class_ids: values.class_ids ?? [],
+      location: values.location,
+      textbook_name: values.textbook_name,
+      online_resources: values.online_resources,
       additional_requirements: values.additional_requirements,
-      generate_reflection: values.generate_reflection || false,
+      generate_reflection: values.generate_reflection ?? false,
     };
 
     setLoading(true);

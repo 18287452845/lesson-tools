@@ -10,6 +10,9 @@ pydantic-settings>=2.1.0
 python-dotenv>=1.0.0
 pytest>=7.4.4
 pytest-asyncio>=0.23.3
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+pytest-timeout>=2.2.0
 httpx>=0.26.0
 
 # 模板在线编辑功能依赖

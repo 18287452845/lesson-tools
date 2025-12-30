@@ -378,6 +378,17 @@ async def export_lesson_plan(lesson_plan_id: str):
     input_data = json.loads(row["input_data"])
 
     # Prepare data for rendering
+    # Query class names from class_ids
+    class_ids = input_data.get("class_ids", [])
+    class_names = []
+    if class_ids:
+        placeholders = ",".join(["?"] * len(class_ids))
+        class_rows = await db.fetch_all(
+            f"SELECT name FROM classes WHERE id IN ({placeholders})",
+            tuple(class_ids)
+        )
+        class_names = [row["name"] for row in class_rows]
+
     # Build references from textbook_name and online_resources
     # Use user-provided online_resources, otherwise use AI-generated
     online_resources = input_data.get("online_resources") or content.get("online_resources", "")
@@ -395,11 +406,14 @@ async def export_lesson_plan(lesson_plan_id: str):
         "topic": input_data.get("topic", ""),
         "teaching_topic": input_data.get("topic", ""),  # For template compatibility
         "duration": input_data.get("duration", ""),
-        "class_name": input_data.get("grade", ""),  # For template compatibility
+        "class_name": ", ".join(class_names) if class_names else "",  # Resolve from class_ids
         "week_number": "",  # For template compatibility
         "location": input_data.get("location", ""),  # Use actual value
         "references": references,  # Use built references
         "ideological_political": "",  # For template compatibility
+        # Add textbook_name and online_resources as separate fields for templates
+        "textbook_name": input_data.get("textbook_name", ""),
+        "online_resources": online_resources,
         **content,
     }
 
