@@ -306,7 +306,12 @@ lesson-tools/
 │   │   ├── chapter_splitter.py # 课程章节拆分服务 📦
 │   │   ├── batch_processor.py # 批量生成处理器 📦
 │   │   └── background_runner.py # 后台任务运行器 📦
-│   ├── utils/                 # 工具函数
+│   ├── tests/                 # 后端测试
+│   │   ├── conftest.py        # Pytest 配置和 Fixtures
+│   │   ├── test_api_templates.py # 模板 API 测试
+│   │   ├── test_api_batch.py # 批量 API 测试
+│   │   ├── test_database.py # 数据库测试
+│   │   └── ...                # 其他测试文件
 │   ├── config.py              # 配置管理（Pydantic Settings）
 │   ├── main.py                # FastAPI 应用入口
 │   └── requirements.txt       # Python 依赖
@@ -334,15 +339,19 @@ lesson-tools/
 │       │   ├── BatchGenerate.tsx  # 批量生成 📦
 │       │   ├── BatchDownloads.tsx # 批量下载 📦
 │       │   ├── History.tsx    # 历史记录
+│       │   ├── LessonPlanDetail.tsx # 教案详情
+│       │   ├── ClassManager.tsx # 班级管理
 │       │   └── Settings.tsx   # 设置
 │       ├── services/          # API 服务
 │       │   ├── api.ts         # 主 API 客户端
 │       │   ├── batchApi.ts    # 批量生成 API 客户端 📦
-│       │   └── settingsApi.ts # 设置 API
+│       │   ├── settingsApi.ts # 设置 API
+│       │   └── fileService.ts # 文件下载服务
 │       ├── stores/            # Zustand 状态管理
 │       │   ├── templateStore.ts       # 模板状态
 │       │   ├── templateEditorStore.ts # 编辑器状态 ⭐
 │       │   ├── generatorStore.ts      # 生成器状态
+│       │   ├── editorStore.ts         # 编辑器状态
 │       │   └── settingsStore.ts       # 设置状态
 │       ├── hooks/             # React Hooks
 │       │   └── useAutoSave.ts # 自动保存 Hook ⭐
@@ -354,14 +363,25 @@ lesson-tools/
 │   ├── outputs/               # 生成的 Word 文档
 │   └── database.db            # SQLite 数据库
 │
+├── test-data/                  # 测试数据
+│   └── mock-responses.json    # Mock AI 响应
+│
+├── test-results/              # 测试结果输出
+│   └── screenshots/          # E2E 测试截图
+│
+├── logs/                      # 服务日志（自动创建）
+│
 ├── run_backend.py             # 后端启动脚本
 ├── verify_backend.py          # 后端环境验证脚本
+├── pytest.ini                 # Pytest 配置
 ├── start.bat / start.sh       # 启动前后端服务（Windows/Linux）
 ├── status.bat / status.sh     # 查看服务状态
 ├── stop.bat / stop.sh         # 停止服务
 ├── .env                       # 环境变量配置（需创建）
+├── .gitignore                 # Git 忽略规则
 ├── CLAUDE.md                  # Claude Code 项目说明
-├── BACKEND_SETUP_COMPLETE.md  # 后端配置完成报告
+├── WORD_EXPORT_FIX.md         # Word 导出技术说明
+├── REALTIME_GENERATION_FEATURE.md # 实时生成功能说明
 └── README.md                  # 本文件
 ```
 
@@ -405,32 +425,51 @@ lesson-tools/
 | 端点 | 方法 | 描述 |
 |------|------|------|
 | `/api/generate` | POST | 生成教案 |
+| `/api/generate/stream` | POST | SSE 流式生成 |
 | `/api/generate/{id}/regenerate-field` | POST | 重新生成单个字段 |
 | `/api/generate/{id}/export` | POST | 导出为 Word 文档 |
+| `/api/generate` | GET | 获取教案列表 |
+| `/api/generate/{id}` | GET | 获取教案详情 |
+| `/api/generate/{id}` | DELETE | 删除教案 |
 
 #### AI 编辑
 | 端点 | 方法 | 描述 |
 |------|------|------|
-| `/api/edit/optimize` | POST | AI 优化内容 |
-| `/api/edit/expand` | POST | AI 扩展内容 |
-| `/api/edit/rewrite` | POST | AI 重写内容 |
+| `/api/edit/upload` | POST | 上传现有文档 |
+| `/api/edit/{id}` | GET | 获取文档详情 |
+| `/api/edit/{id}/section` | POST | 编辑特定章节 |
+| `/api/edit/{id}/ai-enhance` | POST | AI 增强内容 |
+| `/api/edit/{id}/add-section` | POST | 添加缺失章节 |
+| `/api/edit/{id}/save` | POST | 保存并下载 |
+| `/api/edit/{id}/undo` | POST | 撤销编辑 |
+| `/api/edit/{id}/history` | GET | 获取编辑历史 |
 
 #### 设置管理
 | 端点 | 方法 | 描述 |
 |------|------|------|
 | `/api/settings/ai-provider` | GET/POST | 获取/设置 AI 提供商 |
 | `/api/settings/ai-providers` | GET | 获取可用 AI 提供商列表 |
+| `/api/settings/app-info` | GET | 获取应用信息 |
 
 #### 批量生成 📦
 | 端点 | 方法 | 描述 |
 |------|------|------|
 | `/api/batch/split-chapters` | POST | 根据总课时拆分章节 |
+| `/api/batch/split-chapters-stream` | POST | SSE 流式章节拆分 |
 | `/api/batch/create-task` | POST | 创建批量生成任务 |
 | `/api/batch/tasks/{id}` | GET | 获取任务状态和进度 |
 | `/api/batch/tasks` | GET | 获取批量任务列表 |
 | `/api/batch/tasks/{id}/download` | GET | 下载生成的 ZIP 文件 |
 | `/api/batch/tasks/{id}` | DELETE | 取消或删除任务 |
 | `/api/batch/chapter-templates` | GET | 获取缓存的章节模板列表 |
+
+#### 班级管理
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/classes` | GET/POST | 获取/创建班级 |
+| `/api/classes/{id}` | GET | 获取班级详情 |
+| `/api/classes/{id}` | PUT | 更新班级 |
+| `/api/classes/{id}` | DELETE | 删除班级 |
 
 ## 📖 使用指南
 
@@ -473,6 +512,17 @@ lesson-tools/
 {% endif %}
 ```
 
+**嵌套结构（教学目标分类）：**
+```
+{% for goal_type in ['知识目标', '能力目标', '素质目标'] %}
+{{ goal_type }}：
+{% for goal in teaching_goals[goal_type] %}
+- {{ goal }}
+{% endfor %}
+
+{% endfor %}
+```
+
 ### 2. 在线编辑模板 ⭐
 
 1. 进入**模板管理**页面
@@ -492,6 +542,7 @@ lesson-tools/
 4. 点击**生成**按钮
 5. AI 会根据模板结构生成完整教案内容
 6. 可对单个字段进行重新生成
+7. 导出为 Word 文档
 
 ### 4. AI 编辑功能
 
@@ -520,6 +571,7 @@ lesson-tools/
 - **章节来源**:
   - **AI 自动生成**: AI 根据课程信息自动拆分章节
   - **手动输入**: 每行输入一个章节标题
+  - **使用已有模板**: 复用历史章节配置
 
 #### 步骤 2: 确认章节
 - 查看 AI 生成的章节列表
@@ -541,7 +593,15 @@ lesson-tools/
 - 所有教案打包为 ZIP 文件
 - 文件命名: `课程名称_批量教案_时间戳.zip`
 - 内部文档: `课程名称_01.docx`, `课程名称_02.docx` ...
-- 每个文档包含 2 份教案（可配置）
+- 每个文档包含配置数量的教案
+
+### 7. 班级管理
+
+1. 进入**班级管理**页面
+2. 点击**添加新班级**
+3. 填写班级信息（名称、学科、年级、学生人数等）
+4. 保存后可在生成教案时选择班级
+5. 支持编辑和删除班级
 
 ## ❓ 常见问题
 
@@ -620,6 +680,13 @@ A: 项目已修复此问题（使用 `docxtpl` 库），确保：
 - `backend/services/document_renderer.py` 使用 `DocxTemplate`
 - 如果问题依然存在，运行测试：`python test_docxtpl.py`
 
+**Q: 模板编辑器中 Jinja2 语法不显示？**
+
+A: 确保 Jinja2 语法使用正确格式：
+- 变量: `{{ variable_name }}`
+- 循环: `{% for item in items %}...{% endfor %}`
+- 条件: `{% if condition %}...{% endif %}`
+
 ### 批量生成相关
 
 **Q: 批量生成需要多长时间？**
@@ -651,6 +718,14 @@ A: 目前不支持直接修改，可以：
 cd backend
 pytest
 
+# 带覆盖率报告的测试
+pytest --cov=backend --cov-report=html
+
+# 运行特定标记的测试
+pytest -m unit          # 仅单元测试
+pytest -m integration   # 仅集成测试
+pytest -m api           # 仅 API 测试
+
 # API 集成测试
 python test_api.py
 
@@ -678,6 +753,18 @@ python verify_backend.py
 - 组件使用函数式组件 + Hooks
 - 遵循 React 最佳实践
 - CSS 使用 Ant Design 主题系统
+
+### 测试标记
+
+项目使用 pytest 标记来分类测试：
+- `unit` - 单元测试（快速、隔离）
+- `integration` - 集成测试（较慢、可能使用外部服务）
+- `slow` - 慢速测试（数据库、文件 I/O、AI 调用）
+- `api` - API 端点测试
+- `service` - 服务层测试
+- `database` - 数据库操作测试
+- `ai` - 调用 AI 提供商的测试（需要 API 密钥）
+- `smoke` - 快速冒烟测试
 
 ## 🔐 安全最佳实践
 
@@ -710,13 +797,14 @@ MIT License
 - ✨ 新增章节缓存系统 - 支持快速复用历史章节配置
 - ✨ 新增可视化模板编辑器 - TipTap 富文本编辑器
 - ✨ 新增版本历史管理 - 支持版本对比和回滚
+- ✨ 新增班级管理功能 - 管理授课班级信息
 - 🔧 优化 Word 导出 - 使用 `docxtpl` 完美保留格式
 - 🔧 添加跨平台管理脚本 - Windows .bat 和 Linux .sh
 - 🔧 多 AI 提供商支持 - DeepSeek 和 Anthropic Claude
+- 🔧 后台任务处理 - 支持优雅关闭和进度追踪
+- 🧪 完善测试基础设施 - Pytest 配置和测试标记
 
 ---
-
-**开始使用智能教案助手，让 AI 助力教学！** 🎓✨
 
 ## 🤝 贡献
 
