@@ -57,6 +57,8 @@ Thumbs.db
 storage/exports/
 storage/uploads/
 storage/outputs/
+storage/database.db
+storage/*.db
 
 # Temporary files
 *.tmp
