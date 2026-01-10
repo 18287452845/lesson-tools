@@ -26,6 +26,12 @@ from ..models.schemas import (
     ChapterInfo,
     CourseChapterTemplate,
     ChapterTemplateListResponse,
+    SmartAllocationRequest,
+    DraftTaskCreateRequest,
+    DraftTaskCreateResponse,
+    ExportSelectedRequest,
+    BatchLessonPlanListResponse,
+    LessonPlan,
 )
 from ..services.chapter_splitter import ChapterSplitter
 from ..services.batch_processor import BatchTaskProcessor
@@ -318,6 +324,134 @@ async def split_chapters_stream(request: ChapterSplitRequest):
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+        }
+    )
+
+
+@router.post("/batch/split-chapters-smart-stream")
+async def split_chapters_smart_allocation_stream(request: SmartAllocationRequest):
+    """
+    智能周次分配模式（流式）。
+
+    用户提供章节标题列表，AI智能分配到指定周数的周次教学计划中。
+    支持章节跨周、合并等智能策略。
+
+    SSE 事件类型:
+    - progress: {"current": 3, "total": 16, "message": "分配第 3/16 周"}
+    - chapter: {"lesson_number": 3, "topic": "第3周：...", "content_summary": "...", "key_concepts": [...]}
+    - complete: {"chapters": [...], "total_lessons": 16}
+    - error: {"message": "错误详情"}
+    """
+    async def event_generator():
+        try:
+            # 发送初始进度
+            yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': request.total_weeks, 'message': f'准备分配到 {request.total_weeks} 周...'}, ensure_ascii=False)}\n\n"
+
+            # 创建 ChapterSplitter 实例
+            splitter = ChapterSplitter(
+                provider=settings.ai_provider,
+                api_key=settings.get_active_api_key(),
+                model=settings.get_active_model(),
+            )
+
+            # 流式生成周次分配
+            weeks = []
+            week_count = 0
+
+            async for week in splitter._generate_smart_allocation_stream(
+                course_name=request.course_name,
+                subject=request.subject,
+                grade=request.grade,
+                chapters_input=request.chapters_input,
+                total_weeks=request.total_weeks,
+                hours_per_week=request.hours_per_week,
+                total_hours=request.total_hours,
+                additional_info=request.additional_info,
+            ):
+                week_count += 1
+                weeks.append(week)
+
+                # 发送进度更新
+                yield f"event: progress\ndata: {json.dumps({'current': week_count, 'total': request.total_weeks, 'message': f'分配第 {week_count}/{request.total_weeks} 周'}, ensure_ascii=False)}\n\n"
+
+                # 发送章节数据
+                yield f"event: chapter\ndata: {json.dumps(week.model_dump(), ensure_ascii=False)}\n\n"
+
+            # 保存到缓存（复用 course_chapter_templates 表）
+            db = await get_db()
+
+            # 检查是否已存在相同参数的模板
+            existing = await db.fetch_one(
+                """
+                SELECT id FROM course_chapter_templates
+                WHERE course_name = ? AND subject = ? AND grade = ?
+                AND total_hours = ? AND hours_per_lesson = ?
+                """,
+                (
+                    request.course_name,
+                    request.subject,
+                    request.grade,
+                    request.total_hours,
+                    request.hours_per_week,
+                )
+            )
+
+            if existing:
+                # 更新现有记录
+                await db.execute(
+                    """
+                    UPDATE course_chapter_templates
+                    SET chapters = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        json.dumps([w.model_dump() for w in weeks], ensure_ascii=False),
+                        datetime.now().isoformat(),
+                        existing["id"],
+                    ),
+                    commit=True,
+                )
+                logger.info(f"Smart allocation updated existing cache: {existing['id']} ({len(weeks)} weeks)")
+            else:
+                # 插入新记录
+                template_id = str(uuid4())
+                await db.execute(
+                    """
+                    INSERT INTO course_chapter_templates (
+                        id, course_name, subject, grade, total_hours, hours_per_lesson,
+                        chapters, use_count, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        template_id,
+                        request.course_name,
+                        request.subject,
+                        request.grade,
+                        request.total_hours,
+                        request.hours_per_week,  # 每周课时数
+                        json.dumps([w.model_dump() for w in weeks], ensure_ascii=False),
+                        0,
+                        datetime.now().isoformat(),
+                        datetime.now().isoformat(),
+                    ),
+                    commit=True,
+                )
+                logger.info(f"Smart allocation cached: {template_id} ({len(weeks)} weeks)")
+
+            # 发送完成事件
+            yield f"event: complete\ndata: {json.dumps({'chapters': [w.model_dump() for w in weeks], 'total_lessons': len(weeks)}, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            logger.error(f"Smart allocation stream failed: {str(e)}", exc_info=True)
+            yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         }
     )
 
@@ -706,3 +840,237 @@ async def list_chapter_templates(
     except Exception as e:
         logger.error(f"Failed to list chapter templates: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Draft Task Endpoints (for lesson plan caching and management)
+# ============================================================================
+
+
+@router.post("/batch/create-draft-task", response_model=DraftTaskCreateResponse)
+async def create_draft_task(request: DraftTaskCreateRequest):
+    """
+    Create a draft task to pre-generate lesson plans without creating documents.
+
+    Draft tasks:
+    - Generate all lesson plan content using AI
+    - Store lesson plans with status='draft_cached'
+    - Do NOT render Word documents
+    - Do NOT create ZIP files
+    - Allow later editing and selective export
+
+    This is useful for pre-generating content that can be reviewed, edited,
+    and selectively published later.
+    """
+    try:
+        task_id = str(uuid4())
+        total_count = len(request.chapters)
+
+        logger.info(
+            f"Creating draft task {task_id}: "
+            f"{request.course_name} ({total_count} lesson plans)"
+        )
+
+        # Validate chapters
+        if total_count == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Chapters list cannot be empty"
+            )
+
+        if total_count > 100:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot generate more than 100 lesson plans in one draft task"
+            )
+
+        # Create task record in database with task_type='draft'
+        db = await get_db()
+        await db.execute(
+            """
+            INSERT INTO batch_tasks (
+                id, course_name, subject, grade, template_id,
+                total_hours, hours_per_lesson, chapters,
+                textbook_name, location, online_resources, generate_reflection,
+                status, total_count, task_type, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_id,
+                request.course_name,
+                request.subject,
+                request.grade,
+                request.template_id,
+                request.total_hours,
+                request.hours_per_lesson,
+                json.dumps([c.model_dump() for c in request.chapters], ensure_ascii=False),
+                request.textbook_name or "",
+                request.location or "",
+                request.online_resources or "",
+                1 if request.generate_reflection else 0,
+                "pending",
+                total_count,
+                "draft",  # task_type='draft'
+                datetime.now().isoformat(),
+                datetime.now().isoformat(),
+            ),
+            commit=True,
+        )
+
+        # Start processing in background with draft mode enabled
+        processor = BatchTaskProcessor(
+            provider=settings.ai_provider,
+            api_key=settings.get_active_api_key(),
+            model=settings.get_active_model(),
+            hours_per_lesson=request.hours_per_lesson,
+        )
+
+        run_in_background(
+            processor.process_batch_task(task_id, is_draft_mode=True),
+            name=f"draft-task-{task_id}",
+        )
+
+        logger.info(f"Draft task {task_id} created and processing started")
+
+        return DraftTaskCreateResponse(
+            task_id=task_id,
+            status="pending",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create draft task: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/batch/tasks/{task_id}/lesson-plans", response_model=BatchLessonPlanListResponse)
+async def get_task_lesson_plans(
+    task_id: str,
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+):
+    """
+    Get all lesson plans associated with a batch task.
+
+    Returns detailed lesson plan information including generated content,
+    useful for displaying and editing lesson plans in the batch task detail page.
+    """
+    try:
+        db = await get_db()
+
+        # Get task information
+        task_row = await db.fetch_one(
+            "SELECT * FROM batch_tasks WHERE id = ?",
+            (task_id,)
+        )
+
+        if not task_row:
+            raise HTTPException(status_code=404, detail="Batch task not found")
+
+        task_dict = dict(task_row)
+        task_dict["chapters"] = json.loads(task_dict["chapters"])
+        task_dict["class_ids"] = json.loads(task_dict.get("class_ids") or "[]")
+        task_dict["generate_reflection"] = bool(task_dict.get("generate_reflection", 0))
+        task = BatchTask(**task_dict)
+
+        # Get total count of lesson plans for this task
+        count_row = await db.fetch_one(
+            """
+            SELECT COUNT(*) as count FROM batch_lesson_plans
+            WHERE batch_task_id = ?
+            """,
+            (task_id,)
+        )
+        total = count_row["count"] if count_row else 0
+
+        # Get paginated lesson plan IDs
+        offset = (page - 1) * limit
+        batch_plan_rows = await db.fetch_all(
+            """
+            SELECT lesson_plan_id FROM batch_lesson_plans
+            WHERE batch_task_id = ?
+            ORDER BY lesson_number ASC
+            LIMIT ? OFFSET ?
+            """,
+            (task_id, limit, offset)
+        )
+
+        # Fetch full lesson plan details
+        lesson_plans = []
+        for row in batch_plan_rows:
+            plan_row = await db.fetch_one(
+                "SELECT * FROM lesson_plans WHERE id = ?",
+                (row["lesson_plan_id"],)
+            )
+            if plan_row:
+                lesson_plans.append(LessonPlan(**dict(plan_row)))
+
+        logger.debug(
+            f"Retrieved {len(lesson_plans)} lesson plans for task {task_id} "
+            f"(page {page}, total {total})"
+        )
+
+        return BatchLessonPlanListResponse(
+            lesson_plans=lesson_plans,
+            total=total,
+            task=task,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to get lesson plans for task {task_id}: {str(e)}",
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/batch/tasks/{task_id}/export-selected")
+async def export_selected_lesson_plans(
+    task_id: str,
+    request: ExportSelectedRequest
+):
+    """
+    Export selected lesson plans from a batch task as a ZIP file.
+
+    This allows selective export of specific lesson plans from a draft task,
+    useful when you only want to publish certain lesson plans.
+
+    If group_by_document is True, lesson plans will be grouped 2 per document.
+    Otherwise, each lesson plan gets its own document.
+    """
+    try:
+        from ..services.lesson_plan_service import LessonPlanService
+
+        lesson_plan_service = LessonPlanService()
+
+        # Use the lesson plan service to batch publish
+        zip_path = await lesson_plan_service.batch_publish(
+            lesson_plan_ids=request.lesson_plan_ids,
+            group_by_document=request.group_by_document
+        )
+
+        if not Path(zip_path).exists():
+            raise HTTPException(status_code=404, detail="ZIP file not found")
+
+        filename = Path(zip_path).name
+
+        logger.info(f"Serving selected lesson plans export for task {task_id}: {filename}")
+
+        return FileResponse(
+            path=str(zip_path),
+            filename=filename,
+            media_type="application/zip",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to export selected lesson plans for task {task_id}: {str(e)}",
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+

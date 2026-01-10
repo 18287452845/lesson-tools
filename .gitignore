@@ -90,3 +90,10 @@ SERVICE_MANAGEMENT.md
 # Monitor scripts (keeping start.sh, stop.sh, status.sh)
 monitor_*.sh
 final_monitor.sh
+
+# MCP and Browser Testing
+.claude/
+screenshots/
+*.png
+*.jpg
+puppeteer-*.json

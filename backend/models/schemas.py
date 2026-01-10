@@ -319,6 +319,18 @@ class ChapterSplitRequest(BaseModel):
     additional_info: Optional[str] = None
 
 
+class SmartAllocationRequest(BaseModel):
+    """智能周次分配请求 - 用户提供章节标题，AI智能分配到周次"""
+    course_name: str
+    subject: str
+    grade: str
+    chapters_input: str = Field(..., description="用户提供的章节标题（每行一个）")
+    total_weeks: int = Field(..., ge=1, le=20, description="总周数（如16周）")
+    hours_per_week: int = Field(..., ge=1, le=8, description="每周课时数（如4课时/周）")
+    total_hours: int = Field(..., description="总课时数 = total_weeks × hours_per_week")
+    additional_info: Optional[str] = Field(None, description="补充说明")
+
+
 class ChapterSplitResponse(BaseModel):
     """Response from chapter splitting."""
     chapters: List[ChapterInfo]
@@ -414,3 +426,105 @@ class ChapterTemplateListResponse(BaseModel):
     """Response for listing chapter templates."""
     templates: List[CourseChapterTemplate]
     total: int
+
+
+# ============================================================================
+# Lesson Plan Management Models (for Draft System)
+# ============================================================================
+
+
+class LessonPlan(BaseModel):
+    """Lesson plan full information."""
+    id: str
+    template_id: str
+    title: str
+    subject: Optional[str] = None
+    grade: Optional[str] = None
+    topic: Optional[str] = None
+    input_data: Optional[str] = None  # JSON string
+    generated_content: Optional[str] = None  # JSON string
+    final_content: Optional[str] = None
+    output_file_path: Optional[str] = None
+    status: str = "draft"  # draft, draft_cached, generated, published
+    batch_task_id: Optional[str] = None
+    lesson_number: Optional[int] = None
+    class_ids: Optional[str] = None  # JSON string
+    created_at: str
+    updated_at: str
+
+
+class LessonPlanListResponse(BaseModel):
+    """Response for listing lesson plans."""
+    lesson_plans: List[LessonPlan]
+    total: int
+
+
+class UpdateFieldRequest(BaseModel):
+    """Request to update a field in lesson plan."""
+    field_name: str = Field(..., description="字段名（如 teaching_goals）")
+    field_value: Any = Field(..., description="字段新值")
+
+
+class RegenerateFieldRequest(BaseModel):
+    """Request to regenerate a field."""
+    field_name: str = Field(..., description="字段名")
+    additional_instruction: Optional[str] = Field(None, description="额外指令")
+
+
+class RegenerateFieldResponse(BaseModel):
+    """Response from field regeneration."""
+    field_name: str
+    field_value: Any
+
+
+class PublishResponse(BaseModel):
+    """Response from publishing a lesson plan."""
+    lesson_plan_id: str
+    output_file_path: str
+    download_url: str
+
+
+class BatchPublishRequest(BaseModel):
+    """Request to batch publish lesson plans."""
+    lesson_plan_ids: List[str] = Field(..., description="教案ID列表")
+    group_by_document: bool = Field(default=True, description="是否按文档分组（2个/文档）")
+
+
+class BatchDeleteRequest(BaseModel):
+    """Request to batch delete lesson plans."""
+    lesson_plan_ids: List[str] = Field(..., description="教案ID列表")
+
+
+class ExportSelectedRequest(BaseModel):
+    """Request to export selected lesson plans from batch task."""
+    lesson_plan_ids: List[str] = Field(..., description="选中的教案ID列表")
+    group_by_document: bool = Field(default=True, description="是否按文档分组（2个/文档）")
+
+
+class BatchLessonPlanListResponse(BaseModel):
+    """Response for listing lesson plans in a batch task."""
+    lesson_plans: List[LessonPlan]
+    total: int
+    task: BatchTask
+
+
+class DraftTaskCreateRequest(BaseModel):
+    """Request to create a draft task (pre-generate lesson plans)."""
+    course_name: str
+    subject: str
+    grade: str
+    template_id: str
+    total_hours: int = Field(..., ge=2, description="总课时数")
+    hours_per_lesson: int = Field(default=2, ge=1, description="每份教案课时")
+    chapters: List[ChapterInfo]
+    textbook_name: Optional[str] = Field(None, description="教材名称")
+    location: Optional[str] = Field(None, description="授课地点")
+    online_resources: Optional[str] = Field(None, description="网络资源")
+    generate_reflection: bool = Field(default=False, description="是否生成教学反思")
+
+
+class DraftTaskCreateResponse(BaseModel):
+    """Response from draft task creation."""
+    task_id: str
+    status: str
+

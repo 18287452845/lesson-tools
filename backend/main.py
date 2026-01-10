@@ -9,7 +9,7 @@ import logging
 
 from .config import settings
 from .models.database import init_db
-from .api import templates, generate, edit, documents, settings as settings_api, batch, classes
+from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans
 from .services.template_sync import sync_templates_on_startup
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,16 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176", "http://localhost:5177", "http://localhost:5178"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:5176",
+        "http://localhost:5177",
+        "http://localhost:5178",
+        "https://ls.linnera.link",
+        "http://ls.linnera.link",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -59,6 +68,7 @@ app.include_router(documents.router, prefix=settings.api_prefix, tags=["document
 app.include_router(settings_api.router, prefix=settings.api_prefix, tags=["settings"])
 app.include_router(batch.router, prefix=settings.api_prefix, tags=["batch"])
 app.include_router(classes.router, prefix=settings.api_prefix, tags=["classes"])
+app.include_router(lesson_plans.router, prefix=settings.api_prefix, tags=["lesson_plans"])
 
 
 @app.get("/")

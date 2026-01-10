@@ -19,6 +19,7 @@ import {
   ExperimentOutlined,
   DatabaseOutlined,
   LineChartOutlined,
+  InboxOutlined,
 } from '@ant-design/icons';
 
 const { Title, Text, Paragraph } = Typography;
@@ -51,6 +52,13 @@ function Home() {
       description: '一次生成整个学期的教案，支持AI自动拆分章节',
       gradient: gradients.blue,
       route: '/batch-generate',
+    },
+    {
+      icon: <InboxOutlined />,
+      title: '草稿箱',
+      description: '管理预生成的教案草稿，随时编辑和导出',
+      gradient: gradients.dark,
+      route: '/cached-lesson-plans',
     },
     {
       icon: <EditOutlined />,

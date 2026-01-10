@@ -11,10 +11,11 @@ import type {
   BatchTaskListResponse,
   ChapterTemplateListResponse,
   ChapterInfo,
+  SmartAllocationRequest,
 } from '@/types';
 
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api',
   timeout: 60000, // 60 seconds
 });
 
@@ -137,6 +138,82 @@ export const batchApi = {
   },
 
   /**
+   * Smart allocation: AI intelligently allocates chapters to weekly teaching plans
+   */
+  async splitChaptersSmartStream(
+    data: SmartAllocationRequest,
+    onProgress: (current: number, total: number, message: string) => void,
+    onChapter: (chapter: ChapterInfo) => void,
+    onComplete: (response: ChapterSplitResponse) => void,
+    onError: (errorMessage: string) => void
+  ): Promise<void> {
+    const response = await fetch(`${api.defaults.baseURL}/batch/split-chapters-smart-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+
+    if (!reader) {
+      throw new Error('Response body is null');
+    }
+
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE messages
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          // Parse SSE format
+          const eventMatch = line.match(/^event: (.+)$/m);
+          const dataMatch = line.match(/^data: (.+)$/m);
+
+          if (eventMatch && dataMatch) {
+            const eventType = eventMatch[1];
+            const data = JSON.parse(dataMatch[1]);
+
+            switch (eventType) {
+              case 'progress':
+                onProgress(data.current, data.total, data.message);
+                break;
+              case 'chapter':
+                onChapter(data);
+                break;
+              case 'complete':
+                onComplete(data);
+                return;
+              case 'error':
+                onError(data.message);
+                return;
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  },
+
+  /**
    * Create a batch task and start processing
    */
   async createBatchTask(data: BatchTaskCreateRequest): Promise<BatchTaskCreateResponse> {
@@ -188,6 +265,44 @@ export const batchApi = {
    */
   async deleteBatchTask(taskId: string): Promise<void> {
     await api.delete(`/batch/tasks/${taskId}`);
+  },
+
+  /**
+   * Create a draft task (pre-generate lesson plans without creating documents)
+   */
+  async createDraftTask(data: import('@/types').DraftTaskCreateRequest): Promise<import('@/types').DraftTaskCreateResponse> {
+    const response = await api.post<import('@/types').DraftTaskCreateResponse>('/batch/create-draft-task', data);
+    return response.data;
+  },
+
+  /**
+   * Get all lesson plans for a batch task
+   */
+  async getTaskLessonPlans(
+    taskId: string,
+    params?: {
+      page?: number;
+      limit?: number;
+    }
+  ): Promise<import('@/types').BatchLessonPlanListResponse> {
+    const response = await api.get<import('@/types').BatchLessonPlanListResponse>(
+      `/batch/tasks/${taskId}/lesson-plans`,
+      { params }
+    );
+    return response.data;
+  },
+
+  /**
+   * Export selected lesson plans from a batch task as a ZIP file
+   */
+  async exportSelectedLessonPlans(
+    taskId: string,
+    request: import('@/types').ExportSelectedRequest
+  ): Promise<Blob> {
+    const response = await api.post(`/batch/tasks/${taskId}/export-selected`, request, {
+      responseType: 'blob',
+    });
+    return response.data;
   },
 
   /**

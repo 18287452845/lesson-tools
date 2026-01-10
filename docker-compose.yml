@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  # Backend service - FastAPI
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: lesson-tools-backend
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      # AI Provider Configuration
+      - AI_PROVIDER=${AI_PROVIDER:-deepseek}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+
+      # Optional API Configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - AI_MODEL=${AI_MODEL:-deepseek-chat}
+      - AI_MAX_TOKENS=${AI_MAX_TOKENS:-4096}
+      - AI_TEMPERATURE=${AI_TEMPERATURE:-0.7}
+
+      # Database
+      - DATABASE_URL=sqlite:///storage/database.db
+    volumes:
+      # Persist database and storage
+      - ./storage:/app/storage
+      # Mount templates directory
+      - ./storage/templates:/app/storage/templates
+      # Mount code for development (comment out for production)
+      # - ./backend:/app/backend
+    networks:
+      - lesson-tools-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend service - React + Nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: lesson-tools-frontend
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    depends_on:
+      - backend
+    networks:
+      - lesson-tools-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+networks:
+  lesson-tools-network:
+    driver: bridge
+
+volumes:
+  storage:
+    driver: local

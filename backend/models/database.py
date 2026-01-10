@@ -248,6 +248,22 @@ class Database:
             db, "lesson_plans", "class_ids", "TEXT"
         )
 
+        # Add task_type to batch_tasks (for draft vs normal tasks)
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "task_type", "TEXT DEFAULT 'normal'"
+        )
+
+        # Create indexes for lesson plan draft management
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_lesson_plans_status_template
+            ON lesson_plans(status, template_id)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_batch_tasks_type_status
+            ON batch_tasks(task_type, status)
+        """)
+
     async def _add_column_if_not_exists(
         self,
         db: aiosqlite.Connection,

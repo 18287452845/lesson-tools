@@ -29,6 +29,7 @@ import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   ExclamationCircleOutlined,
+  EyeOutlined,
 } from '@ant-design/icons';
 import type { BatchTask } from '@/types';
 import { batchApi } from '@/services/batchApi';
@@ -41,23 +42,10 @@ const BatchDownloads: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Auto-refresh effect
+  // Load tasks on mount
   useEffect(() => {
     loadTasks();
-
-    const interval = setInterval(() => {
-      // Check if there are any in-progress tasks
-      const hasProcessing = tasks.some(
-        (t) => t.status === 'pending' || t.status === 'processing'
-      );
-
-      if (hasProcessing) {
-        refreshTasks();
-      }
-    }, 5000); // Poll every 5 seconds
-
-    return () => clearInterval(interval);
-  }, [tasks]);
+  }, []);
 
   const loadTasks = async () => {
     setLoading(true);
@@ -154,6 +142,20 @@ const BatchDownloads: React.FC = () => {
       ),
     },
     {
+      title: '任务类型',
+      key: 'task_type',
+      width: 100,
+      render: (_: any, record: BatchTask) => {
+        const extendedTask = record as import('@/types').ExtendedBatchTask;
+        const taskType = extendedTask.task_type || 'normal';
+        return taskType === 'draft' ? (
+          <Tag color="blue">草稿</Tag>
+        ) : (
+          <Tag color="green">正常</Tag>
+        );
+      },
+    },
+    {
       title: '进度',
       key: 'progress',
       width: 200,
@@ -204,46 +206,63 @@ const BatchDownloads: React.FC = () => {
       title: '操作',
       key: 'actions',
       fixed: 'right' as const,
-      width: 150,
-      render: (_: any, record: BatchTask) => (
-        <Space>
-          {record.status === 'completed' && (
-            <Button
-              type="primary"
-              size="small"
-              icon={<DownloadOutlined />}
-              onClick={() => handleDownload(record)}
-            >
-              下载
-            </Button>
-          )}
+      width: 180,
+      render: (_: any, record: BatchTask) => {
+        const extendedTask = record as import('@/types').ExtendedBatchTask;
+        const taskType = extendedTask.task_type || 'normal';
+        const isDraft = taskType === 'draft';
 
-          {record.status === 'processing' && (
-            <Spin size="small" />
-          )}
+        return (
+          <Space>
+            {isDraft && record.status === 'completed' && (
+              <Button
+                type="primary"
+                size="small"
+                icon={<EyeOutlined />}
+                onClick={() => navigate(`/batch-tasks/${record.id}`)}
+              >
+                查看详情
+              </Button>
+            )}
 
-          <Popconfirm
-            title="确定删除此任务？"
-            description={
-              record.status === 'processing'
-                ? '任务正在进行中，删除后将取消任务'
-                : '删除后无法恢复'
-            }
-            onConfirm={() => handleDelete(record.id)}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Button
-              type="text"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
+            {!isDraft && record.status === 'completed' && (
+              <Button
+                type="primary"
+                size="small"
+                icon={<DownloadOutlined />}
+                onClick={() => handleDownload(record)}
+              >
+                下载
+              </Button>
+            )}
+
+            {record.status === 'processing' && (
+              <Spin size="small" />
+            )}
+
+            <Popconfirm
+              title="确定删除此任务？"
+              description={
+                record.status === 'processing'
+                  ? '任务正在进行中，删除后将取消任务'
+                  : '删除后无法恢复'
+              }
+              onConfirm={() => handleDelete(record.id)}
+              okText="确定"
+              cancelText="取消"
             >
-              删除
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
+              <Button
+                type="text"
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+              >
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        );
+      },
     },
   ];
 

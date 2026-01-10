@@ -188,37 +188,64 @@ class DeepSeekProvider(AIProvider):
 
     async def generate_stream(self, prompt: str, system_prompt: Optional[str] = None):
         """使用DeepSeek API流式生成内容，yield SSE 格式的数据行"""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
 
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
 
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "stream": True,  # 启用流式
-        }
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": self.temperature,
+                "stream": True,  # 启用流式
+            }
 
-        if self.max_tokens and self.max_tokens <= 8192:
-            payload["max_tokens"] = self.max_tokens
+            if self.max_tokens and self.max_tokens <= 8192:
+                payload["max_tokens"] = self.max_tokens
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            async with client.stream(
-                "POST",
-                f"{self.base_url}/v1/chat/completions",
-                headers=headers,
-                json=payload,
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line.strip():
-                        yield line
+            logger.info(f"Starting DeepSeek stream generation with model: {self.model}")
+
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                try:
+                    async with client.stream(
+                        "POST",
+                        f"{self.base_url}/v1/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    ) as response:
+                        if response.status_code != 200:
+                            error_text = await response.aread()
+                            logger.error(f"DeepSeek API error (status {response.status_code}): {error_text.decode()}")
+                            raise Exception(f"DeepSeek API returned status {response.status_code}: {error_text.decode()}")
+
+                        response.raise_for_status()
+                        line_count = 0
+                        async for line in response.aiter_lines():
+                            if line.strip():
+                                line_count += 1
+                                yield line
+
+                        logger.info(f"DeepSeek stream completed. Received {line_count} lines")
+
+                except httpx.TimeoutException as e:
+                    logger.error(f"DeepSeek API timeout: {e}")
+                    raise Exception(f"AI请求超时，请稍后重试。如果问题持续，请尝试减少生成的内容量。")
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"DeepSeek API HTTP error: {e}")
+                    raise Exception(f"AI服务返回错误 (HTTP {e.response.status_code})，请检查API配置或稍后重试。")
+                except Exception as e:
+                    logger.error(f"DeepSeek stream error: {e}")
+                    raise
+
+        except Exception as e:
+            logger.error(f"Fatal error in DeepSeek generate_stream: {e}")
+            raise Exception(f"AI生成失败: {str(e)}")
 
 
 class AnthropicProvider(AIProvider):
@@ -294,36 +321,63 @@ class AnthropicProvider(AIProvider):
 
     async def generate_stream(self, prompt: str, system_prompt: Optional[str] = None):
         """使用Anthropic API流式生成内容，yield SSE 格式的数据行"""
-        headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        }
+        try:
+            headers = {
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            }
 
-        messages = [{"role": "user", "content": prompt}]
+            messages = [{"role": "user", "content": prompt}]
 
-        payload = {
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "messages": messages,
-            "stream": True,
-        }
+            payload = {
+                "model": self.model,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                "messages": messages,
+                "stream": True,
+            }
 
-        if system_prompt:
-            payload["system"] = system_prompt
+            if system_prompt:
+                payload["system"] = system_prompt
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            async with client.stream(
-                "POST",
-                self.base_url,
-                headers=headers,
-                json=payload,
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line.strip():
-                        yield line
+            logger.info(f"Starting Anthropic stream generation with model: {self.model}")
+
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                try:
+                    async with client.stream(
+                        "POST",
+                        self.base_url,
+                        headers=headers,
+                        json=payload,
+                    ) as response:
+                        if response.status_code != 200:
+                            error_text = await response.aread()
+                            logger.error(f"Anthropic API error (status {response.status_code}): {error_text.decode()}")
+                            raise Exception(f"Anthropic API returned status {response.status_code}: {error_text.decode()}")
+
+                        response.raise_for_status()
+                        line_count = 0
+                        async for line in response.aiter_lines():
+                            if line.strip():
+                                line_count += 1
+                                yield line
+
+                        logger.info(f"Anthropic stream completed. Received {line_count} lines")
+
+                except httpx.TimeoutException as e:
+                    logger.error(f"Anthropic API timeout: {e}")
+                    raise Exception(f"AI请求超时，请稍后重试。如果问题持续，请尝试减少生成的内容量。")
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"Anthropic API HTTP error: {e}")
+                    raise Exception(f"AI服务返回错误 (HTTP {e.response.status_code})，请检查API配置或稍后重试。")
+                except Exception as e:
+                    logger.error(f"Anthropic stream error: {e}")
+                    raise
+
+        except Exception as e:
+            logger.error(f"Fatal error in Anthropic generate_stream: {e}")
+            raise Exception(f"AI生成失败: {str(e)}")
 
 
 class AIProviderFactory:

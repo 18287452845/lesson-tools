@@ -240,6 +240,17 @@ export interface ChapterSplitRequest {
   additional_info?: string;
 }
 
+export interface SmartAllocationRequest {
+  course_name: string;
+  subject: string;
+  grade: string;
+  chapters_input: string;
+  total_weeks: number;
+  hours_per_week: number;
+  total_hours: number;
+  additional_info?: string;
+}
+
 export interface ChapterSplitResponse {
   chapters: ChapterInfo[];
   total_lessons: number;
@@ -390,3 +401,110 @@ export interface HtmlExportResponse {
   filename: string;
   download_url: string;
 }
+
+// ============================================================================
+// Lesson Plan Management Types (for Draft System)
+// ============================================================================
+
+export type LessonPlanStatus =
+  | 'draft'
+  | 'draft_cached'  // Pre-generated drafts
+  | 'generated'
+  | 'published';
+
+export interface LessonPlan {
+  id: string;
+  template_id: string;
+  title: string;
+  subject?: string;
+  grade?: string;
+  topic?: string;
+  input_data?: string;  // JSON string
+  generated_content?: string;  // JSON string
+  final_content?: string;
+  output_file_path?: string;
+  status: LessonPlanStatus;
+  batch_task_id?: string;
+  lesson_number?: number;
+  class_ids?: string;  // JSON string
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LessonPlanListResponse {
+  lesson_plans: LessonPlan[];
+  total: number;
+}
+
+export interface UpdateFieldRequest {
+  field_name: string;
+  field_value: any;
+}
+
+export interface RegenerateFieldRequest {
+  field_name: string;
+  additional_instruction?: string;
+}
+
+export interface RegenerateFieldResponse {
+  field_name: string;
+  field_value: any;
+}
+
+export interface PublishResponse {
+  lesson_plan_id: string;
+  output_file_path: string;
+  download_url: string;
+}
+
+export interface BatchPublishRequest {
+  lesson_plan_ids: string[];
+  group_by_document?: boolean;
+}
+
+export interface BatchDeleteRequest {
+  lesson_plan_ids: string[];
+}
+
+export interface ExportSelectedRequest {
+  lesson_plan_ids: string[];
+  group_by_document?: boolean;
+}
+
+export interface BatchLessonPlanListResponse {
+  lesson_plans: LessonPlan[];
+  total: number;
+  task: BatchTask;
+}
+
+export interface DraftTaskCreateRequest {
+  course_name: string;
+  subject: string;
+  grade: string;
+  template_id: string;
+  total_hours: number;
+  hours_per_lesson?: number;
+  chapters: ChapterInfo[];
+  textbook_name?: string;
+  location?: string;
+  online_resources?: string;
+  generate_reflection?: boolean;
+}
+
+export interface DraftTaskCreateResponse {
+  task_id: string;
+  status: string;
+}
+
+// Extend BatchTask to include task_type
+export interface ExtendedBatchTask extends BatchTask {
+  task_type?: 'normal' | 'draft';
+  start_week?: number;
+  class_ids?: string[];
+  location?: string;
+  textbook_name?: string;
+  online_resources?: string;
+  generate_reflection?: boolean;
+  class_names?: string;
+}
+

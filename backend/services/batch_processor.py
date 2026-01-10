@@ -80,24 +80,26 @@ class BatchTaskProcessor:
         self.max_concurrent_documents = max_concurrent_documents or settings.batch_max_concurrent_documents
         self.max_concurrent_lessons = max_concurrent_lessons or settings.batch_max_concurrent_lessons
 
-    async def process_batch_task(self, batch_task_id: str) -> None:
+    async def process_batch_task(self, batch_task_id: str, is_draft_mode: bool = False) -> None:
         """
         Process a batch task - main entry point with parallel document generation.
 
         Args:
             batch_task_id: ID of the batch task to process
+            is_draft_mode: If True, only generate content without rendering documents or creating ZIP
 
         This method runs the entire batch generation workflow with parallelization:
         1. Load task from database
         2. Group lessons by document (2 lessons per document)
         3. Generate documents concurrently (configurable concurrency)
         4. Generate lesson plans within each document concurrently
-        5. Package all into ZIP
+        5. Package all into ZIP (skipped in draft mode)
         6. Update task status
         """
         try:
+            mode_str = "draft" if is_draft_mode else "normal"
             logger.info(
-                f"Starting parallel batch task processing: {batch_task_id} "
+                f"Starting parallel batch task processing ({mode_str} mode): {batch_task_id} "
                 f"(max_concurrent_documents={self.max_concurrent_documents}, "
                 f"max_concurrent_lessons={self.max_concurrent_lessons})"
             )
@@ -152,6 +154,7 @@ class BatchTaskProcessor:
                         textbook_name=task.get("textbook_name"),
                         online_resources=task.get("online_resources"),
                         class_names=task.get("class_names"),
+                        is_draft_mode=is_draft_mode,
                     )
 
                     file_info = {
@@ -217,8 +220,21 @@ class BatchTaskProcessor:
                 await self._update_task_status(batch_task_id, "cancelled")
                 return
 
-            # Package all files into ZIP
-            if generated_files:
+            # Package all files into ZIP (skip in draft mode)
+            if is_draft_mode:
+                # In draft mode, no files are generated, so just mark as completed
+                await self._update_task_status(
+                    batch_task_id,
+                    "completed",
+                    completed_at=datetime.now().isoformat(),
+                )
+
+                logger.info(
+                    f"Draft batch task {batch_task_id} completed successfully. "
+                    f"Generated {completed_lesson_plans} lesson plans ({failed_lessons} failed). "
+                    f"All lesson plans saved as drafts (no documents rendered)."
+                )
+            elif generated_files:
                 zip_path = await self._pack_zip(
                     batch_task_id=batch_task_id,
                     course_name=task["course_name"],
@@ -292,6 +308,7 @@ class BatchTaskProcessor:
         textbook_name: Optional[str] = None,
         online_resources: Optional[str] = None,
         class_names: Optional[str] = None,
+        is_draft_mode: bool = False,
     ) -> str:
         """
         Generate a document containing lesson plans with parallel lesson generation.
@@ -313,9 +330,10 @@ class BatchTaskProcessor:
             textbook_name: Optional textbook name
             online_resources: Optional online resources
             class_names: Optional class names (comma-separated)
+            is_draft_mode: If True, only save content without rendering document (default False)
 
         Returns:
-            Path to the generated .docx file
+            Path to the generated .docx file (or empty string in draft mode)
         """
         # Calculate week number (each document = 1 week)
         week_number = start_week + (document_number - 1)
@@ -395,6 +413,9 @@ class BatchTaskProcessor:
 
             # Create lesson plan record in database
             lesson_plan_id = str(uuid4())
+            # Set status based on draft mode
+            lesson_plan_status = "draft_cached" if is_draft_mode else "generated"
+
             await db.execute(
                 """
                 INSERT INTO lesson_plans (
@@ -420,7 +441,7 @@ class BatchTaskProcessor:
                         focus_areas=", ".join(chapter.key_concepts),
                     ).model_dump(), ensure_ascii=False),
                     json.dumps(generated_content.model_dump(), ensure_ascii=False),
-                    "generated",
+                    lesson_plan_status,
                     batch_task_id,
                     chapter.lesson_number,
                     datetime.now().isoformat(),
@@ -469,6 +490,14 @@ class BatchTaskProcessor:
         # Check if we have any successful lesson plans
         if not lesson_plans_data:
             raise ValueError(f"All lesson plans failed for document {document_number}")
+
+        # In draft mode, skip document rendering and return empty string
+        if is_draft_mode:
+            logger.info(
+                f"Draft mode: Skipping document rendering for document {document_number}. "
+                f"Generated {len(lesson_plans_data)} lesson plans."
+            )
+            return ""
 
         # Render combined document with successful lesson plans
         logger.debug(f"Rendering document {document_number} (week {week_number}) with {len(lesson_plans_data)} lesson plans")

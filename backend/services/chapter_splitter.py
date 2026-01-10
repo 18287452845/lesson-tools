@@ -5,13 +5,17 @@ Supports:
 - AI-powered automatic chapter generation based on total hours
 - Manual chapter input (user provides chapter titles)
 """
+import asyncio
 import json
+import logging
 import re
 from typing import List, Optional
 
 from ..config import settings
 from ..models.schemas import ChapterInfo
 from .ai_provider import generate_with_ai, AIProviderFactory
+
+logger = logging.getLogger(__name__)
 
 
 class ChapterSplitter:
@@ -79,6 +83,73 @@ class ChapterSplitter:
    - 每个key_concepts数组包含3-5个核心概念
 
 请直接输出JSON数组，不要添加任何其他文字。
+"""
+
+    SMART_ALLOCATION_PROMPT = """请根据用户提供的章节标题，智能分配到指定周数的周次教学计划中。
+
+## 课程信息
+- 课程名称：{course_name}
+- 学科：{subject}
+- 年级：{grade}
+- 总周数：{total_weeks} 周
+- 每周课时：{hours_per_week} 课时/周
+- 总课时：{total_hours} 课时
+{additional_info}
+
+## 用户提供的章节标题
+{chapters_list}
+
+## 任务说明
+你需要将上述章节智能分配到 **{total_weeks} 周** 的教学计划中。每周为一个教学单元，课题命名需要体现该周的教学内容。
+
+**分配策略**：
+1. **重要或复杂的章节** 可以跨越 2 周完成（如"第1章：XXX（上）"和"第1章：XXX（下）"）
+2. **简单或关联性强的章节** 可以合并到 1 周内（如"第2章 + 第3章"）
+3. **中等难度的章节** 独立占 1 周
+4. 可以安排 **复习周** 或 **实践周**（如"阶段复习"、"期中总结"、"期末项目"）
+
+## 输出要求
+返回 **{total_weeks}** 个 JSON 对象的数组，每个对象代表一周的教学计划：
+
+```json
+[
+  {{
+    "lesson_number": 1,
+    "topic": "第1周：第1章 课程导论（上）",
+    "content_summary": "本周教学内容概述...",
+    "key_concepts": ["概念1", "概念2", "概念3"]
+  }},
+  {{
+    "lesson_number": 2,
+    "topic": "第2周：第1章 课程导论（下）",
+    "content_summary": "延续上周内容...",
+    "key_concepts": ["概念4", "概念5"]
+  }},
+  {{
+    "lesson_number": 3,
+    "topic": "第3周：第2章 基础知识 + 第3章 基本操作",
+    "content_summary": "本周合并讲解两个基础章节...",
+    "key_concepts": ["概念1", "概念2", "概念3"]
+  }}
+]
+```
+
+## 课题命名规范
+- 单章节跨周：`第X周：第N章 XXX（上）` / `第Y周：第N章 XXX（下）`
+- 合并章节：`第X周：第N章 XXX + 第M章 YYY`
+- 独立章节：`第X周：第N章 XXX`
+- 复习周：`第X周：阶段复习` 或 `第X周：期中总结`
+
+## 关键要求
+1. **必须输出 {total_weeks} 个对象**（不多不少）
+2. lesson_number 从 1 到 {total_weeks}
+3. 每个 topic 必须以 `第X周：` 开头
+4. content_summary 说明该周的教学内容（100-200字）
+5. key_concepts 包含 3-5 个核心概念
+6. 合理分配难度，前期基础后期深化
+7. 输出纯 JSON 数组，不要任何其他文字
+
+请直接输出JSON数组。
 """
 
     def __init__(
@@ -434,27 +505,28 @@ class ChapterSplitter:
         """
         chapters = []
 
-        # Try to match JSON array pattern
-        array_match = re.search(r'\[.*?\]', content, re.DOTALL)
+        # Try to match JSON array pattern (use greedy matching to capture full array)
+        array_match = re.search(r'\[(.*)\]', content, re.DOTALL)
         if not array_match:
             return chapters
 
         try:
-            # Try parsing as-is
-            data = json.loads(array_match.group(0))
+            # Try parsing as-is with greedy match
+            data = json.loads('[' + array_match.group(1) + ']')
             if isinstance(data, list):
-                chapters = [ChapterInfo(**d) for d in data]
-        except json.JSONDecodeError:
+                chapters = [ChapterInfo(**d) for d in data if isinstance(d, dict)]
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass
 
         if not chapters:
             # Try fixing trailing commas
-            fixed = re.sub(r',\s*([}\]])', r'\1', array_match.group(0))
+            json_str = '[' + array_match.group(1) + ']'
+            fixed = re.sub(r',\s*([}\]])', r'\1', json_str)
             try:
                 data = json.loads(fixed)
                 if isinstance(data, list):
-                    chapters = [ChapterInfo(**d) for d in data]
-            except (json.JSONDecodeError, ValueError):
+                    chapters = [ChapterInfo(**d) for d in data if isinstance(d, dict)]
+            except (json.JSONDecodeError, ValueError, TypeError):
                 pass
 
         return chapters
@@ -493,6 +565,272 @@ class ChapterSplitter:
                 return data
             except json.JSONDecodeError:
                 raise ValueError(f"Failed to parse AI response as JSON: {e}\nContent: {content[:500]}")
+
+    def _build_smart_allocation_prompt(
+        self,
+        course_name: str,
+        subject: str,
+        grade: str,
+        chapters_input: str,
+        total_weeks: int,
+        hours_per_week: int,
+        total_hours: int,
+        additional_info: Optional[str] = None,
+    ) -> str:
+        """
+        构建智能周次分配的提示词。
+
+        Args:
+            course_name: 课程名称
+            subject: 学科
+            grade: 年级
+            chapters_input: 用户输入的章节标题（每行一个）
+            total_weeks: 总周数
+            hours_per_week: 每周课时
+            total_hours: 总课时
+            additional_info: 补充说明
+
+        Returns:
+            格式化的提示词
+        """
+        # 解析章节标题为列表
+        chapter_lines = [line.strip() for line in chapters_input.strip().split('\n') if line.strip()]
+        chapters_list = "\n".join([f"{i+1}. {title}" for i, title in enumerate(chapter_lines)])
+
+        # 构建补充信息
+        additional_info_section = ""
+        if additional_info:
+            additional_info_section = f"\n- 补充说明：{additional_info}"
+
+        # 格式化提示词
+        prompt = self.SMART_ALLOCATION_PROMPT.format(
+            course_name=course_name,
+            subject=subject,
+            grade=grade,
+            total_weeks=total_weeks,
+            hours_per_week=hours_per_week,
+            total_hours=total_hours,
+            chapters_list=chapters_list,
+            additional_info=additional_info_section,
+        )
+
+        return prompt
+
+    async def _generate_smart_allocation(
+        self,
+        course_name: str,
+        subject: str,
+        grade: str,
+        chapters_input: str,
+        total_weeks: int,
+        hours_per_week: int,
+        total_hours: int,
+        additional_info: Optional[str] = None,
+    ) -> List[ChapterInfo]:
+        """
+        使用AI智能分配章节到周次。
+
+        Args:
+            course_name: 课程名称
+            subject: 学科
+            grade: 年级
+            chapters_input: 用户输入的章节标题
+            total_weeks: 总周数
+            hours_per_week: 每周课时
+            total_hours: 总课时
+            additional_info: 补充说明
+
+        Returns:
+            ChapterInfo列表（每周一个）
+        """
+        # 构建提示词
+        prompt = self._build_smart_allocation_prompt(
+            course_name, subject, grade, chapters_input,
+            total_weeks, hours_per_week, total_hours, additional_info
+        )
+
+        # 调用AI生成
+        provider = AIProviderFactory.create_provider(
+            self.provider, self.api_key, self.model, settings.ai_max_tokens_batch
+        )
+
+        # 尝试多次生成（最多3次），确保生成完整
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = await provider.generate(prompt, self.SYSTEM_PROMPT)
+
+                # 解析JSON响应
+                data = self._parse_json_response(response)
+
+                # 转换为ChapterInfo对象
+                chapters = []
+                for item in data:
+                    chapters.append(ChapterInfo(**item))
+
+                logger.info(f"Smart allocation attempt {attempt + 1}: generated {len(chapters)}/{total_weeks} weeks")
+
+                # 如果生成数量正确或接近，直接返回
+                if len(chapters) >= total_weeks:
+                    if len(chapters) > total_weeks:
+                        logger.warning(f"Generated {len(chapters)} weeks, truncating to {total_weeks}")
+                        chapters = chapters[:total_weeks]
+                    return chapters
+                elif len(chapters) >= total_weeks * 0.8:  # 如果生成了80%以上，接受
+                    logger.warning(f"Generated {len(chapters)}/{total_weeks} weeks (>80%), filling remaining")
+                    # 只填充少量缺失的周次
+                    existing_nums = {ch.lesson_number for ch in chapters}
+                    for week_num in range(1, total_weeks + 1):
+                        if week_num not in existing_nums:
+                            chapters.append(ChapterInfo(
+                                lesson_number=week_num,
+                                topic=f"第{week_num}周：待补充",
+                                content_summary="请手动填写本周教学内容",
+                                key_concepts=[]
+                            ))
+                    # 按lesson_number排序
+                    chapters.sort(key=lambda x: x.lesson_number)
+                    return chapters
+
+                # 生成不足80%，重试
+                if attempt < max_retries - 1:
+                    logger.warning(f"Generated only {len(chapters)}/{total_weeks} weeks, retrying...")
+                    await asyncio.sleep(1)  # 等待1秒后重试
+
+            except Exception as e:
+                logger.error(f"Smart allocation attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1)
+                else:
+                    raise
+
+        # 所有重试都失败，抛出异常
+        raise Exception(f"Failed to generate complete smart allocation after {max_retries} attempts. Only got {len(chapters)}/{total_weeks} weeks.")
+
+    async def _generate_smart_allocation_stream(
+        self,
+        course_name: str,
+        subject: str,
+        grade: str,
+        chapters_input: str,
+        total_weeks: int,
+        hours_per_week: int,
+        total_hours: int,
+        additional_info: Optional[str] = None,
+    ):
+        """
+        使用AI智能分配章节到周次（流式）。
+
+        Yields:
+            ChapterInfo对象（每周一个）
+        """
+        # 构建提示词
+        prompt = self._build_smart_allocation_prompt(
+            course_name, subject, grade, chapters_input,
+            total_weeks, hours_per_week, total_hours, additional_info
+        )
+
+        # 获取provider
+        provider = AIProviderFactory.create_provider(
+            self.provider, self.api_key, self.model, settings.ai_max_tokens_batch
+        )
+
+        # 累积流式响应
+        full_response = ""
+        yielded_weeks = set()  # 已输出的周次
+
+        # 使用流式生成
+        if hasattr(provider, 'generate_stream'):
+            async for chunk in provider.generate_stream(prompt, self.SYSTEM_PROMPT):
+                # 解析SSE格式
+                if chunk.startswith("data: "):
+                    data_str = chunk[6:]
+                    if data_str.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk_data = json.loads(data_str)
+
+                        # 处理DeepSeek/OpenAI格式
+                        if "choices" in chunk_data and len(chunk_data["choices"]) > 0:
+                            delta = chunk_data["choices"][0].get("delta", {})
+                            content = delta.get("content", "")
+                            full_response += content
+
+                            # 尝试解析部分完成的周次
+                            partial_weeks = self._try_parse_partial_chapters(full_response)
+                            for week in partial_weeks:
+                                week_num = week.lesson_number
+                                if week_num not in yielded_weeks and week_num <= total_weeks:
+                                    yielded_weeks.add(week_num)
+                                    yield week
+
+                    except json.JSONDecodeError:
+                        continue
+
+            # 流式生成完成后，检查是否所有周次都已生成
+            logger.info(f"Smart allocation stream completed. Generated {len(yielded_weeks)}/{total_weeks} weeks")
+
+            if len(yielded_weeks) < total_weeks:
+                # 流式生成不完整，尝试解析完整响应
+                logger.warning(f"Stream incomplete, attempting to parse full response")
+                try:
+                    data = self._parse_json_response(full_response)
+                    for item in data:
+                        week = ChapterInfo(**item)
+                        week_num = week.lesson_number
+                        if week_num not in yielded_weeks and week_num <= total_weeks:
+                            yielded_weeks.add(week_num)
+                            yield week
+                            logger.info(f"Recovered week {week_num} from full response")
+                except Exception as e:
+                    logger.error(f"Failed to parse full response: {e}")
+
+                # 如果仍然不完整，使用同步方法重新生成
+                if len(yielded_weeks) < total_weeks:
+                    logger.warning(f"Stream and parse failed, falling back to synchronous generation")
+                    try:
+                        weeks = await self._generate_smart_allocation(
+                            course_name, subject, grade, chapters_input,
+                            total_weeks, hours_per_week, total_hours, additional_info
+                        )
+                        for week in weeks:
+                            week_num = week.lesson_number
+                            if week_num not in yielded_weeks:
+                                yielded_weeks.add(week_num)
+                                yield week
+                                logger.info(f"Recovered week {week_num} from sync generation")
+                    except Exception as e:
+                        logger.error(f"Synchronous generation also failed: {e}")
+        else:
+            # 不支持流式，使用同步方式
+            weeks = await self._generate_smart_allocation(
+                course_name, subject, grade, chapters_input,
+                total_weeks, hours_per_week, total_hours, additional_info
+            )
+            for week in weeks:
+                if week.lesson_number <= total_weeks:
+                    yield week
+                    yielded_weeks.add(week.lesson_number)
+
+        # 最后检查：只有在所有尝试都失败后才填充占位符
+        if len(yielded_weeks) < total_weeks:
+            error_msg = f"Failed to generate all weeks. Only got {len(yielded_weeks)}/{total_weeks}"
+            logger.error(error_msg)
+
+            # 不生成占位符，而是抛出异常让上层处理
+            raise Exception(
+                f"AI章节生成未完成：成功生成 {len(yielded_weeks)}/{total_weeks} 周的内容。\n\n"
+                f"可能原因：\n"
+                f"1. AI API密钥配置错误或已过期\n"
+                f"2. AI服务繁忙或网络连接问题\n"
+                f"3. 请求的周数过多（当前 {total_weeks} 周），建议分批生成\n"
+                f"4. 章节标题过于复杂，建议简化\n\n"
+                f"建议操作：\n"
+                f"- 检查后端日志查看详细错误信息\n"
+                f"- 验证 .env 文件中的 AI_PROVIDER 和 API_KEY 配置\n"
+                f"- 尝试减少周数（建议不超过 8-12 周）\n"
+                f"- 简化章节标题或提供更具体的教学内容"
+            )
 
 
 async def split_course_chapters(

@@ -44,6 +44,7 @@ import {
   ExclamationCircleOutlined,
   HistoryOutlined,
   EditOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons';
 import type {
   ChapterInfo,
@@ -71,11 +72,18 @@ const BatchGenerate: React.FC = () => {
   // Step state
   const [currentStep, setCurrentStep] = useState(0);
 
-  // Mode selection: 'new' (AI generate chapters) or 'existing' (use cached) or 'manual' (user input)
-  const [mode, setMode] = useState<'new' | 'existing' | 'manual'>('new');
+  // Mode selection: 'new' (AI generate chapters) or 'existing' (use cached) or 'manual' (user input) or 'smart-allocation' (smart weekly allocation)
+  const [mode, setMode] = useState<'new' | 'existing' | 'manual' | 'smart-allocation'>('new');
 
   // Chapter input mode for new courses: 'ai' or 'manual'
   const [chapterInputMode, setChapterInputMode] = useState<'ai' | 'manual'>('ai');
+
+  // Smart allocation mode state
+  const [totalWeeks, setTotalWeeks] = useState<number>(16);
+  const [hoursPerWeek, setHoursPerWeek] = useState<number>(4);
+
+  // Task type: 'normal' (generate and export ZIP) or 'draft' (save as drafts only)
+  const [taskType, setTaskType] = useState<'normal' | 'draft'>('normal');
 
   // Step 1: Basic information
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
@@ -195,6 +203,57 @@ const BatchGenerate: React.FC = () => {
     // Save form values before switching step
     setSavedFormValues(values);
 
+    // Smart allocation mode
+    if (mode === 'smart-allocation') {
+      const request: import('@/types').SmartAllocationRequest = {
+        course_name: values.course_name,
+        subject: values.subject,
+        grade: values.grade,
+        chapters_input: values.chapters_input,
+        total_weeks: totalWeeks,
+        hours_per_week: hoursPerWeek,
+        total_hours: totalWeeks * hoursPerWeek,
+        additional_info: values.additional_info,
+      };
+
+      setSplittingChapters(true);
+      setStreamedChapters([]);
+      setStreamProgress({ current: 0, total: 0, message: '初始化中...' });
+
+      try {
+        await batchApi.splitChaptersSmartStream(
+          request,
+          // onProgress callback
+          (current: number, total: number, message: string) => {
+            setStreamProgress({ current, total, message });
+          },
+          // onChapter callback
+          (chapter: ChapterInfo) => {
+            setStreamedChapters((prev) => [...prev, chapter]);
+          },
+          // onComplete callback
+          (response: ChapterSplitResponse) => {
+            setChapters(response.chapters);
+            setTotalLessons(response.total_lessons);
+            setCurrentStep(1);
+            const numDocs = Math.ceil(response.total_lessons / 2);
+            message.success(`成功分配 ${response.total_lessons} 周教学计划（${numDocs} 个文档）`);
+            setSplittingChapters(false);
+          },
+          // onError callback
+          (errorMessage: string) => {
+            message.error(errorMessage || '智能分配失败');
+            setSplittingChapters(false);
+          }
+        );
+      } catch (error: any) {
+        message.error(error.message || '智能分配失败');
+        setSplittingChapters(false);
+      }
+      return;
+    }
+
+    // Original logic for new/manual mode
     const request: ChapterSplitRequest = {
       course_name: values.course_name,
       subject: values.subject,
@@ -268,29 +327,52 @@ const BatchGenerate: React.FC = () => {
       return;
     }
 
-    const request: BatchTaskCreateRequest = {
-      course_name: values.course_name,
-      subject: values.subject,
-      grade: values.grade,
-      template_id: values.template_id,
-      total_hours: values.total_hours,
-      hours_per_lesson: values.hours_per_lesson ?? 2,
-      chapters: chapters,
-      start_week: values.start_week ?? 1,
-      class_ids: values.class_ids ?? [],
-      location: values.location,
-      textbook_name: values.textbook_name,
-      online_resources: values.online_resources,
-      additional_requirements: values.additional_requirements,
-      generate_reflection: values.generate_reflection ?? false,
-    };
-
     setLoading(true);
     try {
-      const response = await batchApi.createBatchTask(request);
-      setTaskId(response.task_id);
-      setCurrentStep(2);
-      message.success('批量任务已创建，正在后台生成...');
+      if (taskType === 'draft') {
+        // Create draft task (no ZIP generation)
+        const draftRequest: import('@/types').DraftTaskCreateRequest = {
+          course_name: values.course_name,
+          subject: values.subject,
+          grade: values.grade,
+          template_id: values.template_id,
+          total_hours: values.total_hours,
+          hours_per_lesson: values.hours_per_lesson ?? 2,
+          chapters: chapters,
+          textbook_name: values.textbook_name,
+          location: values.location,
+          online_resources: values.online_resources,
+          generate_reflection: values.generate_reflection ?? false,
+        };
+
+        const response = await batchApi.createDraftTask(draftRequest);
+        setTaskId(response.task_id);
+        setCurrentStep(2);
+        message.success('草稿任务已创建，正在后台生成教案内容...');
+      } else {
+        // Create normal batch task (with ZIP generation)
+        const request: BatchTaskCreateRequest = {
+          course_name: values.course_name,
+          subject: values.subject,
+          grade: values.grade,
+          template_id: values.template_id,
+          total_hours: values.total_hours,
+          hours_per_lesson: values.hours_per_lesson ?? 2,
+          chapters: chapters,
+          start_week: values.start_week ?? 1,
+          class_ids: values.class_ids ?? [],
+          location: values.location,
+          textbook_name: values.textbook_name,
+          online_resources: values.online_resources,
+          additional_requirements: values.additional_requirements,
+          generate_reflection: values.generate_reflection ?? false,
+        };
+
+        const response = await batchApi.createBatchTask(request);
+        setTaskId(response.task_id);
+        setCurrentStep(2);
+        message.success('批量任务已创建，正在后台生成...');
+      }
     } catch (error: any) {
       message.error(error.message || '创建任务失败');
     } finally {
@@ -434,14 +516,31 @@ const BatchGenerate: React.FC = () => {
                 style={{ width: '100%' }}
               >
                 <Row gutter={[16, 16]}>
-                  <Col span={12}>
-                    <Radio.Button value="new" style={{ width: '100%', textAlign: 'center' }}>
-                      <FileTextOutlined /> 创建新课程
+                  <Col span={8}>
+                    <Radio.Button value="new" style={{ width: '100%', textAlign: 'center', height: 'auto', padding: '8px' }}>
+                      <div>
+                        <FileTextOutlined style={{ fontSize: 20, display: 'block', marginBottom: 4 }} />
+                        <div style={{ fontWeight: 500 }}>AI生成章节</div>
+                        <div style={{ fontSize: 12, color: '#666' }}>输入总课时，AI自动规划</div>
+                      </div>
                     </Radio.Button>
                   </Col>
-                  <Col span={12}>
-                    <Radio.Button value="existing" style={{ width: '100%', textAlign: 'center' }}>
-                      <HistoryOutlined /> 使用已有模板
+                  <Col span={8}>
+                    <Radio.Button value="smart-allocation" style={{ width: '100%', textAlign: 'center', height: 'auto', padding: '8px' }}>
+                      <div>
+                        <CalendarOutlined style={{ fontSize: 20, display: 'block', marginBottom: 4 }} />
+                        <div style={{ fontWeight: 500 }}>智能周次分配</div>
+                        <div style={{ fontSize: 12, color: '#666' }}>提供章节，AI分配到周</div>
+                      </div>
+                    </Radio.Button>
+                  </Col>
+                  <Col span={8}>
+                    <Radio.Button value="existing" style={{ width: '100%', textAlign: 'center', height: 'auto', padding: '8px' }}>
+                      <div>
+                        <HistoryOutlined style={{ fontSize: 20, display: 'block', marginBottom: 4 }} />
+                        <div style={{ fontWeight: 500 }}>使用已有模板</div>
+                        <div style={{ fontSize: 12, color: '#666' }}>选择缓存的课程模板</div>
+                      </div>
                     </Radio.Button>
                   </Col>
                 </Row>
@@ -555,7 +654,8 @@ const BatchGenerate: React.FC = () => {
               </Row>
             </Card>
 
-            {/* Hours Configuration Card */}
+            {/* Hours Configuration Card - hidden for smart-allocation mode */}
+            {mode !== 'smart-allocation' && (
             <Card
               title={
                 <Space>
@@ -632,6 +732,7 @@ const BatchGenerate: React.FC = () => {
                 showIcon
               />
             </Card>
+            )}
 
             {/* Class & Options Card */}
             <Card
@@ -719,8 +820,8 @@ const BatchGenerate: React.FC = () => {
               </Row>
             </Card>
 
-            {/* Chapter Content Card (for new courses only) */}
-            {mode === 'new' && (
+            {/* Chapter Content Card (for new courses and smart allocation) */}
+            {(mode === 'new' || mode === 'smart-allocation') && (
               <Card
                 title={
                   <Space>
@@ -730,6 +831,8 @@ const BatchGenerate: React.FC = () => {
                 }
                 style={{ marginBottom: 16 }}
               >
+                {mode === 'new' && (
+                  <>
                 <Form.Item label="章节来源">
                   <Radio.Group
                     value={chapterInputMode}
@@ -757,6 +860,81 @@ const BatchGenerate: React.FC = () => {
                       placeholder={`第一章：Java语言概述\n第二章：Java基本语法\n第三章：面向对象编程基础\n...`}
                     />
                   </Form.Item>
+                )}
+                  </>
+                )}
+
+                {/* Smart Allocation Mode UI */}
+                {mode === 'smart-allocation' && (
+                  <>
+                    <Alert
+                      message="智能周次分配模式"
+                      description="请输入章节标题列表（每行一个），AI将智能分配到指定周数。系统会自动判断章节难度，重要章节跨2周讲授，简单章节合并到1周。"
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                    />
+
+                    <Row gutter={16}>
+                      <Col xs={24} sm={8}>
+                        <Form.Item
+                          label="总周数"
+                          tooltip="计划用多少周完成教学（如一学期16周）"
+                          rules={[{ required: true, message: '请输入总周数' }]}
+                        >
+                          <InputNumber
+                            min={1}
+                            max={20}
+                            value={totalWeeks}
+                            onChange={(v) => setTotalWeeks(v || 16)}
+                            addonAfter="周"
+                            size="large"
+                            style={{ width: '100%' }}
+                          />
+                        </Form.Item>
+                      </Col>
+
+                      <Col xs={24} sm={8}>
+                        <Form.Item
+                          label="每周课时"
+                          tooltip="每周安排多少课时"
+                          rules={[{ required: true, message: '请输入每周课时' }]}
+                        >
+                          <InputNumber
+                            min={1}
+                            max={8}
+                            value={hoursPerWeek}
+                            onChange={(v) => setHoursPerWeek(v || 4)}
+                            addonAfter="课时/周"
+                            size="large"
+                            style={{ width: '100%' }}
+                          />
+                        </Form.Item>
+                      </Col>
+
+                      <Col xs={24} sm={8}>
+                        <Form.Item label="总课时">
+                          <Input
+                            value={`${totalWeeks * hoursPerWeek} 课时`}
+                            disabled
+                            size="large"
+                          />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+
+                    <Form.Item
+                      name="chapters_input"
+                      label="章节标题列表（每行一个）"
+                      rules={[{ required: true, message: '请输入章节标题' }]}
+                      extra="请输入各章节标题，每行一个。AI会智能分配到各周，支持跨周和合并。"
+                    >
+                      <TextArea
+                        rows={12}
+                        placeholder={`第一章：Java语言概述\n第二章：Java基本语法\n第三章：面向对象编程基础\n第四章：类与对象\n第五章：继承与多态\n第六章：异常处理\n第七章：集合框架\n第八章：IO流\n第九章：多线程\n第十章：网络编程`}
+                      />
+                    </Form.Item>
+                  </>
                 )}
               </Card>
             )}
@@ -792,7 +970,7 @@ const BatchGenerate: React.FC = () => {
             </Card>
 
             {/* Action Buttons */}
-            {mode === 'new' && (
+            {(mode === 'new' || mode === 'smart-allocation') && (
               <>
                 <Form.Item style={{ marginBottom: 0 }}>
                   <Space size="large">
@@ -803,7 +981,12 @@ const BatchGenerate: React.FC = () => {
                       loading={splittingChapters}
                       icon={<FileTextOutlined />}
                     >
-                      {splittingChapters ? '生成中...' : (chapterInputMode === 'ai' ? '下一步：AI生成章节' : '下一步：解析章节')}
+                      {splittingChapters
+                        ? '生成中...'
+                        : mode === 'smart-allocation'
+                          ? '下一步：AI智能分配'
+                          : (chapterInputMode === 'ai' ? '下一步：AI生成章节' : '下一步：解析章节')
+                      }
                     </Button>
                     <Button size="large" onClick={() => navigate('/')}>
                       取消
@@ -950,6 +1133,42 @@ const BatchGenerate: React.FC = () => {
                 pagination={false}
                 scroll={{ y: 400 }}
               />
+            </Card>
+
+            {/* Task Type Selection Card */}
+            <Card
+              title={
+                <Space>
+                  <FileTextOutlined />
+                  <span>任务类型</span>
+                </Space>
+              }
+              style={{ marginBottom: 16 }}
+            >
+              <Radio.Group
+                value={taskType}
+                onChange={(e) => setTaskType(e.target.value)}
+                size="large"
+              >
+                <Space direction="vertical" size="middle">
+                  <Radio value="normal">
+                    <Space direction="vertical" size={0}>
+                      <Text strong>正常生成（导出ZIP）</Text>
+                      <Text type="secondary" style={{ fontSize: 12, marginLeft: 24 }}>
+                        立即生成完整教案Word文档，打包为ZIP文件供下载
+                      </Text>
+                    </Space>
+                  </Radio>
+                  <Radio value="draft">
+                    <Space direction="vertical" size={0}>
+                      <Text strong>预生成草稿（仅保存到草稿箱）</Text>
+                      <Text type="secondary" style={{ fontSize: 12, marginLeft: 24 }}>
+                        生成教案内容并保存到草稿箱，可随时编辑、重新生成字段，再选择性导出
+                      </Text>
+                    </Space>
+                  </Radio>
+                </Space>
+              </Radio.Group>
             </Card>
 
             {/* Action Buttons */}
