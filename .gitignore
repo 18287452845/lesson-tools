@@ -99,3 +99,4 @@ screenshots/
 *.png
 *.jpg
 puppeteer-*.json
+test-data/

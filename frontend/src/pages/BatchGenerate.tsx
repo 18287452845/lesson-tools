@@ -200,11 +200,19 @@ const BatchGenerate: React.FC = () => {
 
   // Step 1: Submit basic info and split chapters
   const handleSplitChapters = async (values: any) => {
-    // Save form values before switching step
-    setSavedFormValues(values);
-
     // Smart allocation mode
     if (mode === 'smart-allocation') {
+      // Calculate total_hours for smart allocation mode
+      const calculatedTotalHours = totalWeeks * hoursPerWeek;
+
+      // Save form values with calculated total_hours and default hours_per_lesson
+      const valuesWithCalculations = {
+        ...values,
+        total_hours: calculatedTotalHours,
+        hours_per_lesson: 2, // Default value for smart allocation
+      };
+      setSavedFormValues(valuesWithCalculations);
+
       const request: import('@/types').SmartAllocationRequest = {
         course_name: values.course_name,
         subject: values.subject,
@@ -212,7 +220,7 @@ const BatchGenerate: React.FC = () => {
         chapters_input: values.chapters_input,
         total_weeks: totalWeeks,
         hours_per_week: hoursPerWeek,
-        total_hours: totalWeeks * hoursPerWeek,
+        total_hours: calculatedTotalHours,
         additional_info: values.additional_info,
       };
 
@@ -254,6 +262,9 @@ const BatchGenerate: React.FC = () => {
     }
 
     // Original logic for new/manual mode
+    // Save form values before switching step
+    setSavedFormValues(values);
+
     const request: ChapterSplitRequest = {
       course_name: values.course_name,
       subject: values.subject,
