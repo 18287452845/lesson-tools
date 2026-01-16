@@ -125,6 +125,9 @@ class TestDatabase:
             "document_edits",
             "edit_logs",
             "user_settings",
+            "textbooks",  # Added
+            "textbook_chapters",  # Added
+            "lesson_plan_textbooks",  # Added
         }
 
         assert tables == expected_tables
