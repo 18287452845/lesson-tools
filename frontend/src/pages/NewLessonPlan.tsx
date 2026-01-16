@@ -22,8 +22,9 @@ import { ArrowLeftOutlined, LoadingOutlined } from '@ant-design/icons';
 import { useTemplateStore } from '@/stores/templateStore';
 import { useGeneratorStore } from '@/stores/generatorStore';
 import { SUBJECT_OPTIONS, GRADE_OPTIONS, DURATION_OPTIONS } from '@/types';
-import type { ClassInfo } from '@/types';
+import type { ClassInfo, TextbookInfo, TextbookChapterInfo } from '@/types';
 import { classApi } from '@/services/api';
+import { textbookApi } from '@/services/textbookApi';
 import GeneratedContent from '@/components/generator/GeneratedContent';
 
 const { Title, Text } = Typography;
@@ -52,11 +53,15 @@ function NewLessonPlan() {
   const [currentStep, setCurrentStep] = useState(0);
   const [form] = Form.useForm();
   const [classes, setClasses] = useState<ClassInfo[]>([]);
+  const [textbooks, setTextbooks] = useState<TextbookInfo[]>([]);
+  const [selectedTextbookId, setSelectedTextbookId] = useState<string | undefined>();
+  const [chapters, setChapters] = useState<TextbookChapterInfo[]>([]);
 
   // Fetch templates and classes on mount
   useEffect(() => {
     fetchTemplates();
     loadClasses();
+    loadTextbooks();
   }, [fetchTemplates]);
 
   const loadClasses = async () => {
@@ -65,6 +70,50 @@ function NewLessonPlan() {
       setClasses(data.classes);
     } catch (error) {
       console.error('Failed to load classes:', error);
+    }
+  };
+
+  const loadTextbooks = async () => {
+    try {
+      const data = await textbookApi.listTextbooks({ status: 'active' });
+      setTextbooks(data.textbooks);
+    } catch (error) {
+      console.error('Failed to load textbooks:', error);
+    }
+  };
+
+  const handleSelectTextbook = async (textbookId: string) => {
+    if (!textbookId) {
+      setSelectedTextbookId(undefined);
+      setChapters([]);
+      return;
+    }
+
+    try {
+      const textbook = await textbookApi.getTextbook(textbookId);
+      setSelectedTextbookId(textbookId);
+      setChapters(textbook.chapters || []);
+
+      // Auto-fill textbook_name field
+      form.setFieldsValue({
+        textbook_name: textbook.name,
+      });
+    } catch (error: any) {
+      console.error('Failed to load textbook:', error);
+    }
+  };
+
+  const handleSelectChapter = (chapterId: string) => {
+    const chapter = chapters.find((ch) => ch.id === chapterId);
+    if (chapter) {
+      // Auto-fill form fields from chapter
+      form.setFieldsValue({
+        topic: chapter.chapter_title,
+        unit_name: `${chapter.chapter_number} ${chapter.chapter_title}`,
+        prior_knowledge: chapter.content_summary
+          ? `章节概述：${chapter.content_summary}\n核心概念：${chapter.key_concepts?.join('、') || ''}`
+          : undefined,
+      });
     }
   };
 
@@ -204,6 +253,49 @@ function NewLessonPlan() {
             <Form.Item label="授课地点" name="location">
               <Input placeholder="例如：教学楼301教室" />
             </Form.Item>
+
+            <Form.Item
+              label="选择教材"
+              name="textbook_id"
+              tooltip="选择教材后可以选择对应的章节快速填充信息"
+            >
+              <Select
+                placeholder="选择教材（可选）"
+                showSearch
+                allowClear
+                value={selectedTextbookId}
+                onChange={handleSelectTextbook}
+                filterOption={(input, option) =>
+                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+                options={textbooks.map((t) => ({
+                  label: `${t.name}${t.author ? ' - ' + t.author : ''}`,
+                  value: t.id,
+                }))}
+              />
+            </Form.Item>
+
+            {selectedTextbookId && chapters.length > 0 && (
+              <Form.Item
+                label="选择章节"
+                name="chapter_id"
+                tooltip="选择章节后将自动填充课题和单元名称"
+              >
+                <Select
+                  placeholder="选择章节（可选）"
+                  showSearch
+                  allowClear
+                  onChange={handleSelectChapter}
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  options={chapters.map((ch) => ({
+                    label: `${ch.chapter_number} ${ch.chapter_title}`,
+                    value: ch.id,
+                  }))}
+                />
+              </Form.Item>
+            )}
 
             <Form.Item label="教材名称" name="textbook_name">
               <Input placeholder="例如：《Python程序设计基础》第3版" />

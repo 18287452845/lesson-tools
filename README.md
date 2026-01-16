@@ -216,6 +216,37 @@ npm run electron:build
 
 **注意：** 桌面应用仍需要后端服务支持，建议将后端一起打包或提供独立的后端安装包。
 
+### 方式四：Docker 部署（推荐用于生产环境）
+
+使用 Docker Compose 可以快速部署整个应用，无需手动配置 Python 和 Node.js 环境。
+
+```bash
+# 1. 配置环境变量
+cp .env.example .env
+# 编辑 .env 文件，填入您的 API Key
+
+# 2. 构建并启动服务
+docker-compose up -d --build
+
+# 3. 查看运行状态
+docker-compose ps
+
+# 4. 查看日志
+docker-compose logs -f
+
+# 5. 停止服务
+docker-compose down
+```
+
+**访问地址：**
+- 前端界面：http://localhost:8081
+- 后端 API：http://localhost:8001
+- API 文档：http://localhost:8001/docs
+
+**数据持久化：** `storage/` 目录中的数据会自动挂载并持久化保存。
+
+详细的 Docker 部署说明请参考 `DOCKER_DEPLOYMENT.md`。
+
 ## 🎯 AI 提供商配置
 
 本项目支持两种 AI 提供商，可根据需求选择：
@@ -287,10 +318,12 @@ lesson-tools/
 │   ├── api/                   # API 路由层
 │   │   ├── templates.py       # 模板管理 API (18个端点)
 │   │   ├── generate.py        # AI 教案生成 API
+│   │   ├── lesson_plans.py    # 教案检索管理 API
 │   │   ├── edit.py            # AI 编辑 API
 │   │   ├── documents.py       # 文档管理 API
 │   │   ├── settings.py        # 设置管理 API
-│   │   └── batch.py           # 批量生成 API 📦
+│   │   ├── batch.py           # 批量生成 API 📦
+│   │   └── classes.py         # 班级管理 API
 │   ├── models/                # 数据模型
 │   │   ├── database.py        # 数据库连接和表定义
 │   │   └── schemas.py         # Pydantic 数据模型
@@ -299,10 +332,13 @@ lesson-tools/
 │   │   ├── ai_generator.py    # 教案生成服务
 │   │   ├── ai_editor.py       # AI 编辑服务
 │   │   ├── template_parser.py # 模板解析（Jinja2）
+│   │   ├── template_sync.py   # 模板自动同步服务
+│   │   ├── template_versioning.py # 版本历史管理
 │   │   ├── document_renderer.py # 文档渲染（docxtpl）
+│   │   ├── document_modifier.py # 文档修改服务
+│   │   ├── lesson_plan_service.py # 教案业务逻辑
 │   │   ├── docx_converter.py  # DOCX ↔ HTML 双向转换
 │   │   ├── jinja_protector.py # Jinja2 语法保护
-│   │   ├── template_versioning.py # 版本历史管理
 │   │   ├── chapter_splitter.py # 课程章节拆分服务 📦
 │   │   ├── batch_processor.py # 批量生成处理器 📦
 │   │   └── background_runner.py # 后台任务运行器 📦
@@ -336,10 +372,12 @@ lesson-tools/
 │       │   ├── TemplateEditor.tsx  # 模板编辑器 ⭐
 │       │   ├── NewLessonPlan.tsx   # 新建教案
 │       │   ├── EditLessonPlan.tsx  # 编辑教案
+│       │   ├── LessonPlanDetail.tsx # 教案详情
+│       │   ├── History.tsx    # 历史记录
 │       │   ├── BatchGenerate.tsx  # 批量生成 📦
 │       │   ├── BatchDownloads.tsx # 批量下载 📦
-│       │   ├── History.tsx    # 历史记录
-│       │   ├── LessonPlanDetail.tsx # 教案详情
+│       │   ├── BatchTaskDetail.tsx # 批量任务详情 📦
+│       │   ├── CachedLessonPlans.tsx # 缓存章节模板 📦
 │       │   ├── ClassManager.tsx # 班级管理
 │       │   └── Settings.tsx   # 设置
 │       ├── services/          # API 服务
@@ -718,13 +756,17 @@ A: 目前不支持直接修改，可以：
 cd backend
 pytest
 
+# 运行特定类别的测试
+pytest -m unit              # 仅运行单元测试（快速）
+pytest -m integration       # 仅运行集成测试
+pytest -m api               # 仅运行 API 测试
+pytest -m service           # 仅运行服务层测试
+pytest -m "not slow"        # 跳过慢速测试
+pytest -m "not ai"          # 跳过需要 AI API 密钥的测试
+pytest -m smoke             # 快速冒烟测试
+
 # 带覆盖率报告的测试
 pytest --cov=backend --cov-report=html
-
-# 运行特定标记的测试
-pytest -m unit          # 仅单元测试
-pytest -m integration   # 仅集成测试
-pytest -m api           # 仅 API 测试
 
 # API 集成测试
 python test_api.py
@@ -798,6 +840,7 @@ MIT License
 - ✨ 新增可视化模板编辑器 - TipTap 富文本编辑器
 - ✨ 新增版本历史管理 - 支持版本对比和回滚
 - ✨ 新增班级管理功能 - 管理授课班级信息
+- ✨ 新增 Docker 部署支持 - 一键部署完整应用栈
 - 🔧 优化 Word 导出 - 使用 `docxtpl` 完美保留格式
 - 🔧 添加跨平台管理脚本 - Windows .bat 和 Linux .sh
 - 🔧 多 AI 提供商支持 - DeepSeek 和 Anthropic Claude

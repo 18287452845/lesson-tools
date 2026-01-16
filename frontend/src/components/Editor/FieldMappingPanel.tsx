@@ -17,7 +17,6 @@ import {
   message,
   Tag,
   Popconfirm,
-  Typography,
   Divider,
   Alert,
 } from 'antd'
@@ -30,8 +29,6 @@ import {
 } from '@ant-design/icons'
 import { useTemplateEditorStore } from '../../stores/templateEditorStore'
 import type { FieldConfig } from '@/types'
-
-const { Text } = Typography
 
 interface FieldMappingPanelProps {
   visible: boolean

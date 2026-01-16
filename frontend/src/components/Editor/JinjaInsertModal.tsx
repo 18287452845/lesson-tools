@@ -4,10 +4,10 @@
  * 提供可视化界面插入 Jinja2 变量、循环和条件
  */
 import React, { useState } from 'react'
-import { Modal, Form, Input, Select, Radio, Space, Alert, Typography } from 'antd'
+import { Modal, Form, Input, Select, Radio, Alert, Typography } from 'antd'
 import type { Editor } from '@tiptap/react'
 
-const { Text, Paragraph } = Typography
+const { Paragraph } = Typography
 const { TextArea } = Input
 
 interface JinjaInsertModalProps {

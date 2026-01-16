@@ -77,8 +77,8 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
     } else {
       // 应用格式
       if (copiedFormat) {
-        const { selection } = editor.state
-        const { from, to } = selection
+        // Note: selection is destructured for potential future use
+        const { selection: _selection } = editor.state
 
         // 清除现有格式
         editor.chain().focus().unsetAllMarks().run()

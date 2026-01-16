@@ -92,6 +92,109 @@ class ClassListResponse(BaseModel):
 
 
 # ============================================================================
+# Textbook Management Models
+# ============================================================================
+
+
+class TextbookCreateRequest(BaseModel):
+    """Request to create a new textbook."""
+    name: str = Field(..., min_length=1, max_length=200, description="教材名称")
+    isbn: Optional[str] = Field(None, max_length=20, description="ISBN号")
+    author: Optional[str] = Field(None, max_length=200, description="作者")
+    publisher: Optional[str] = Field(None, max_length=200, description="出版社")
+    edition: Optional[str] = Field(None, max_length=50, description="版本/版次")
+    subject: Optional[str] = Field(None, max_length=50, description="学科")
+    grade: Optional[str] = Field(None, max_length=50, description="适用年级")
+    cover_image: Optional[str] = Field(None, description="封面图片路径")
+    description: Optional[str] = Field(None, description="教材简介")
+
+
+class TextbookUpdateRequest(BaseModel):
+    """Request to update a textbook."""
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    isbn: Optional[str] = Field(None, max_length=20)
+    author: Optional[str] = Field(None, max_length=200)
+    publisher: Optional[str] = Field(None, max_length=200)
+    edition: Optional[str] = Field(None, max_length=50)
+    subject: Optional[str] = Field(None, max_length=50)
+    grade: Optional[str] = Field(None, max_length=50)
+    cover_image: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[Literal["active", "inactive"]] = None
+
+
+class TextbookChapterInfo(BaseModel):
+    """Textbook chapter information."""
+    id: str
+    textbook_id: str
+    chapter_number: str
+    chapter_title: str
+    content_summary: Optional[str] = None
+    key_concepts: List[str] = Field(default_factory=list)
+    sort_order: int = 0
+    hours_required: Optional[int] = None
+    parent_chapter_id: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class TextbookInfo(BaseModel):
+    """Textbook information with chapters."""
+    id: str
+    name: str
+    isbn: Optional[str] = None
+    author: Optional[str] = None
+    publisher: Optional[str] = None
+    edition: Optional[str] = None
+    subject: Optional[str] = None
+    grade: Optional[str] = None
+    cover_image: Optional[str] = None
+    description: Optional[str] = None
+    status: str
+    use_count: int
+    created_at: str
+    updated_at: str
+    chapters: List[TextbookChapterInfo] = Field(default_factory=list)
+
+
+class TextbookListResponse(BaseModel):
+    """Response for listing textbooks."""
+    textbooks: List[TextbookInfo]
+    total: int
+
+
+class TextbookChapterGenerateRequest(BaseModel):
+    """Request to generate textbook chapters using AI."""
+    textbook_name: str = Field(..., description="教材名称")
+    isbn: Optional[str] = Field(None, description="ISBN号")
+    subject: Optional[str] = Field(None, description="学科")
+    grade: Optional[str] = Field(None, description="年级")
+    additional_info: Optional[str] = Field(None, description="补充说明")
+
+
+class TextbookChapterCreateRequest(BaseModel):
+    """Request to create a single chapter."""
+    chapter_number: str = Field(..., description="章节号，如'第1章'")
+    chapter_title: str = Field(..., min_length=1, max_length=200, description="章节标题")
+    content_summary: Optional[str] = Field(None, description="内容概述")
+    key_concepts: List[str] = Field(default_factory=list, description="核心概念列表")
+    sort_order: int = Field(0, description="排序顺序")
+    hours_required: Optional[int] = Field(None, description="建议课时数")
+    parent_chapter_id: Optional[str] = Field(None, description="父章节ID")
+
+
+class TextbookChapterBatchCreateRequest(BaseModel):
+    """Request to batch create or update chapters."""
+    chapters: List[TextbookChapterCreateRequest]
+
+
+class TextbookChapterGenerateResponse(BaseModel):
+    """Response from AI chapter generation."""
+    chapters: List[TextbookChapterCreateRequest]
+    message: str = "章节生成成功"
+
+
+# ============================================================================
 # Lesson Plan Generation Models
 # ============================================================================
 

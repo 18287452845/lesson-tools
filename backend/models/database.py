@@ -218,6 +218,96 @@ class Database:
             ON template_versions(template_id)
         """)
 
+        # Textbooks table (for教材management)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS textbooks (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                isbn TEXT,
+                author TEXT,
+                publisher TEXT,
+                edition TEXT,
+                subject TEXT,
+                grade TEXT,
+                cover_image TEXT,
+                description TEXT,
+                status TEXT DEFAULT 'active',
+                use_count INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Textbook chapters table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS textbook_chapters (
+                id TEXT PRIMARY KEY,
+                textbook_id TEXT NOT NULL,
+                chapter_number TEXT NOT NULL,
+                chapter_title TEXT NOT NULL,
+                content_summary TEXT,
+                key_concepts TEXT,
+                sort_order INTEGER DEFAULT 0,
+                hours_required INTEGER,
+                parent_chapter_id TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (textbook_id) REFERENCES textbooks(id) ON DELETE CASCADE
+            )
+        """)
+
+        # Lesson plan textbooks association table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS lesson_plan_textbooks (
+                id TEXT PRIMARY KEY,
+                lesson_plan_id TEXT NOT NULL,
+                textbook_id TEXT NOT NULL,
+                chapter_id TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (lesson_plan_id) REFERENCES lesson_plans(id) ON DELETE CASCADE,
+                FOREIGN KEY (textbook_id) REFERENCES textbooks(id) ON DELETE CASCADE,
+                FOREIGN KEY (chapter_id) REFERENCES textbook_chapters(id) ON DELETE SET NULL
+            )
+        """)
+
+        # Create indexes for textbooks
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_textbooks_subject_grade
+            ON textbooks(subject, grade)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_textbooks_name
+            ON textbooks(name)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_textbooks_isbn
+            ON textbooks(isbn)
+        """)
+
+        # Create indexes for textbook_chapters
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_textbook_chapters_textbook_id
+            ON textbook_chapters(textbook_id)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_textbook_chapters_sort_order
+            ON textbook_chapters(textbook_id, sort_order)
+        """)
+
+        # Create indexes for lesson_plan_textbooks
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_lesson_plan_textbooks_lesson
+            ON lesson_plan_textbooks(lesson_plan_id)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_lesson_plan_textbooks_textbook
+            ON lesson_plan_textbooks(textbook_id)
+        """)
+
         # Add start_week and class_ids to batch_tasks
         await self._add_column_if_not_exists(
             db, "batch_tasks", "start_week", "INTEGER DEFAULT 1"
@@ -252,6 +342,28 @@ class Database:
         await self._add_column_if_not_exists(
             db, "batch_tasks", "task_type", "TEXT DEFAULT 'normal'"
         )
+
+        # Add textbook_id to batch_tasks (for textbook integration)
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "textbook_id", "TEXT"
+        )
+
+        # Add textbook_id to lesson_plans (for textbook integration)
+        await self._add_column_if_not_exists(
+            db, "lesson_plans", "textbook_id", "TEXT"
+        )
+
+        # Create index for batch_tasks textbook association
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_batch_tasks_textbook
+            ON batch_tasks(textbook_id)
+        """)
+
+        # Create index for lesson_plans textbook association
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_lesson_plans_textbook
+            ON lesson_plans(textbook_id)
+        """)
 
         # Create indexes for lesson plan draft management
         await db.execute("""

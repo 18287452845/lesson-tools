@@ -4,17 +4,15 @@
  * 在右侧显示模板的实时预览效果
  */
 import React, { useState, useEffect } from 'react'
-import { Card, Button, Space, Spin, Alert, Drawer, Form, Input, Typography, Divider } from 'antd'
+import { Card, Button, Space, Alert, Drawer, Form, Input, Typography } from 'antd'
 import {
   EyeOutlined,
   ReloadOutlined,
   SettingOutlined,
-  FullscreenOutlined,
-  CloseOutlined,
 } from '@ant-design/icons'
 import nunjucks from 'nunjucks'
 
-const { Title, Paragraph } = Typography
+const { Paragraph } = Typography
 const { TextArea } = Input
 
 interface PreviewPanelProps {

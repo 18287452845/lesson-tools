@@ -20,6 +20,7 @@ import {
   DatabaseOutlined,
   LineChartOutlined,
   InboxOutlined,
+  BookOutlined,
 } from '@ant-design/icons';
 
 const { Title, Text, Paragraph } = Typography;
@@ -87,6 +88,13 @@ function Home() {
       description: '管理授课班级信息',
       gradient: gradients.orange,
       route: '/classes',
+    },
+    {
+      icon: <BookOutlined />,
+      title: '教材管理',
+      description: '管理教材信息，AI生成章节大纲',
+      gradient: gradients.dark,
+      route: '/textbooks',
     },
   ];
 

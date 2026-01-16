@@ -64,7 +64,36 @@
       "Bash(\"venv/Scripts/python.exe\" -c:*)",
       "Bash(tasklist:*)",
       "Bash(cmd:*)",
-      "Bash(venv\\\\Scripts\\\\python.exe:*)"
+      "Bash(venv\\\\Scripts\\\\python.exe:*)",
+      "Bash(git push:*)",
+      "Bash(git config:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(git fetch:*)",
+      "Bash(docker-compose down:*)",
+      "Bash(docker system prune:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker cp:*)",
+      "Bash(source:*)",
+      "Bash(pkill:*)",
+      "Bash(docker:*)",
+      "Bash(python3:*)",
+      "Bash(npm run build:*)",
+      "Bash(docker-compose:*)",
+      "Bash(for file in /opt/prj/lesson-tools/backend/api/*.py)",
+      "Bash(do echo \"=== Checking $file ===\")",
+      "Bash(done)",
+      "Bash(for file in /opt/prj/lesson-tools/backend/services/*.py)",
+      "Bash(for file in /opt/prj/lesson-tools/backend/*.py)",
+      "Bash(test:*)",
+      "Bash(du:*)",
+      "Bash(find:*)",
+      "Bash(tee:*)"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "chrome-devtools"
+  ]
 }

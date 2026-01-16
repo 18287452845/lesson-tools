@@ -4,14 +4,13 @@
  * 提供表格的高级编辑功能：插入/删除行列、合并单元格、设置边框样式等
  */
 import React from 'react'
-import { Button, Space, Divider, Popover, InputNumber, ColorPicker, Tooltip } from 'antd'
+import { Button, Space, Divider, Popover, InputNumber, Tooltip } from 'antd'
 import type { Editor } from '@tiptap/react'
 import {
   TableOutlined,
   DeleteOutlined,
   MergeCellsOutlined,
   SplitCellsOutlined,
-  BorderOutlined,
 } from '@ant-design/icons'
 
 interface TableToolbarProps {

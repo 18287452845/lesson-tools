@@ -9,7 +9,7 @@ import logging
 
 from .config import settings
 from .models.database import init_db
-from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans
+from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans, textbooks
 from .services.template_sync import sync_templates_on_startup
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,7 @@ app.include_router(settings_api.router, prefix=settings.api_prefix, tags=["setti
 app.include_router(batch.router, prefix=settings.api_prefix, tags=["batch"])
 app.include_router(classes.router, prefix=settings.api_prefix, tags=["classes"])
 app.include_router(lesson_plans.router, prefix=settings.api_prefix, tags=["lesson_plans"])
+app.include_router(textbooks.router, prefix=settings.api_prefix, tags=["textbooks"])
 
 
 @app.get("/")

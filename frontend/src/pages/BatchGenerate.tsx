@@ -45,6 +45,7 @@ import {
   HistoryOutlined,
   EditOutlined,
   CalendarOutlined,
+  BookOutlined,
 } from '@ant-design/icons';
 import type {
   ChapterInfo,
@@ -54,6 +55,8 @@ import type {
   TemplateInfo,
   CourseChapterTemplate,
   ClassInfo,
+  TextbookInfo,
+  FieldConfig,
 } from '@/types';
 import {
   SUBJECT_OPTIONS,
@@ -61,6 +64,7 @@ import {
 } from '@/types';
 import { batchApi } from '@/services/batchApi';
 import { templateApi, classApi } from '@/services/api';
+import { textbookApi } from '@/services/textbookApi';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -72,15 +76,14 @@ const BatchGenerate: React.FC = () => {
   // Step state
   const [currentStep, setCurrentStep] = useState(0);
 
-  // Mode selection: 'new' (AI generate chapters) or 'existing' (use cached) or 'manual' (user input) or 'smart-allocation' (smart weekly allocation)
-  const [mode, setMode] = useState<'new' | 'existing' | 'manual' | 'smart-allocation'>('new');
-
   // Chapter input mode for new courses: 'ai' or 'manual'
   const [chapterInputMode, setChapterInputMode] = useState<'ai' | 'manual'>('ai');
 
-  // Smart allocation mode state
-  const [totalWeeks, setTotalWeeks] = useState<number>(16);
-  const [hoursPerWeek, setHoursPerWeek] = useState<number>(4);
+  // Selected cached template ID (for existing mode)
+  const [selectedCachedTemplateId, setSelectedCachedTemplateId] = useState<string | undefined>();
+
+  // Selected template's field config (for dynamic field display)
+  const [selectedTemplateFields, setSelectedTemplateFields] = useState<FieldConfig[]>([]);
 
   // Task type: 'normal' (generate and export ZIP) or 'draft' (save as drafts only)
   const [taskType, setTaskType] = useState<'normal' | 'draft'>('normal');
@@ -89,6 +92,8 @@ const BatchGenerate: React.FC = () => {
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [cachedTemplates, setCachedTemplates] = useState<CourseChapterTemplate[]>([]);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
+  const [textbooks, setTextbooks] = useState<TextbookInfo[]>([]);
+  const [selectedTextbookId, setSelectedTextbookId] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
 
   // Saved form values (preserved across step changes)
@@ -112,6 +117,7 @@ const BatchGenerate: React.FC = () => {
     loadTemplates();
     loadCachedTemplates();
     loadClasses();
+    loadTextbooks();
   }, []);
 
   // Poll task status in step 3
@@ -162,10 +168,52 @@ const BatchGenerate: React.FC = () => {
     }
   };
 
+  const loadTextbooks = async () => {
+    try {
+      const data = await textbookApi.listTextbooks({ status: 'active' });
+      setTextbooks(data.textbooks);
+    } catch (error) {
+      console.error('Failed to load textbooks:', error);
+    }
+  };
+
+  // Load template fields when template is selected
+  const loadTemplateFields = async (templateId: string) => {
+    try {
+      const template = templates.find((t) => t.id === templateId);
+      if (template && template.fields_config) {
+        setSelectedTemplateFields(template.fields_config);
+      } else {
+        // If not in cache, fetch from API
+        const data = await templateApi.getTemplate(templateId);
+        setSelectedTemplateFields(data.fields_config || []);
+      }
+    } catch (error) {
+      console.error('Failed to load template fields:', error);
+      setSelectedTemplateFields([]);
+    }
+  };
+
+  // Check if a dynamic field should be shown based on template
+  const shouldShowDynamicField = (fieldName: string): boolean => {
+    if (!selectedTemplateFields.length) return false;
+    return selectedTemplateFields.some((f) => f.name === fieldName);
+  };
+
+  // Get chapter mode based on current state
+  const getChapterMode = (): 'textbook' | 'cached' | 'manual' | 'ai' => {
+    if (selectedTextbookId && chapters.length > 0) return 'textbook';
+    if (selectedCachedTemplateId && chapters.length > 0) return 'cached';
+    if (chapterInputMode === 'manual') return 'manual';
+    return 'ai';
+  };
+
   // Handle selecting an existing cached template
   const handleSelectCachedTemplate = (templateId: string) => {
     const selected = cachedTemplates.find((t) => t.id === templateId);
     if (selected) {
+      setSelectedCachedTemplateId(templateId);
+
       // Get current template_id to preserve it
       const currentTemplateId = form.getFieldValue('template_id');
 
@@ -198,70 +246,113 @@ const BatchGenerate: React.FC = () => {
     }
   };
 
-  // Step 1: Submit basic info and split chapters
-  const handleSplitChapters = async (values: any) => {
-    // Smart allocation mode
-    if (mode === 'smart-allocation') {
-      // Calculate total_hours for smart allocation mode
-      const calculatedTotalHours = totalWeeks * hoursPerWeek;
-
-      // Save form values with calculated total_hours and default hours_per_lesson
-      const valuesWithCalculations = {
-        ...values,
-        total_hours: calculatedTotalHours,
-        hours_per_lesson: 2, // Default value for smart allocation
-      };
-      setSavedFormValues(valuesWithCalculations);
-
-      const request: import('@/types').SmartAllocationRequest = {
-        course_name: values.course_name,
-        subject: values.subject,
-        grade: values.grade,
-        chapters_input: values.chapters_input,
-        total_weeks: totalWeeks,
-        hours_per_week: hoursPerWeek,
-        total_hours: calculatedTotalHours,
-        additional_info: values.additional_info,
-      };
-
-      setSplittingChapters(true);
-      setStreamedChapters([]);
-      setStreamProgress({ current: 0, total: 0, message: '初始化中...' });
-
-      try {
-        await batchApi.splitChaptersSmartStream(
-          request,
-          // onProgress callback
-          (current: number, total: number, message: string) => {
-            setStreamProgress({ current, total, message });
-          },
-          // onChapter callback
-          (chapter: ChapterInfo) => {
-            setStreamedChapters((prev) => [...prev, chapter]);
-          },
-          // onComplete callback
-          (response: ChapterSplitResponse) => {
-            setChapters(response.chapters);
-            setTotalLessons(response.total_lessons);
-            setCurrentStep(1);
-            const numDocs = Math.ceil(response.total_lessons / 2);
-            message.success(`成功分配 ${response.total_lessons} 周教学计划（${numDocs} 个文档）`);
-            setSplittingChapters(false);
-          },
-          // onError callback
-          (errorMessage: string) => {
-            message.error(errorMessage || '智能分配失败');
-            setSplittingChapters(false);
-          }
-        );
-      } catch (error: any) {
-        message.error(error.message || '智能分配失败');
-        setSplittingChapters(false);
-      }
+  // Handle selecting a textbook
+  const handleSelectTextbook = async (textbookId: string) => {
+    if (!textbookId) {
+      setSelectedTextbookId(undefined);
+      setChapters([]);
+      setTotalLessons(0);
+      form.setFieldValue('chapters_input', '');
       return;
     }
 
-    // Original logic for new/manual mode
+    try {
+      const textbook = await textbookApi.getTextbook(textbookId);
+      setSelectedTextbookId(textbookId);
+      // Clear cached template selection when textbook is selected
+      setSelectedCachedTemplateId(undefined);
+
+      // Get current template_id to preserve it
+      const currentTemplateId = form.getFieldValue('template_id');
+
+      // Prepare form values
+      const formValues: any = {
+        course_name: textbook.name,
+        subject: textbook.subject,
+        grade: textbook.grade,
+        textbook_name: textbook.name,
+      };
+
+      // Only include template_id if it has a value
+      if (currentTemplateId) {
+        formValues.template_id = currentTemplateId;
+      }
+
+      // Auto-fill form fields
+      form.setFieldsValue(formValues);
+
+      // Convert textbook chapters to ChapterInfo format
+      const chapters: ChapterInfo[] = textbook.chapters.map((ch, idx) => ({
+        lesson_number: idx + 1,
+        topic: ch.chapter_title,
+        content_summary: ch.content_summary || '',
+        key_concepts: ch.key_concepts || [],
+      }));
+
+      // Pre-fill chapters_input with chapter titles
+      const chapterTitles = textbook.chapters
+        .map((ch) => ch.chapter_title)
+        .join('\n');
+      form.setFieldValue('chapters_input', chapterTitles);
+
+      setChapters(chapters);
+      setTotalLessons(chapters.length);
+
+      message.success(`已加载 ${textbook.name} 的 ${chapters.length} 个章节到输入框，可编辑后继续`);
+    } catch (error: any) {
+      message.error(error.message || '加载教材失败');
+    }
+  };
+
+  // Step 1: Submit basic info and split chapters
+  const handleSplitChapters = async (values: any) => {
+    const chapterMode = getChapterMode();
+
+    // If chapters already loaded from textbook or cache
+    if (chapterMode === 'textbook' || chapterMode === 'cached') {
+      // Check if user edited chapters_input
+      if (values.chapters_input && values.chapters_input.trim()) {
+        const lines = values.chapters_input.trim().split('\n').filter(Boolean);
+        const updatedChapters = lines.map((line: string, idx: number) => ({
+          lesson_number: idx + 1,
+          topic: line.trim(),
+          content_summary: '',
+          key_concepts: [],
+        }));
+        setChapters(updatedChapters);
+        setTotalLessons(updatedChapters.length);
+      }
+
+      setSavedFormValues(values);
+      setCurrentStep(1);
+      message.success('进入章节确认步骤');
+      return;
+    }
+
+    // Manual input mode - parse chapters from input
+    if (chapterMode === 'manual') {
+      if (!values.chapters_input || !values.chapters_input.trim()) {
+        message.error('请输入章节标题');
+        return;
+      }
+
+      const lines = values.chapters_input.trim().split('\n').filter(Boolean);
+      const parsedChapters = lines.map((line: string, idx: number) => ({
+        lesson_number: idx + 1,
+        topic: line.trim(),
+        content_summary: '',
+        key_concepts: [],
+      }));
+
+      setChapters(parsedChapters);
+      setTotalLessons(parsedChapters.length);
+      setSavedFormValues(values);
+      setCurrentStep(1);
+      message.success(`成功解析 ${parsedChapters.length} 个章节`);
+      return;
+    }
+
+    // AI generation mode
     // Save form values before switching step
     setSavedFormValues(values);
 
@@ -271,7 +362,6 @@ const BatchGenerate: React.FC = () => {
       grade: values.grade,
       total_hours: values.total_hours,
       hours_per_lesson: values.hours_per_lesson ?? 2,
-      chapters_input: chapterInputMode === 'manual' ? values.chapters_input : undefined,
       additional_info: values.additional_info,
     };
 
@@ -504,86 +594,6 @@ const BatchGenerate: React.FC = () => {
             }}
             preserve={true}
           >
-            {/* Mode Selection Card */}
-            <Card
-              title={
-                <Space>
-                  <FileTextOutlined />
-                  <span>选择创建方式</span>
-                </Space>
-              }
-              style={{ marginBottom: 16 }}
-            >
-              <Radio.Group
-                value={mode}
-                onChange={(e) => {
-                  setMode(e.target.value);
-                  setChapters([]);
-                  setTotalLessons(0);
-                  // Reset form when switching modes
-                  form.resetFields(['course_name', 'subject', 'grade', 'total_hours', 'hours_per_lesson']);
-                }}
-                size="large"
-                style={{ width: '100%' }}
-              >
-                <Row gutter={[16, 16]}>
-                  <Col span={8}>
-                    <Radio.Button value="new" style={{ width: '100%', textAlign: 'center', height: 'auto', padding: '8px' }}>
-                      <div>
-                        <FileTextOutlined style={{ fontSize: 20, display: 'block', marginBottom: 4 }} />
-                        <div style={{ fontWeight: 500 }}>AI生成章节</div>
-                        <div style={{ fontSize: 12, color: '#666' }}>输入总课时，AI自动规划</div>
-                      </div>
-                    </Radio.Button>
-                  </Col>
-                  <Col span={8}>
-                    <Radio.Button value="smart-allocation" style={{ width: '100%', textAlign: 'center', height: 'auto', padding: '8px' }}>
-                      <div>
-                        <CalendarOutlined style={{ fontSize: 20, display: 'block', marginBottom: 4 }} />
-                        <div style={{ fontWeight: 500 }}>智能周次分配</div>
-                        <div style={{ fontSize: 12, color: '#666' }}>提供章节，AI分配到周</div>
-                      </div>
-                    </Radio.Button>
-                  </Col>
-                  <Col span={8}>
-                    <Radio.Button value="existing" style={{ width: '100%', textAlign: 'center', height: 'auto', padding: '8px' }}>
-                      <div>
-                        <HistoryOutlined style={{ fontSize: 20, display: 'block', marginBottom: 4 }} />
-                        <div style={{ fontWeight: 500 }}>使用已有模板</div>
-                        <div style={{ fontSize: 12, color: '#666' }}>选择缓存的课程模板</div>
-                      </div>
-                    </Radio.Button>
-                  </Col>
-                </Row>
-              </Radio.Group>
-
-              {/* Existing template selection */}
-              {mode === 'existing' && (
-                <div style={{ marginTop: 16 }}>
-                  <Form.Item label="选择课程章节模板" style={{ marginBottom: 0 }}>
-                    <Select
-                      placeholder="选择已有的课程章节模板"
-                      size="large"
-                      showSearch
-                      filterOption={(input, option) =>
-                        (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                      }
-                      options={cachedTemplates.map((t) => ({
-                        label: `${t.course_name} - ${t.subject} - ${t.grade} (${t.total_hours}课时, ${t.chapters?.length || 0}份教案, 使用${t.use_count}次)`,
-                        value: t.id,
-                      }))}
-                      onChange={handleSelectCachedTemplate}
-                    />
-                    <div style={{ marginTop: 8 }}>
-                      <Text type="secondary">
-                        选择后将自动填充课程信息和章节内容
-                      </Text>
-                    </div>
-                  </Form.Item>
-                </div>
-              )}
-            </Card>
-
             {/* Course Information Card */}
             <Card
               title={
@@ -594,6 +604,43 @@ const BatchGenerate: React.FC = () => {
               }
               style={{ marginBottom: 16 }}
             >
+              {/* Cached Template Selection - Optional */}
+              {cachedTemplates.length > 0 && (
+                <Row gutter={16} style={{ marginBottom: 16 }}>
+                  <Col span={24}>
+                    <Form.Item
+                      label="快速填充（可选）"
+                      tooltip="选择已有的课程章节模板，快速填充课程信息"
+                      style={{ marginBottom: 0 }}
+                    >
+                      <Select
+                        placeholder="选择已有的课程章节模板"
+                        size="large"
+                        showSearch
+                        allowClear
+                        value={selectedCachedTemplateId}
+                        filterOption={(input, option) =>
+                          (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                        }
+                        options={cachedTemplates.map((t) => ({
+                          label: `${t.course_name} - ${t.subject} - ${t.grade} (${t.total_hours}课时, ${t.chapters?.length || 0}份教案)`,
+                          value: t.id,
+                        }))}
+                        onChange={(value) => {
+                          if (value) {
+                            handleSelectCachedTemplate(value);
+                          } else {
+                            setSelectedCachedTemplateId(undefined);
+                            setChapters([]);
+                            setTotalLessons(0);
+                          }
+                        }}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              )}
+
               <Row gutter={16}>
                 <Col span={24}>
                   <Form.Item
@@ -604,7 +651,7 @@ const BatchGenerate: React.FC = () => {
                     <Input
                       placeholder="例如：Java程序设计"
                       size="large"
-                      disabled={mode === 'existing' && chapters.length > 0}
+                      disabled={selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -622,7 +669,7 @@ const BatchGenerate: React.FC = () => {
                       size="large"
                       options={SUBJECT_OPTIONS.map((s) => ({ label: s, value: s }))}
                       showSearch
-                      disabled={mode === 'existing' && chapters.length > 0}
+                      disabled={selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -638,7 +685,7 @@ const BatchGenerate: React.FC = () => {
                       size="large"
                       options={GRADE_OPTIONS.map((g) => ({ label: g, value: g }))}
                       showSearch
-                      disabled={mode === 'existing' && chapters.length > 0}
+                      disabled={selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -663,10 +710,49 @@ const BatchGenerate: React.FC = () => {
                   </Form.Item>
                 </Col>
               </Row>
+
+              <Row gutter={16}>
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    label="选择教材（可选）"
+                    tooltip="选择教材后将自动加载章节信息"
+                  >
+                    <Select
+                      placeholder="选择教材"
+                      size="large"
+                      showSearch
+                      allowClear
+                      value={selectedTextbookId}
+                      onChange={handleSelectTextbook}
+                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      filterOption={(input, option) =>
+                        (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                      }
+                      options={textbooks.map((t) => ({
+                        label: `${t.name}${t.author ? ' - ' + t.author : ''}${t.chapters?.length ? ` (${t.chapters.length}章节)` : ''}`,
+                        value: t.id,
+                      }))}
+                    />
+                    <div style={{ marginTop: 8 }}>
+                      <Text type="secondary">
+                        选择后将自动填充课程信息和章节内容
+                      </Text>
+                    </div>
+                  </Form.Item>
+                </Col>
+                {selectedTextbookId && (
+                  <Col xs={24} sm={12}>
+                    <div style={{ paddingTop: 30 }}>
+                      <Tag color="blue" icon={<BookOutlined />}>
+                        已加载 {chapters.length} 个教材章节
+                      </Tag>
+                    </div>
+                  </Col>
+                )}
+              </Row>
             </Card>
 
-            {/* Hours Configuration Card - hidden for smart-allocation mode */}
-            {mode !== 'smart-allocation' && (
+            {/* Hours Configuration Card */}
             <Card
               title={
                 <Space>
@@ -687,7 +773,7 @@ const BatchGenerate: React.FC = () => {
                       min={2}
                       max={200}
                       step={2}
-                      disabled={mode === 'existing' && chapters.length > 0}
+                      disabled={selectedCachedTemplateId && chapters.length > 0}
                       addonAfter="课时"
                       size="large"
                       style={{ width: '100%' }}
@@ -704,7 +790,7 @@ const BatchGenerate: React.FC = () => {
                     <InputNumber
                       min={1}
                       max={4}
-                      disabled={mode === 'existing' && chapters.length > 0}
+                      disabled={selectedCachedTemplateId && chapters.length > 0}
                       addonAfter="课时"
                       size="large"
                       style={{ width: '100%' }}
@@ -722,7 +808,7 @@ const BatchGenerate: React.FC = () => {
                     <InputNumber
                       min={1}
                       max={20}
-                      disabled={mode === 'existing' && chapters.length > 0}
+                      disabled={selectedCachedTemplateId && chapters.length > 0}
                       addonAfter="周"
                       size="large"
                       style={{ width: '100%' }}
@@ -743,7 +829,6 @@ const BatchGenerate: React.FC = () => {
                 showIcon
               />
             </Card>
-            )}
 
             {/* Class & Options Card */}
             <Card
@@ -766,7 +851,7 @@ const BatchGenerate: React.FC = () => {
                       mode="multiple"
                       placeholder="选择班级（可多选）"
                       size="large"
-                      disabled={mode === 'existing' && chapters.length > 0}
+                      disabled={selectedCachedTemplateId && chapters.length > 0}
                       options={classes.map((c) => ({ label: c.name, value: c.id }))}
                       allowClear
                       showSearch
@@ -786,7 +871,7 @@ const BatchGenerate: React.FC = () => {
                     <Input
                       placeholder="例如：教学楼301教室"
                       size="large"
-                      disabled={mode === 'existing' && chapters.length > 0}
+                      disabled={selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -799,7 +884,7 @@ const BatchGenerate: React.FC = () => {
                     <Input
                       placeholder="例如：《Python程序设计基础》第3版"
                       size="large"
-                      disabled={mode === 'existing' && chapters.length > 0}
+                      disabled={selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -814,7 +899,7 @@ const BatchGenerate: React.FC = () => {
                     <Input
                       placeholder="留空由AI生成，或填写：慕课平台、教学视频链接等"
                       size="large"
-                      disabled={mode === 'existing' && chapters.length > 0}
+                      disabled={selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -831,19 +916,21 @@ const BatchGenerate: React.FC = () => {
               </Row>
             </Card>
 
-            {/* Chapter Content Card (for new courses and smart allocation) */}
-            {(mode === 'new' || mode === 'smart-allocation') && (
-              <Card
-                title={
-                  <Space>
-                    <EditOutlined />
-                    <span>章节内容</span>
-                  </Space>
-                }
-                style={{ marginBottom: 16 }}
-              >
-                {mode === 'new' && (
-                  <>
+            {/* Chapter Content Card */}
+            <Card
+              title={
+                <Space>
+                  <EditOutlined />
+                  <span>章节内容</span>
+                  {(selectedTextbookId || selectedCachedTemplateId) && chapters.length > 0 && (
+                    <Tag color="blue">已加载 {chapters.length} 个章节</Tag>
+                  )}
+                </Space>
+              }
+              style={{ marginBottom: 16 }}
+            >
+              {/* Show chapter source selection only if no textbook/cache selected */}
+              {!selectedTextbookId && !selectedCachedTemplateId && (
                 <Form.Item label="章节来源">
                   <Radio.Group
                     value={chapterInputMode}
@@ -858,152 +945,55 @@ const BatchGenerate: React.FC = () => {
                     </Radio>
                   </Radio.Group>
                 </Form.Item>
+              )}
 
-                {chapterInputMode === 'manual' && (
-                  <Form.Item
-                    name="chapters_input"
-                    label="章节标题（每行一个）"
-                    rules={[{ required: true, message: '请输入章节标题' }]}
-                    extra={`请输入 ${Math.floor((form.getFieldValue('total_hours') || 64) / (form.getFieldValue('hours_per_lesson') || 2))} 个章节标题，每行一个`}
-                  >
-                    <TextArea
-                      rows={10}
-                      placeholder={`第一章：Java语言概述\n第二章：Java基本语法\n第三章：面向对象编程基础\n...`}
-                    />
-                  </Form.Item>
-                )}
-                  </>
-                )}
+              {/* Show chapters_input if manual mode or textbook/cache selected */}
+              {(chapterInputMode === 'manual' || selectedTextbookId || selectedCachedTemplateId) && (
+                <Form.Item
+                  name="chapters_input"
+                  label={selectedTextbookId || selectedCachedTemplateId ? "章节标题（可编辑）" : "章节标题（每行一个）"}
+                  rules={[{ required: chapterInputMode === 'manual' && !selectedTextbookId && !selectedCachedTemplateId, message: '请输入章节标题' }]}
+                  extra={selectedTextbookId || selectedCachedTemplateId
+                    ? "已从教材/模板加载章节，可编辑后继续"
+                    : `请输入章节标题，每行一个`}
+                >
+                  <TextArea
+                    rows={10}
+                    placeholder={`第一章：Java语言概述\n第二章：Java基本语法\n第三章：面向对象编程基础\n...`}
+                  />
+                </Form.Item>
+              )}
 
-                {/* Smart Allocation Mode UI */}
-                {mode === 'smart-allocation' && (
-                  <>
-                    <Alert
-                      message="智能周次分配模式"
-                      description="请输入章节标题列表（每行一个），AI将智能分配到指定周数。系统会自动判断章节难度，重要章节跨2周讲授，简单章节合并到1周。"
-                      type="info"
-                      showIcon
-                      style={{ marginBottom: 16 }}
-                    />
-
-                    <Row gutter={16}>
-                      <Col xs={24} sm={8}>
-                        <Form.Item
-                          label="总周数"
-                          tooltip="计划用多少周完成教学（如一学期16周）"
-                          rules={[{ required: true, message: '请输入总周数' }]}
-                        >
-                          <InputNumber
-                            min={1}
-                            max={20}
-                            value={totalWeeks}
-                            onChange={(v) => setTotalWeeks(v || 16)}
-                            addonAfter="周"
-                            size="large"
-                            style={{ width: '100%' }}
-                          />
-                        </Form.Item>
-                      </Col>
-
-                      <Col xs={24} sm={8}>
-                        <Form.Item
-                          label="每周课时"
-                          tooltip="每周安排多少课时"
-                          rules={[{ required: true, message: '请输入每周课时' }]}
-                        >
-                          <InputNumber
-                            min={1}
-                            max={8}
-                            value={hoursPerWeek}
-                            onChange={(v) => setHoursPerWeek(v || 4)}
-                            addonAfter="课时/周"
-                            size="large"
-                            style={{ width: '100%' }}
-                          />
-                        </Form.Item>
-                      </Col>
-
-                      <Col xs={24} sm={8}>
-                        <Form.Item label="总课时">
-                          <Input
-                            value={`${totalWeeks * hoursPerWeek} 课时`}
-                            disabled
-                            size="large"
-                          />
-                        </Form.Item>
-                      </Col>
-                    </Row>
-
-                    <Form.Item
-                      name="chapters_input"
-                      label="章节标题列表（每行一个）"
-                      rules={[{ required: true, message: '请输入章节标题' }]}
-                      extra="请输入各章节标题，每行一个。AI会智能分配到各周，支持跨周和合并。"
-                    >
-                      <TextArea
-                        rows={12}
-                        placeholder={`第一章：Java语言概述\n第二章：Java基本语法\n第三章：面向对象编程基础\n第四章：类与对象\n第五章：继承与多态\n第六章：异常处理\n第七章：集合框架\n第八章：IO流\n第九章：多线程\n第十章：网络编程`}
-                      />
-                    </Form.Item>
-                  </>
-                )}
-              </Card>
-            )}
-
-            {/* Additional Information Card */}
-            <Card
-              title={
-                <Space>
-                  <ExclamationCircleOutlined />
-                  <span>补充信息</span>
-                </Space>
-              }
-              style={{ marginBottom: 16 }}
-            >
-              <Row gutter={16}>
-                <Col span={24}>
-                  <Form.Item name="additional_info" label="补充说明（可选）">
-                    <TextArea
-                      rows={3}
-                      placeholder="例如：本课程侧重实践操作，每周需包含实验环节..."
-                    />
-                  </Form.Item>
-                </Col>
-                <Col span={24}>
-                  <Form.Item name="additional_requirements" label="额外要求（可选）">
-                    <TextArea
-                      rows={3}
-                      placeholder="对生成的教案有特殊要求，例如：教学方法、重点难点等..."
-                    />
-                  </Form.Item>
-                </Col>
-              </Row>
+              <Form.Item name="additional_info" label="补充说明（可选）">
+                <TextArea
+                  rows={3}
+                  placeholder="例如：本课程侧重实践操作，每周需包含实验环节..."
+                />
+              </Form.Item>
             </Card>
 
             {/* Action Buttons */}
-            {(mode === 'new' || mode === 'smart-allocation') && (
-              <>
-                <Form.Item style={{ marginBottom: 0 }}>
-                  <Space size="large">
-                    <Button
-                      type="primary"
-                      htmlType="submit"
-                      size="large"
-                      loading={splittingChapters}
-                      icon={<FileTextOutlined />}
-                    >
-                      {splittingChapters
-                        ? '生成中...'
-                        : mode === 'smart-allocation'
-                          ? '下一步：AI智能分配'
-                          : (chapterInputMode === 'ai' ? '下一步：AI生成章节' : '下一步：解析章节')
-                      }
-                    </Button>
-                    <Button size="large" onClick={() => navigate('/')}>
-                      取消
-                    </Button>
-                  </Space>
-                </Form.Item>
+            <Form.Item style={{ marginBottom: 0 }}>
+              <Space size="large">
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  size="large"
+                  loading={splittingChapters}
+                  icon={<FileTextOutlined />}
+                >
+                  {splittingChapters
+                    ? '生成中...'
+                    : (selectedTextbookId || selectedCachedTemplateId)
+                      ? '下一步：确认章节'
+                      : (chapterInputMode === 'ai' ? '下一步：AI生成章节' : '下一步：解析章节')
+                  }
+                </Button>
+                <Button size="large" onClick={() => navigate('/')}>
+                  取消
+                </Button>
+              </Space>
+            </Form.Item>
 
                 {/* Streaming Progress Display */}
                 {splittingChapters && (
@@ -1053,41 +1043,6 @@ const BatchGenerate: React.FC = () => {
                     </Space>
                   </Card>
                 )}
-              </>
-            )}
-
-            {mode === 'existing' && chapters.length > 0 && (
-              <Form.Item style={{ marginBottom: 0 }}>
-                <Space size="large">
-                  <Button
-                    type="primary"
-                    size="large"
-                    icon={<CheckCircleOutlined />}
-                    onClick={() => {
-                      const values = form.getFieldsValue();
-                      if (!values.template_id) {
-                        message.error('请先选择教案模板');
-                        return;
-                      }
-                      form.validateFields(['template_id', 'course_name', 'subject', 'grade', 'total_hours', 'hours_per_lesson'])
-                        .then(() => {
-                          setSavedFormValues(values);
-                          setCurrentStep(1);
-                          message.success('进入章节确认步骤');
-                        })
-                        .catch(() => {
-                          message.error('请完成必填项');
-                        });
-                    }}
-                  >
-                    下一步：确认章节
-                  </Button>
-                  <Button size="large" onClick={() => navigate('/')}>
-                    取消
-                  </Button>
-                </Space>
-              </Form.Item>
-            )}
           </Form>
         )}
 

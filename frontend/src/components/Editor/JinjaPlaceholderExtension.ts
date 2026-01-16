@@ -17,7 +17,7 @@ declare module '@tiptap/core' {
       /**
        * 插入 Jinja2 占位符
        */
-      setJinjaPlaceholder: (attributes: { jinja: string; type: string }) => ReturnType
+      setJinjaPlaceholder: (attributes: { jinja: string; type: string; blockType?: string; id?: string }) => ReturnType
     }
   }
 }

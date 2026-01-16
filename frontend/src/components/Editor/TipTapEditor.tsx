@@ -4,7 +4,7 @@
  * 配置了表格、颜色、字体等扩展，以及 Jinja2 占位符支持
  */
 import React, { useEffect } from 'react'
-import { useEditor, EditorContent } from '@tiptap/react'
+import { useEditor, EditorContent, Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'

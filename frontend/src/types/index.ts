@@ -508,3 +508,98 @@ export interface ExtendedBatchTask extends BatchTask {
   class_names?: string;
 }
 
+// ============================================================================
+// Textbook Management Types
+// ============================================================================
+
+export type TextbookStatus = 'active' | 'inactive';
+
+export interface TextbookChapterInfo {
+  id: string;
+  textbook_id: string;
+  chapter_number: string;
+  chapter_title: string;
+  content_summary?: string;
+  key_concepts: string[];
+  sort_order: number;
+  hours_required?: number;
+  parent_chapter_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TextbookInfo {
+  id: string;
+  name: string;
+  isbn?: string;
+  author?: string;
+  publisher?: string;
+  edition?: string;
+  subject?: string;
+  grade?: string;
+  cover_image?: string;
+  description?: string;
+  status: TextbookStatus;
+  use_count: number;
+  created_at: string;
+  updated_at: string;
+  chapters: TextbookChapterInfo[];
+}
+
+export interface TextbookCreateRequest {
+  name: string;
+  isbn?: string;
+  author?: string;
+  publisher?: string;
+  edition?: string;
+  subject?: string;
+  grade?: string;
+  cover_image?: string;
+  description?: string;
+}
+
+export interface TextbookUpdateRequest {
+  name?: string;
+  isbn?: string;
+  author?: string;
+  publisher?: string;
+  edition?: string;
+  subject?: string;
+  grade?: string;
+  cover_image?: string;
+  description?: string;
+  status?: TextbookStatus;
+}
+
+export interface TextbookListResponse {
+  textbooks: TextbookInfo[];
+  total: number;
+}
+
+export interface TextbookChapterCreateRequest {
+  chapter_number: string;
+  chapter_title: string;
+  content_summary?: string;
+  key_concepts?: string[];
+  sort_order?: number;
+  hours_required?: number;
+  parent_chapter_id?: string;
+}
+
+export interface TextbookChapterBatchCreateRequest {
+  chapters: TextbookChapterCreateRequest[];
+}
+
+export interface TextbookChapterGenerateRequest {
+  textbook_name: string;
+  isbn?: string;
+  subject?: string;
+  grade?: string;
+  additional_info?: string;
+}
+
+export interface TextbookChapterGenerateResponse {
+  chapters: TextbookChapterCreateRequest[];
+  message: string;
+}
+

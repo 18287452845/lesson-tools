@@ -86,6 +86,26 @@ npm run electron:build
 
 Packaged apps are output to `frontend/dist-electron/`
 
+### Docker Deployment
+
+```bash
+# Build and start services
+docker-compose up -d --build
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+
+# Access services
+# Frontend: http://localhost:8081
+# Backend: http://localhost:8001
+# API docs: http://localhost:8001/docs
+```
+
+See `DOCKER_DEPLOYMENT.md` for comprehensive Docker deployment guide including data persistence, troubleshooting, and production deployment.
+
 ## Architecture
 
 ### Backend Architecture
@@ -93,10 +113,12 @@ Packaged apps are output to `frontend/dist-electron/`
 **API Layer** (`backend/api/`):
 - `templates.py` - Template upload, list, delete, preview, HTML conversion, Jinja2 validation, field config
 - `generate.py` - AI-powered lesson plan generation
+- `lesson_plans.py` - Lesson plan retrieval and management
 - `edit.py` - AI content optimization (optimize, expand, rewrite)
 - `documents.py` - Document download and management
 - `settings.py` - Application settings management
 - `batch.py` - **Batch generation**: Chapter splitting, task creation, progress tracking, ZIP download
+- `classes.py` - Class/grade management
 
 **Service Layer** (`backend/services/`):
 - `ai_provider.py` - **Multi-provider AI abstraction**. Supports both DeepSeek and Anthropic Claude via factory pattern. Each provider implements the `AIProvider` interface with `generate()` method.
@@ -104,12 +126,12 @@ Packaged apps are output to `frontend/dist-electron/`
 - `ai_editor.py` - Content editing operations (optimize, expand, rewrite)
 - `template_parser.py` - **Parses Word templates for Jinja2 variables** (`{{ variable }}`), loops (`{% for %}`), and conditionals (`{% if %}`). Extracts field configurations.
 - `template_sync.py` - **Auto-syncs templates from `storage/templates/` folder to database on startup**
-- `document_renderer.py` - **Critical**: Uses `docxtpl` (not python-docx) for template rendering to preserve document structure. See WORD_EXPORT_FIX.md for details.
+- `template_versioning.py` - Template version history management
+- `document_renderer.py` - **Critical**: Uses `docxtpl` (not python-docx) for template rendering to preserve document structure.
 - `document_modifier.py` - Modifies existing Word documents
-- `lesson_plan_parser.py` - Parses lesson plan content
+- `lesson_plan_service.py` - Lesson plan business logic and data operations
 - `docx_converter.py` - DOCX ↔ HTML bidirectional conversion using mammoth/htmldocx
 - `jinja_protector.py` - Protects Jinja2 syntax during HTML conversion
-- `template_versioning.py` - Template version history management
 - `chapter_splitter.py` - **Batch generation**: Splits courses into chapters based on total hours
 - `batch_processor.py` - **Batch generation**: Processes batch tasks, groups lessons (2 per doc), renders combined documents
 - `background_runner.py` - **Background processing**: Runs async tasks in separate threads with graceful shutdown
@@ -147,6 +169,11 @@ Packaged apps are output to `frontend/dist-electron/`
 - `LessonPlanDetail.tsx` - View generated lesson plans
 - `History.tsx` - Previous lesson plans
 - `Settings.tsx` - AI provider and API key configuration
+- `BatchGenerate.tsx` - **Batch generation wizard**: Chapter splitting, task creation
+- `BatchDownloads.tsx` - **Download center**: Browse and download completed batch tasks
+- `BatchTaskDetail.tsx` - **Task monitoring**: Real-time progress tracking for batch tasks
+- `CachedLessonPlans.tsx` - **Template cache**: View and manage cached chapter templates
+- `ClassManager.tsx` - Manage teaching classes
 
 ### Storage Structure
 
@@ -292,6 +319,18 @@ AI_TEMPERATURE=0.7
 cd backend
 pytest
 
+# Run specific test categories
+pytest -m unit              # Fast, isolated unit tests only
+pytest -m integration       # Integration tests
+pytest -m api               # API endpoint tests
+pytest -m service           # Service layer tests
+pytest -m "not slow"        # Skip slow tests
+pytest -m "not ai"          # Skip tests requiring AI API keys
+pytest -m smoke             # Quick smoke tests
+
+# With coverage report
+pytest --cov=backend --cov-report=html --cov-report=term-missing
+
 # API integration tests
 python test_api.py
 
@@ -305,6 +344,42 @@ python test_docxtpl.py
 # Document template test
 python test_renderer.py
 ```
+
+**Test Markers** (defined in `pytest.ini`):
+- `unit` - Fast, isolated unit tests
+- `integration` - Integration tests (may use external services)
+- `slow` - Slow tests (database, file I/O, AI calls)
+- `api` - API endpoint tests
+- `service` - Service layer tests
+- `database` - Database operation tests
+- `ai` - Tests requiring AI provider API keys
+- `smoke` - Quick smoke tests for basic functionality
+
+## Template Import Scripts
+
+```bash
+# Automatically import templates from storage/templates/
+python import_templates.py
+
+# Simplified template import
+python import_templates_simple.py
+
+# Sync templates now (forces re-sync)
+python sync_templates_now.py
+
+# Fix template paths in database
+python fix_template_paths.py
+```
+
+**Note**: Templates in `storage/templates/` are automatically imported on backend startup via `TemplateSyncService`. Manual scripts are provided for troubleshooting or bulk imports.
+
+## Additional Documentation
+
+- `README.md` - Comprehensive Chinese language project overview, setup guide, and user manual
+- `DOCKER_DEPLOYMENT.md` - Complete Docker deployment guide with troubleshooting and production tips
+- `DOCKER_QUICKREF.md` - Quick Docker command reference
+- `docs/E2E_TESTING.md` - End-to-end testing documentation
+- `.env.example` - Environment variable template with all configuration options
 
 ## Common Development Patterns
 
