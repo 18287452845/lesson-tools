@@ -89,7 +89,9 @@
       "Bash(test:*)",
       "Bash(du:*)",
       "Bash(find:*)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Bash(grep:*)",
+      "Bash(ss:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

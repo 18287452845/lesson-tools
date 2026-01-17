@@ -308,6 +308,56 @@ class Database:
             ON lesson_plan_textbooks(textbook_id)
         """)
 
+        # Subjects table (for subject management)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS subjects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                category TEXT NOT NULL,
+                is_preset INTEGER DEFAULT 0,
+                sort_order INTEGER DEFAULT 0,
+                description TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Create indexes for subjects
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_subjects_category
+            ON subjects(category)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_subjects_name
+            ON subjects(name)
+        """)
+
+        # Grades table (for grade management)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS grades (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                category TEXT NOT NULL,
+                is_preset INTEGER DEFAULT 0,
+                sort_order INTEGER DEFAULT 0,
+                description TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Create indexes for grades
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_grades_category
+            ON grades(category)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_grades_name
+            ON grades(name)
+        """)
+
         # Add start_week and class_ids to batch_tasks
         await self._add_column_if_not_exists(
             db, "batch_tasks", "start_week", "INTEGER DEFAULT 1"

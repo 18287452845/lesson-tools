@@ -108,23 +108,41 @@ async def split_chapters(request: ChapterSplitRequest):
             chapters_json = json.loads(existing["chapters"])
             chapters = [ChapterInfo(**c) for c in chapters_json]
 
-            # Increment use count
-            await db.execute(
-                """
-                UPDATE course_chapter_templates
-                SET use_count = use_count + 1, updated_at = ?
-                WHERE id = ?
-                """,
-                (datetime.now().isoformat(), existing["id"]),
-                commit=True,
-            )
+            # Validate cached chapters count matches expected num_lessons
+            if len(chapters) != num_lessons:
+                logger.warning(
+                    f"Cached template chapter count mismatch: "
+                    f"cached={len(chapters)}, expected={num_lessons}. "
+                    f"Deleting invalid cache and regenerating."
+                )
 
-            logger.info(
-                f"Using cached template (id={existing['id']}, "
-                f"use_count={existing['use_count'] + 1})"
-            )
+                # Delete invalid cached template
+                await db.execute(
+                    "DELETE FROM course_chapter_templates WHERE id = ?",
+                    (existing["id"],),
+                    commit=True,
+                )
 
-            return ChapterSplitResponse(chapters=chapters, total_lessons=num_lessons)
+                # Fall through to regenerate
+            else:
+                # Cached chapters count is correct, use it
+                # Increment use count
+                await db.execute(
+                    """
+                    UPDATE course_chapter_templates
+                    SET use_count = use_count + 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (datetime.now().isoformat(), existing["id"]),
+                    commit=True,
+                )
+
+                logger.info(
+                    f"Using cached template (id={existing['id']}, "
+                    f"use_count={existing['use_count'] + 1})"
+                )
+
+                return ChapterSplitResponse(chapters=chapters, total_lessons=num_lessons)
 
         # Step 2: No cached template, call AI to generate
         logger.info("No cached template found, calling AI...")
@@ -239,10 +257,30 @@ async def split_chapters_stream(request: ChapterSplitRequest):
             )
 
             if existing:
-                # 有缓存 - 流式返回缓存的章节
+                # 有缓存 - 验证章节数量
                 chapters_json = json.loads(existing["chapters"])
                 chapters = [ChapterInfo(**c) for c in chapters_json]
 
+                # Validate cached chapters count matches expected num_lessons
+                if len(chapters) != num_lessons:
+                    logger.warning(
+                        f"Cached template chapter count mismatch (stream): "
+                        f"cached={len(chapters)}, expected={num_lessons}. "
+                        f"Deleting invalid cache and regenerating."
+                    )
+
+                    # Delete invalid cached template
+                    await db.execute(
+                        "DELETE FROM course_chapter_templates WHERE id = ?",
+                        (existing["id"],),
+                        commit=True,
+                    )
+
+                    # Set existing to None to trigger regeneration
+                    existing = None
+
+            if existing:
+                # 有缓存且章节数量正确 - 流式返回缓存的章节
                 # 更新使用计数
                 await db.execute(
                     """

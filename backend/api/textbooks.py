@@ -22,6 +22,8 @@ from ..models.schemas import (
     TextbookChapterGenerateResponse,
 )
 from ..services.textbook_generator import TextbookChapterGenerator
+from ..services.ai_provider import AIProviderFactory
+from ..config import settings
 
 router = APIRouter(prefix="/textbooks", tags=["textbooks"])
 
@@ -578,3 +580,95 @@ async def delete_chapter(textbook_id: str, chapter_id: str):
     )
 
     return {"message": "章节删除成功"}
+
+
+@router.post("/{textbook_id}/chapters/{chapter_id}/extract-keywords")
+async def extract_keywords(
+    textbook_id: str,
+    chapter_id: str,
+    chapter_title: str = Query(..., description="章节标题"),
+    content_summary: Optional[str] = Query(None, description="内容概述"),
+):
+    """
+    使用AI自动提取章节知识点关键词
+
+    Args:
+        textbook_id: 教材ID
+        chapter_id: 章节ID
+        chapter_title: 章节标题
+        content_summary: 内容概述（可选）
+
+    Returns:
+        提取的关键词列表
+    """
+    # Check if chapter exists
+    row = await db.fetch_one(
+        "SELECT id FROM textbook_chapters WHERE id = ? AND textbook_id = ?",
+        (chapter_id, textbook_id),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    # Construct prompt for AI
+    prompt = f"""请从以下教材章节信息中提取3-5个核心知识点关键词。
+
+章节标题：{chapter_title}
+"""
+
+    if content_summary:
+        prompt += f"内容概述：{content_summary}\n"
+
+    prompt += """
+要求：
+1. 提取该章节最重要的3-5个知识点关键词
+2. 每个关键词2-6个字
+3. 关键词应该是具体的概念、技术或方法
+4. 只返回关键词列表，不要其他说明
+
+请以JSON数组格式返回，例如：["关键词1", "关键词2", "关键词3"]
+"""
+
+    try:
+        # Use AI provider to extract keywords
+        provider = AIProviderFactory.create_provider(
+            provider=settings.ai_provider,
+            api_key=settings.get_active_api_key(),
+            model=settings.get_active_model(),
+        )
+
+        response_text = await provider.generate(prompt, max_tokens=300)
+
+        # Parse JSON response
+        import re
+        # Try to extract JSON array from response
+        match = re.search(r'\[[\s\S]*\]', response_text)
+        if match:
+            keywords_json = match.group(0)
+            keywords = json.loads(keywords_json)
+
+            # Validate and clean keywords
+            keywords = [k.strip() for k in keywords if isinstance(k, str) and len(k.strip()) > 0]
+            keywords = keywords[:5]  # Limit to 5 keywords
+
+            return {"keywords": keywords, "message": f"成功提取 {len(keywords)} 个关键词"}
+        else:
+            # Fallback: split by comma or newline
+            keywords = []
+            for line in response_text.split('\n'):
+                line = line.strip()
+                if line and not line.startswith(('提取', '关键词', '核心', '注意', '要求')):
+                    # Remove numbering and quotes
+                    line = re.sub(r'^[\d.、]+\s*[""\'\'"]?', '', line)
+                    line = re.sub(r'[""\'\'"]?\s*$', '', line)
+                    if line:
+                        keywords.append(line)
+
+            keywords = keywords[:5]
+            return {"keywords": keywords, "message": f"成功提取 {len(keywords)} 个关键词"}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI关键词提取失败: {str(e)}"
+        )
+

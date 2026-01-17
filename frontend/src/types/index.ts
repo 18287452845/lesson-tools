@@ -220,6 +220,90 @@ export interface ClassListResponse {
 }
 
 // ============================================================================
+// Subject Management Types
+// ============================================================================
+
+export type SubjectCategory = 'university_course' | 'basic_subject';
+
+export interface SubjectInfo {
+  id: string;
+  name: string;
+  category: SubjectCategory;
+  is_preset: boolean;
+  sort_order: number;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SubjectWithUsageStats extends SubjectInfo {
+  usage_stats: {
+    template_count: number;
+    lesson_plan_count: number;
+    textbook_count: number;
+    batch_task_count: number;
+  };
+}
+
+export interface SubjectCreateRequest {
+  name: string;
+  category: SubjectCategory;
+  description?: string;
+}
+
+export interface SubjectUpdateRequest {
+  name?: string;
+  description?: string;
+}
+
+export interface SubjectListResponse {
+  subjects: SubjectInfo[];
+  total: number;
+}
+
+// ============================================================================
+// Grade Management Types
+// ============================================================================
+
+export type GradeCategory = 'university' | 'high_school' | 'middle_school' | 'elementary';
+
+export interface GradeInfo {
+  id: string;
+  name: string;
+  category: GradeCategory;
+  is_preset: boolean;
+  sort_order: number;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GradeWithUsageStats extends GradeInfo {
+  usage_stats: {
+    template_count: number;
+    lesson_plan_count: number;
+    textbook_count: number;
+    batch_task_count: number;
+  };
+}
+
+export interface GradeCreateRequest {
+  name: string;
+  category: GradeCategory;
+  description?: string;
+}
+
+export interface GradeUpdateRequest {
+  name?: string;
+  description?: string;
+}
+
+export interface GradeListResponse {
+  grades: GradeInfo[];
+  total: number;
+}
+
+// ============================================================================
 // Batch Generation Types
 // ============================================================================
 

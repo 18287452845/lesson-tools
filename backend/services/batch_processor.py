@@ -380,12 +380,24 @@ class BatchTaskProcessor:
                 )
 
                 # Prepare lesson plan data for rendering
+                # Build references from textbook_name and online_resources
+                online_res = online_resources or generated_content.online_resources or ""
+                references_parts = []
+                if textbook_name:
+                    # Add book title marks around textbook name
+                    references_parts.append(f"《{textbook_name}》")
+                if online_res:
+                    references_parts.append(online_res)
+                references = "\n".join(references_parts) if references_parts else ""
+
                 lesson_plan_data = {
                     **lesson_input.model_dump(),
                     **generated_content.model_dump(),
                     "lesson_number": chapter.lesson_number,
                     "week_number": week_number,
                     "week_display": f"第{week_number}周",
+                    "references": references,  # Add built references
+                    "online_resources": online_res,  # Use final online_resources
                 }
 
                 return chapter, lesson_plan_data, generated_content

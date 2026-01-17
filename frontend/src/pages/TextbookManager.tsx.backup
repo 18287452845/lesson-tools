@@ -31,10 +31,6 @@ import {
   FileTextOutlined,
   ThunderboltOutlined,
   EyeOutlined,
-  SaveOutlined,
-  CloseOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
 } from '@ant-design/icons';
 import type {
   TextbookInfo,
@@ -82,11 +78,6 @@ const TextbookManager: React.FC = () => {
   const [generateForm] = Form.useForm();
   const [filterSubject, setFilterSubject] = useState<string | undefined>();
   const [filterGrade, setFilterGrade] = useState<string | undefined>();
-
-  // New states for chapter editing
-  const [editingChapterMode, setEditingChapterMode] = useState(false);
-  const [editedChapters, setEditedChapters] = useState<TextbookChapterInfo[]>([]);
-  const [extractingKeywords, setExtractingKeywords] = useState<{[key: string]: boolean}>({});
 
   useEffect(() => {
     loadTextbooks();
@@ -212,85 +203,9 @@ const TextbookManager: React.FC = () => {
   const handleViewChapters = async (textbook: TextbookInfo) => {
     try {
       await getTextbook(textbook.id);
-      setEditingChapterMode(false);
-      setEditedChapters([]);
       setChapterDrawerVisible(true);
     } catch (error: any) {
       // Error handled by store
-    }
-  };
-
-  const handleStartEdit = () => {
-    if (selectedTextbook && selectedTextbook.chapters) {
-      setEditedChapters([...selectedTextbook.chapters]);
-      setEditingChapterMode(true);
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setEditingChapterMode(false);
-    setEditedChapters([]);
-  };
-
-  const handleSaveEditedChapters = async () => {
-    if (!selectedTextbook || editedChapters.length === 0) {
-      message.warning('没有待保存的章节');
-      return;
-    }
-
-    try {
-      await saveChapters(selectedTextbook.id, editedChapters);
-      message.success('章节保存成功');
-      setEditingChapterMode(false);
-      setEditedChapters([]);
-      // Reload textbook to get latest data
-      await getTextbook(selectedTextbook.id);
-    } catch (error: any) {
-      // Error handled by store
-    }
-  };
-
-  const handleEditedChapter = (index: number, field: string, value: any) => {
-    const updatedChapters = [...editedChapters];
-    updatedChapters[index] = {
-      ...updatedChapters[index],
-      [field]: value,
-    };
-    setEditedChapters(updatedChapters);
-  };
-
-  const handleExtractKeywords = async (index: number, chapterId: string) => {
-    const chapter = editedChapters[index];
-    if (!chapter.chapter_title) {
-      message.warning('请先填写章节标题');
-      return;
-    }
-
-    setExtractingKeywords({ ...extractingKeywords, [chapterId]: true });
-
-    try {
-      const response = await fetch(
-        `/api/textbooks/${selectedTextbook!.id}/chapters/${chapterId}/extract-keywords?` +
-        new URLSearchParams({
-          chapter_title: chapter.chapter_title,
-          ...(chapter.content_summary ? { content_summary: chapter.content_summary } : {}),
-        }).toString(),
-        {
-          method: 'POST',
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error('AI提取失败');
-      }
-
-      const data = await response.json();
-      handleEditedChapter(index, 'key_concepts', data.keywords);
-      message.success(data.message || `提取了 ${data.keywords.length} 个关键词`);
-    } catch (error: any) {
-      message.error(error.message || 'AI提取失败');
-    } finally {
-      setExtractingKeywords({ ...extractingKeywords, [chapterId]: false });
     }
   };
 
@@ -609,43 +524,14 @@ const TextbookManager: React.FC = () => {
           </Space>
         }
         open={chapterDrawerVisible}
-        onClose={() => {
-          setChapterDrawerVisible(false);
-          setEditingChapterMode(false);
-          setEditedChapters([]);
-        }}
-        width={800}
+        onClose={() => setChapterDrawerVisible(false)}
+        width={700}
         extra={
-          <>
-            {editingChapterMode ? (
-              <Space>
-                <Button onClick={handleCancelEdit} icon={<CloseOutlined />}>
-                  取消
-                </Button>
-                <Button
-                  type="primary"
-                  onClick={handleSaveEditedChapters}
-                  icon={<SaveOutlined />}
-                >
-                  保存修改
-                </Button>
-              </Space>
-            ) : generatedChapters.length > 0 ? (
-              <Button type="primary" onClick={handleSaveGeneratedChapters}>
-                保存章节（{generatedChapters.length}个）
-              </Button>
-            ) : (
-              selectedTextbook?.chapters && selectedTextbook.chapters.length > 0 && (
-                <Button
-                  type="primary"
-                  onClick={handleStartEdit}
-                  icon={<EditOutlined />}
-                >
-                  编辑章节
-                </Button>
-              )
-            )}
-          </>
+          generatedChapters.length > 0 && (
+            <Button type="primary" onClick={handleSaveGeneratedChapters}>
+              保存章节（{generatedChapters.length}个）
+            </Button>
+          )
         }
       >
         {selectedTextbook && (
@@ -716,123 +602,40 @@ const TextbookManager: React.FC = () => {
               </>
             ) : selectedTextbook.chapters && selectedTextbook.chapters.length > 0 ? (
               <>
-                <Divider>
-                  {editingChapterMode ? '编辑章节' : '已保存章节'}（共{editingChapterMode ? editedChapters.length : selectedTextbook.chapters.length}个）
-                </Divider>
-                {editingChapterMode ? (
-                  <List
-                    dataSource={editedChapters}
-                    renderItem={(chapter, index) => (
-                      <List.Item key={chapter.id}>
-                        <Card
-                          size="small"
-                          style={{ width: '100%' }}
-                          title={
-                            <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                              <Text strong>{chapter.chapter_number}</Text>
-                              <Button
-                                size="small"
-                                icon={<ThunderboltOutlined />}
-                                loading={extractingKeywords[chapter.id || '']}
-                                onClick={() => handleExtractKeywords(index, chapter.id!)}
-                              >
-                                AI提取知识点
-                              </Button>
-                            </Space>
-                          }
-                        >
-                          <Space direction="vertical" style={{ width: '100%' }}>
+                <Divider>已保存章节（共{selectedTextbook.chapters.length}个）</Divider>
+                <List
+                  dataSource={selectedTextbook.chapters}
+                  renderItem={(chapter) => (
+                    <List.Item key={chapter.id}>
+                      <Card size="small" style={{ width: '100%' }}>
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          <Text strong>
+                            {chapter.chapter_number} {chapter.chapter_title}
+                          </Text>
+                          {chapter.content_summary && (
+                            <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                              {chapter.content_summary}
+                            </Paragraph>
+                          )}
+                          {chapter.key_concepts && chapter.key_concepts.length > 0 && (
                             <div>
-                              <Text type="secondary">章节标题：</Text>
-                              <Input
-                                value={chapter.chapter_title}
-                                onChange={(e) =>
-                                  handleEditedChapter(index, 'chapter_title', e.target.value)
-                                }
-                                placeholder="输入章节标题"
-                                style={{ marginTop: 4 }}
-                              />
+                              {chapter.key_concepts.map((concept, i) => (
+                                <Tag key={i} color="blue">
+                                  {concept}
+                                </Tag>
+                              ))}
                             </div>
-                            <div>
-                              <Text type="secondary">内容概述：</Text>
-                              <TextArea
-                                value={chapter.content_summary}
-                                onChange={(e) =>
-                                  handleEditedChapter(index, 'content_summary', e.target.value)
-                                }
-                                rows={2}
-                                placeholder="输入内容概述"
-                                style={{ marginTop: 4 }}
-                              />
-                            </div>
-                            <div>
-                              <Text type="secondary">核心概念：</Text>
-                              <Select
-                                mode="tags"
-                                value={chapter.key_concepts || []}
-                                placeholder="输入后按回车添加，或点击上方AI提取"
-                                style={{ width: '100%', marginTop: 4 }}
-                                onChange={(value: string[]) =>
-                                  handleEditedChapter(index, 'key_concepts', value)
-                                }
-                                tokenSeparators={[',', '，']}
-                              />
-                            </div>
-                            {chapter.hours_required && (
-                              <div>
-                                <Text type="secondary">建议课时：</Text>
-                                <InputNumber
-                                  value={chapter.hours_required}
-                                  min={1}
-                                  max={20}
-                                  onChange={(value) =>
-                                    handleEditedChapter(index, 'hours_required', value)
-                                  }
-                                  style={{ marginLeft: 8 }}
-                                />
-                                <Text type="secondary" style={{ marginLeft: 4 }}>课时</Text>
-                              </div>
-                            )}
-                          </Space>
-                        </Card>
-                      </List.Item>
-                    )}
-                  />
-                ) : (
-                  <List
-                    dataSource={selectedTextbook.chapters}
-                    renderItem={(chapter) => (
-                      <List.Item key={chapter.id}>
-                        <Card size="small" style={{ width: '100%' }}>
-                          <Space direction="vertical" style={{ width: '100%' }}>
-                            <Text strong>
-                              {chapter.chapter_number} {chapter.chapter_title}
+                          )}
+                          {chapter.hours_required && (
+                            <Text type="secondary">
+                              建议课时：{chapter.hours_required} 课时
                             </Text>
-                            {chapter.content_summary && (
-                              <Paragraph type="secondary" style={{ marginBottom: 8 }}>
-                                {chapter.content_summary}
-                              </Paragraph>
-                            )}
-                            {chapter.key_concepts && chapter.key_concepts.length > 0 && (
-                              <div>
-                                {chapter.key_concepts.map((concept, i) => (
-                                  <Tag key={i} color="blue">
-                                    {concept}
-                                  </Tag>
-                                ))}
-                              </div>
-                            )}
-                            {chapter.hours_required && (
-                              <Text type="secondary">
-                                建议课时：{chapter.hours_required} 课时
-                              </Text>
-                            )}
-                          </Space>
-                        </Card>
-                      </List.Item>
-                    )}
-                  />
-                )}
+                          )}
+                        </Space>
+                      </Card>
+                    </List.Item>
+                  )}
+                />
               </>
             ) : (
               <div style={{ textAlign: 'center', padding: '40px 0' }}>

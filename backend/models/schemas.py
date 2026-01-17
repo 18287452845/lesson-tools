@@ -92,6 +92,88 @@ class ClassListResponse(BaseModel):
 
 
 # ============================================================================
+# Subject Management Models
+# ============================================================================
+
+
+class SubjectInfo(BaseModel):
+    """Subject information."""
+    id: str
+    name: str
+    category: str  # 'university_course' or 'basic_subject'
+    is_preset: bool
+    sort_order: int
+    description: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class SubjectCreateRequest(BaseModel):
+    """Request to create a new subject."""
+    name: str = Field(..., min_length=1, max_length=50, description="学科名称")
+    category: str = Field(..., description="学科分类: university_course 或 basic_subject")
+    description: Optional[str] = Field(None, description="学科描述")
+
+
+class SubjectUpdateRequest(BaseModel):
+    """Request to update a subject."""
+    name: Optional[str] = Field(None, min_length=1, max_length=50, description="学科名称")
+    description: Optional[str] = Field(None, description="学科描述")
+
+
+class SubjectListResponse(BaseModel):
+    """Response for listing subjects."""
+    subjects: List[SubjectInfo]
+    total: int
+
+
+class SubjectWithUsageStats(SubjectInfo):
+    """Subject information with usage statistics."""
+    usage_stats: dict
+
+
+# ============================================================================
+# Grade Management Models
+# ============================================================================
+
+
+class GradeInfo(BaseModel):
+    """Grade information."""
+    id: str
+    name: str
+    category: str  # 'university', 'high_school', 'middle_school', or 'elementary'
+    is_preset: bool
+    sort_order: int
+    description: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class GradeCreateRequest(BaseModel):
+    """Request to create a new grade."""
+    name: str = Field(..., min_length=1, max_length=20, description="年级名称")
+    category: str = Field(..., description="年级分类: university, high_school, middle_school, 或 elementary")
+    description: Optional[str] = Field(None, description="年级描述")
+
+
+class GradeUpdateRequest(BaseModel):
+    """Request to update a grade."""
+    name: Optional[str] = Field(None, min_length=1, max_length=20, description="年级名称")
+    description: Optional[str] = Field(None, description="年级描述")
+
+
+class GradeListResponse(BaseModel):
+    """Response for listing grades."""
+    grades: List[GradeInfo]
+    total: int
+
+
+class GradeWithUsageStats(GradeInfo):
+    """Grade information with usage statistics."""
+    usage_stats: dict
+
+
+# ============================================================================
 # Textbook Management Models
 # ============================================================================
 

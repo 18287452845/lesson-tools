@@ -21,6 +21,16 @@ import type {
   ClassCreateRequest,
   ClassUpdateRequest,
   ClassListResponse,
+  SubjectInfo,
+  SubjectWithUsageStats,
+  SubjectCreateRequest,
+  SubjectUpdateRequest,
+  SubjectListResponse,
+  GradeInfo,
+  GradeWithUsageStats,
+  GradeCreateRequest,
+  GradeUpdateRequest,
+  GradeListResponse,
 } from '@/types';
 
 const api = axios.create({
@@ -334,6 +344,104 @@ export const classApi = {
    */
   deleteClass: async (id: string): Promise<void> => {
     await api.delete(`/classes/${id}`);
+  },
+};
+
+// ============================================================================
+// Subject Management API
+// ============================================================================
+
+export const subjectApi = {
+  /**
+   * List all subjects (with optional category filter)
+   */
+  listSubjects: async (params?: {
+    category?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<SubjectListResponse> => {
+    const response = await api.get('/subjects', { params });
+    return response.data;
+  },
+
+  /**
+   * Create a new subject
+   */
+  createSubject: async (data: SubjectCreateRequest): Promise<SubjectInfo> => {
+    const response = await api.post('/subjects', data);
+    return response.data;
+  },
+
+  /**
+   * Get a specific subject with usage statistics
+   */
+  getSubject: async (id: string): Promise<SubjectWithUsageStats> => {
+    const response = await api.get(`/subjects/${id}`);
+    return response.data;
+  },
+
+  /**
+   * Update a subject
+   */
+  updateSubject: async (id: string, data: SubjectUpdateRequest): Promise<SubjectInfo> => {
+    const response = await api.put(`/subjects/${id}`, data);
+    return response.data;
+  },
+
+  /**
+   * Delete a subject
+   */
+  deleteSubject: async (id: string): Promise<void> => {
+    await api.delete(`/subjects/${id}`);
+  },
+};
+
+// ============================================================================
+// Grade Management API
+// ============================================================================
+
+export const gradeApi = {
+  /**
+   * List all grades (with optional category filter)
+   */
+  listGrades: async (params?: {
+    category?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<GradeListResponse> => {
+    const response = await api.get('/grades', { params });
+    return response.data;
+  },
+
+  /**
+   * Create a new grade
+   */
+  createGrade: async (data: GradeCreateRequest): Promise<GradeInfo> => {
+    const response = await api.post('/grades', data);
+    return response.data;
+  },
+
+  /**
+   * Get a specific grade with usage statistics
+   */
+  getGrade: async (id: string): Promise<GradeWithUsageStats> => {
+    const response = await api.get(`/grades/${id}`);
+    return response.data;
+  },
+
+  /**
+   * Update a grade
+   */
+  updateGrade: async (id: string, data: GradeUpdateRequest): Promise<GradeInfo> => {
+    const response = await api.put(`/grades/${id}`, data);
+    return response.data;
+  },
+
+  /**
+   * Delete a grade
+   */
+  deleteGrade: async (id: string): Promise<void> => {
+    await api.delete(`/grades/${id}`);
   },
 };
 

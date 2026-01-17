@@ -8,9 +8,10 @@ from fastapi.staticfiles import StaticFiles
 import logging
 
 from .config import settings
-from .models.database import init_db
-from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans, textbooks
+from .models.database import init_db, db
+from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans, textbooks, subjects, grades
 from .services.template_sync import sync_templates_on_startup
+from .services.metadata_sync import init_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,12 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Initialize database on startup
     await init_db()
+
+    # Initialize preset subjects and grades
+    try:
+        await init_metadata(db)
+    except Exception as e:
+        logger.error(f"元数据初始化失败: {str(e)}")
 
     # Sync templates from storage/templates/ folder to database
     try:
@@ -70,6 +77,8 @@ app.include_router(batch.router, prefix=settings.api_prefix, tags=["batch"])
 app.include_router(classes.router, prefix=settings.api_prefix, tags=["classes"])
 app.include_router(lesson_plans.router, prefix=settings.api_prefix, tags=["lesson_plans"])
 app.include_router(textbooks.router, prefix=settings.api_prefix, tags=["textbooks"])
+app.include_router(subjects.router, prefix=settings.api_prefix, tags=["subjects"])
+app.include_router(grades.router, prefix=settings.api_prefix, tags=["grades"])
 
 
 @app.get("/")

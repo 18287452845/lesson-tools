@@ -21,6 +21,8 @@ import {
   LineChartOutlined,
   InboxOutlined,
   BookOutlined,
+  AppstoreOutlined,
+  ApartmentOutlined,
 } from '@ant-design/icons';
 
 const { Title, Text, Paragraph } = Typography;
@@ -88,6 +90,20 @@ function Home() {
       description: '管理授课班级信息',
       gradient: gradients.orange,
       route: '/classes',
+    },
+    {
+      icon: <AppstoreOutlined />,
+      title: '学科管理',
+      description: '管理学科分类和自定义学科',
+      gradient: gradients.blue,
+      route: '/subjects',
+    },
+    {
+      icon: <ApartmentOutlined />,
+      title: '年级管理',
+      description: '管理年级层次和自定义年级',
+      gradient: gradients.cyan,
+      route: '/grades',
     },
     {
       icon: <BookOutlined />,

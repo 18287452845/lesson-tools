@@ -46,10 +46,15 @@ import {
   EditOutlined,
   CalendarOutlined,
   BookOutlined,
+  PlusOutlined,
+  DeleteOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
 } from '@ant-design/icons';
 import type {
   ChapterInfo,
   ChapterSplitRequest,
+  ChapterSplitResponse,
   BatchTaskCreateRequest,
   BatchTask,
   TemplateInfo,
@@ -234,9 +239,27 @@ const BatchGenerate: React.FC = () => {
       // Auto-fill form fields
       form.setFieldsValue(formValues);
 
-      // Load chapters but stay on step 1 to let user select lesson plan template
-      setChapters(selected.chapters);
-      setTotalLessons(selected.chapters.length);
+      // Load chapters but validate count matches expected
+      const expectedLessons = selected.total_hours / (selected.hours_per_lesson ?? 2);
+
+      // If cached chapters count doesn't match expected, warn user and clear chapters
+      if (selected.chapters.length !== expectedLessons) {
+        console.warn(
+          `Cached template chapter count mismatch: ` +
+          `cached=${selected.chapters.length}, expected=${expectedLessons}. ` +
+          `Clearing chapters - user should regenerate.`
+        );
+        message.warning(
+          `缓存的章节数量(${selected.chapters.length})与课时设置(${expectedLessons}份教案)不匹配，请重新生成章节`,
+          5
+        );
+        setChapters([]);
+        setTotalLessons(0);
+      } else {
+        // Cached chapters count is correct, use it
+        setChapters(selected.chapters);
+        setTotalLessons(selected.chapters.length);
+      }
 
       if (currentTemplateId) {
         message.success(`已加载 ${selected.course_name} 的 ${selected.chapters.length} 份教案章节`);
@@ -281,24 +304,48 @@ const BatchGenerate: React.FC = () => {
       // Auto-fill form fields
       form.setFieldsValue(formValues);
 
-      // Convert textbook chapters to ChapterInfo format
-      const chapters: ChapterInfo[] = textbook.chapters.map((ch, idx) => ({
-        lesson_number: idx + 1,
-        topic: ch.chapter_title,
-        content_summary: ch.content_summary || '',
-        key_concepts: ch.key_concepts || [],
-      }));
-
-      // Pre-fill chapters_input with chapter titles
+      // Pre-fill chapters_input with chapter titles (for manual editing)
       const chapterTitles = textbook.chapters
         .map((ch) => ch.chapter_title)
         .join('\n');
       form.setFieldValue('chapters_input', chapterTitles);
 
-      setChapters(chapters);
-      setTotalLessons(chapters.length);
+      // Get expected lesson count from form values
+      const totalHours = form.getFieldValue('total_hours') || textbook.total_hours || 64;
+      const hoursPerLesson = form.getFieldValue('hours_per_lesson') || 2;
+      const expectedLessons = totalHours / hoursPerLesson;
 
-      message.success(`已加载 ${textbook.name} 的 ${chapters.length} 个章节到输入框，可编辑后继续`);
+      // Warn user if textbook chapters don't match expected lesson count
+      if (textbook.chapters.length !== expectedLessons) {
+        console.warn(
+          `Textbook chapter count mismatch: ` +
+          `textbook has ${textbook.chapters.length} chapters, ` +
+          `but course needs ${expectedLessons} lessons (${totalHours} hours / ${hoursPerLesson} hours per lesson)`
+        );
+
+        message.warning(
+          `教材有 ${textbook.chapters.length} 个章节，但课程需要 ${expectedLessons} 份教案。` +
+          `章节已填入输入框，点击"下一步"时系统会自动调整到 ${expectedLessons} 份。`,
+          6
+        );
+
+        // Don't set chapters yet - let user click "下一步" to generate with proper count
+        setChapters([]);
+        setTotalLessons(0);
+      } else {
+        // Chapter count matches - convert and use directly
+        const chapters: ChapterInfo[] = textbook.chapters.map((ch, idx) => ({
+          lesson_number: idx + 1,
+          topic: ch.chapter_title,
+          content_summary: ch.content_summary || '',
+          key_concepts: ch.key_concepts || [],
+        }));
+
+        setChapters(chapters);
+        setTotalLessons(chapters.length);
+
+        message.success(`已加载 ${textbook.name} 的 ${chapters.length} 个章节`);
+      }
     } catch (error: any) {
       message.error(error.message || '加载教材失败');
     }
@@ -481,6 +528,63 @@ const BatchGenerate: React.FC = () => {
     }
   };
 
+  // Handle adding a new chapter
+  const handleAddChapter = () => {
+    const newChapter: ChapterInfo = {
+      lesson_number: chapters.length + 1,
+      topic: '',
+      content_summary: '',
+      key_concepts: [],
+    };
+    setChapters([...chapters, newChapter]);
+    setTotalLessons(chapters.length + 1);
+    message.success('已添加新章节');
+  };
+
+  // Handle deleting a chapter
+  const handleDeleteChapter = (index: number) => {
+    if (chapters.length <= 1) {
+      message.warning('至少需要保留一个章节');
+      return;
+    }
+
+    const newChapters = chapters.filter((_, i) => i !== index);
+    // Re-number chapters
+    const renumberedChapters = newChapters.map((ch, idx) => ({
+      ...ch,
+      lesson_number: idx + 1,
+    }));
+    setChapters(renumberedChapters);
+    setTotalLessons(renumberedChapters.length);
+    message.success('已删除章节');
+  };
+
+  // Handle moving chapter up
+  const handleMoveChapterUp = (index: number) => {
+    if (index === 0) return;
+    const newChapters = [...chapters];
+    [newChapters[index - 1], newChapters[index]] = [newChapters[index], newChapters[index - 1]];
+    // Re-number chapters
+    const renumberedChapters = newChapters.map((ch, idx) => ({
+      ...ch,
+      lesson_number: idx + 1,
+    }));
+    setChapters(renumberedChapters);
+  };
+
+  // Handle moving chapter down
+  const handleMoveChapterDown = (index: number) => {
+    if (index === chapters.length - 1) return;
+    const newChapters = [...chapters];
+    [newChapters[index], newChapters[index + 1]] = [newChapters[index + 1], newChapters[index]];
+    // Re-number chapters
+    const renumberedChapters = newChapters.map((ch, idx) => ({
+      ...ch,
+      lesson_number: idx + 1,
+    }));
+    setChapters(renumberedChapters);
+  };
+
   // Chapter table columns
   const chapterColumns = [
     {
@@ -497,6 +601,7 @@ const BatchGenerate: React.FC = () => {
       render: (text: string, record: ChapterInfo, index: number) => (
         <Input
           value={text}
+          placeholder="请输入课题名称"
           onChange={(e) => {
             const newChapters = [...chapters];
             newChapters[index].topic = e.target.value;
@@ -513,6 +618,7 @@ const BatchGenerate: React.FC = () => {
         <TextArea
           value={text}
           rows={2}
+          placeholder="请输入内容概述"
           onChange={(e) => {
             const newChapters = [...chapters];
             newChapters[index].content_summary = e.target.value;
@@ -525,11 +631,55 @@ const BatchGenerate: React.FC = () => {
       title: '核心概念',
       dataIndex: 'key_concepts',
       key: 'key_concepts',
-      render: (concepts: string[]) => (
-        <Space wrap>
-          {concepts?.map((concept, idx) => (
-            <Tag key={idx} color="blue">{concept}</Tag>
-          ))}
+      render: (concepts: string[] = [], record: ChapterInfo, index: number) => (
+        <Select
+          mode="tags"
+          value={concepts}
+          placeholder="输入后按回车添加"
+          style={{ width: '100%' }}
+          onChange={(value: string[]) => {
+            const newChapters = [...chapters];
+            newChapters[index].key_concepts = value;
+            setChapters(newChapters);
+          }}
+          tokenSeparators={[',', '，']}
+        />
+      ),
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 150,
+      render: (_, record: ChapterInfo, index: number) => (
+        <Space>
+          <Button
+            type="text"
+            size="small"
+            disabled={index === 0}
+            onClick={() => handleMoveChapterUp(index)}
+            title="上移"
+          >
+            ↑
+          </Button>
+          <Button
+            type="text"
+            size="small"
+            disabled={index === chapters.length - 1}
+            onClick={() => handleMoveChapterDown(index)}
+            title="下移"
+          >
+            ↓
+          </Button>
+          <Button
+            type="text"
+            danger
+            size="small"
+            disabled={chapters.length <= 1}
+            onClick={() => handleDeleteChapter(index)}
+            title="删除"
+          >
+            删除
+          </Button>
         </Space>
       ),
     },
@@ -1091,7 +1241,33 @@ const BatchGenerate: React.FC = () => {
             </Card>
 
             {/* Chapter Edit Table */}
-            <Card title="章节列表" style={{ marginBottom: 16 }}>
+            <Card
+              title={
+                <Space>
+                  <span>章节列表</span>
+                  <Tag color="blue">{chapters.length} 个章节</Tag>
+                </Space>
+              }
+              extra={
+                <Button
+                  type="primary"
+                  size="small"
+                  onClick={handleAddChapter}
+                  icon={<PlusOutlined />}
+                >
+                  新增章节
+                </Button>
+              }
+              style={{ marginBottom: 16 }}
+            >
+              <Alert
+                message="编辑提示"
+                description="可直接修改课题、内容概述和核心概念。使用上移/下移调整顺序，点击删除移除章节。核心概念输入后按回车添加。"
+                type="info"
+                showIcon
+                closable
+                style={{ marginBottom: 16 }}
+              />
               <Table
                 columns={chapterColumns}
                 dataSource={chapters}

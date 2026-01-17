@@ -410,11 +410,17 @@ class DocumentRenderer:
             "student_analysis", "textbook_analysis",
             "blackboard_design", "reflection",
             "week_number", "location", "references",
-            "ideological_political", "class_name"
+            "ideological_political", "class_name",
+            "online_resources", "textbook_name"
         ]:
             if key in data and key not in processed:
                 value = data[key]
                 processed[key] = value if value is not None else ""
+
+        # Add field aliases for template compatibility
+        # Map online_resources to electronic_resources for Yunnan template
+        if "online_resources" in data:
+            processed["electronic_resources"] = data["online_resources"] or ""
 
         return processed
 

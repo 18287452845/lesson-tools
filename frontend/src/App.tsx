@@ -17,6 +17,8 @@ import BatchTaskDetail from './pages/BatchTaskDetail';
 import CachedLessonPlans from './pages/CachedLessonPlans';
 import ClassManager from './pages/ClassManager';
 import TextbookManager from './pages/TextbookManager';
+import SubjectManager from './pages/SubjectManager';
+import GradeManager from './pages/GradeManager';
 
 const { Content } = Layout;
 
@@ -39,6 +41,8 @@ function App() {
           <Route path="/cached-lesson-plans" element={<CachedLessonPlans />} />
           <Route path="/classes" element={<ClassManager />} />
           <Route path="/textbooks" element={<TextbookManager />} />
+          <Route path="/subjects" element={<SubjectManager />} />
+          <Route path="/grades" element={<GradeManager />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Content>

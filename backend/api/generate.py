@@ -395,9 +395,11 @@ async def export_lesson_plan(lesson_plan_id: str):
 
     references_parts = []
     if input_data.get("textbook_name"):
-        references_parts.append(f"教材：{input_data['textbook_name']}")
+        # Add book title marks around textbook name
+        textbook_name = input_data['textbook_name']
+        references_parts.append(f"《{textbook_name}》")
     if online_resources:
-        references_parts.append(f"网络资源：{online_resources}")
+        references_parts.append(online_resources)
     references = "\n".join(references_parts) if references_parts else ""
 
     render_data = {
