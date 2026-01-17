@@ -34,6 +34,31 @@ from .document_renderer import DocumentRenderer
 logger = logging.getLogger(__name__)
 
 
+def _flatten_key_concepts(key_concepts: List[Any]) -> List[str]:
+    """
+    Flatten and normalize key_concepts to ensure all elements are strings.
+
+    Handles cases where AI returns nested lists or non-string values.
+
+    Args:
+        key_concepts: List that may contain strings, lists, or other types
+
+    Returns:
+        Flattened list of strings
+    """
+    result = []
+    for item in key_concepts:
+        if isinstance(item, str):
+            result.append(item)
+        elif isinstance(item, list):
+            # Recursively flatten nested lists
+            result.extend(_flatten_key_concepts(item))
+        else:
+            # Convert other types to string
+            result.append(str(item))
+    return result
+
+
 class BatchTaskProcessor:
     """
     Process batch lesson plan generation tasks.
@@ -365,7 +390,7 @@ class BatchTaskProcessor:
                     topic=chapter.topic,
                     duration=self.default_duration,
                     prior_knowledge=chapter.content_summary,
-                    focus_areas=", ".join(chapter.key_concepts),
+                    focus_areas=", ".join(_flatten_key_concepts(chapter.key_concepts)),
                     location=location,
                     textbook_name=textbook_name,
                     online_resources=online_resources,
@@ -381,7 +406,13 @@ class BatchTaskProcessor:
 
                 # Prepare lesson plan data for rendering
                 # Build references from textbook_name and online_resources
-                online_res = online_resources or generated_content.online_resources or ""
+                # Ensure online_resources is a string (AI might return a list)
+                online_res_raw = online_resources or generated_content.online_resources or ""
+                if isinstance(online_res_raw, list):
+                    online_res = "\n".join(str(item) for item in online_res_raw)
+                else:
+                    online_res = str(online_res_raw) if online_res_raw else ""
+
                 references_parts = []
                 if textbook_name:
                     # Add book title marks around textbook name
@@ -450,7 +481,7 @@ class BatchTaskProcessor:
                         topic=chapter.topic,
                         duration=self.default_duration,
                         prior_knowledge=chapter.content_summary,
-                        focus_areas=", ".join(chapter.key_concepts),
+                        focus_areas=", ".join(_flatten_key_concepts(chapter.key_concepts)),
                     ).model_dump(), ensure_ascii=False),
                     json.dumps(generated_content.model_dump(), ensure_ascii=False),
                     lesson_plan_status,
@@ -598,7 +629,7 @@ class BatchTaskProcessor:
                 topic=chapter.topic,
                 duration=self.default_duration,
                 prior_knowledge=chapter.content_summary,
-                focus_areas=", ".join(chapter.key_concepts),
+                focus_areas=", ".join(_flatten_key_concepts(chapter.key_concepts)),
                 location=location,
                 textbook_name=textbook_name,
                 online_resources=online_resources,

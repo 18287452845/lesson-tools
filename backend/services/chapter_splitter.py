@@ -18,6 +18,32 @@ from .ai_provider import generate_with_ai, AIProviderFactory
 logger = logging.getLogger(__name__)
 
 
+def _flatten_key_concepts(key_concepts):
+    """
+    Flatten nested lists in key_concepts to ensure all elements are strings.
+
+    Args:
+        key_concepts: Can be a list of strings, nested lists, or mixed
+
+    Returns:
+        Flattened list of strings
+    """
+    if not isinstance(key_concepts, list):
+        return []
+
+    result = []
+    for item in key_concepts:
+        if isinstance(item, str):
+            result.append(item)
+        elif isinstance(item, list):
+            # Recursively flatten nested lists
+            result.extend(_flatten_key_concepts(item))
+        else:
+            # Convert other types to string
+            result.append(str(item))
+    return result
+
+
 class ChapterSplitter:
     """
     AI-powered course chapter splitting service.
@@ -336,6 +362,9 @@ class ChapterSplitter:
                     data["content_summary"] = ""
                 if "key_concepts" not in data:
                     data["key_concepts"] = []
+                else:
+                    # Flatten key_concepts to handle nested lists from AI
+                    data["key_concepts"] = _flatten_key_concepts(data["key_concepts"])
 
                 try:
                     chapter = ChapterInfo(**data)
@@ -478,6 +507,9 @@ class ChapterSplitter:
                     data["content_summary"] = ""
                 if "key_concepts" not in data:
                     data["key_concepts"] = []
+                else:
+                    # Flatten key_concepts to handle nested lists from AI
+                    data["key_concepts"] = _flatten_key_concepts(data["key_concepts"])
 
                 chapter = ChapterInfo(**data)
                 if chapter.lesson_number not in yielded_chapters:
@@ -514,7 +546,12 @@ class ChapterSplitter:
             # Try parsing as-is with greedy match
             data = json.loads('[' + array_match.group(1) + ']')
             if isinstance(data, list):
-                chapters = [ChapterInfo(**d) for d in data if isinstance(d, dict)]
+                for d in data:
+                    if isinstance(d, dict):
+                        # Flatten key_concepts if present
+                        if "key_concepts" in d:
+                            d["key_concepts"] = _flatten_key_concepts(d["key_concepts"])
+                        chapters.append(ChapterInfo(**d))
         except (json.JSONDecodeError, TypeError, ValueError):
             pass
 
@@ -525,7 +562,12 @@ class ChapterSplitter:
             try:
                 data = json.loads(fixed)
                 if isinstance(data, list):
-                    chapters = [ChapterInfo(**d) for d in data if isinstance(d, dict)]
+                    for d in data:
+                        if isinstance(d, dict):
+                            # Flatten key_concepts if present
+                            if "key_concepts" in d:
+                                d["key_concepts"] = _flatten_key_concepts(d["key_concepts"])
+                            chapters.append(ChapterInfo(**d))
             except (json.JSONDecodeError, ValueError, TypeError):
                 pass
 
