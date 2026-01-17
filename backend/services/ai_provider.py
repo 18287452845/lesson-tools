@@ -4,6 +4,7 @@
 import asyncio
 import json
 import logging
+import ssl
 from typing import Optional, Dict, Any, Callable, Type, Tuple
 from abc import ABC, abstractmethod
 
@@ -26,6 +27,7 @@ async def retry_with_backoff(
         httpx.RemoteProtocolError,
         httpx.ReadError,
         httpx.WriteError,
+        ssl.SSLError,
     ),
 ) -> Any:
     """

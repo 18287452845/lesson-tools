@@ -323,7 +323,6 @@ class ChapterSplitter:
         while batch_start <= num_lessons:
             batch_end = min(batch_start + BATCH_SIZE - 1, num_lessons)
             batch_count = batch_end - batch_start + 1
-
             # Build batch-specific prompt
             batch_prompt = self.CHAPTER_SPLIT_PROMPT.format(
                 course_name=course_name,
@@ -432,6 +431,13 @@ class ChapterSplitter:
             batch_end = min(batch_start + BATCH_SIZE - 1, num_lessons)
             batch_count = batch_end - batch_start + 1
 
+            def normalize_lesson_number(raw_num: int) -> Optional[int]:
+                if batch_start <= raw_num <= batch_end:
+                    return raw_num
+                if 1 <= raw_num <= batch_count:
+                    return batch_start + raw_num - 1
+                return None
+
             # Build batch-specific prompt
             batch_prompt = self.CHAPTER_SPLIT_PROMPT.format(
                 course_name=course_name,
@@ -475,10 +481,12 @@ class ChapterSplitter:
                                 # Try to parse partial JSON and yield any complete chapters
                                 partial_chapters = self._try_parse_partial_chapters(full_response)
                                 for chapter in partial_chapters:
-                                    # Adjust lesson_number for overall sequence
-                                    chapter.lesson_number = batch_start + (chapter.lesson_number - 1)
-                                    if chapter.lesson_number not in yielded_chapters:
-                                        yielded_chapters.add(chapter.lesson_number)
+                                    lesson_num = normalize_lesson_number(chapter.lesson_number)
+                                    if lesson_num is None:
+                                        continue
+                                    chapter.lesson_number = lesson_num
+                                    if lesson_num not in yielded_chapters:
+                                        yielded_chapters.add(lesson_num)
                                         yield chapter
 
                             # Handle Anthropic format
@@ -487,9 +495,12 @@ class ChapterSplitter:
                                     full_response += chunk_data["delta"]["text"]
                                     partial_chapters = self._try_parse_partial_chapters(full_response)
                                     for chapter in partial_chapters:
-                                        chapter.lesson_number = batch_start + (chapter.lesson_number - 1)
-                                        if chapter.lesson_number not in yielded_chapters:
-                                            yielded_chapters.add(chapter.lesson_number)
+                                        lesson_num = normalize_lesson_number(chapter.lesson_number)
+                                        if lesson_num is None:
+                                            continue
+                                        chapter.lesson_number = lesson_num
+                                        if lesson_num not in yielded_chapters:
+                                            yielded_chapters.add(lesson_num)
                                             yield chapter
 
                         except json.JSONDecodeError:

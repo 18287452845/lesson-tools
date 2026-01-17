@@ -23,6 +23,7 @@ import {
   BookOutlined,
   AppstoreOutlined,
   ApartmentOutlined,
+  CloudDownloadOutlined,
 } from '@ant-design/icons';
 
 const { Title, Text, Paragraph } = Typography;
@@ -55,6 +56,13 @@ function Home() {
       description: '一次生成整个学期的教案，支持AI自动拆分章节',
       gradient: gradients.blue,
       route: '/batch-generate',
+    },
+    {
+      icon: <CloudDownloadOutlined />,
+      title: '批量下载',
+      description: '查看批量任务并下载生成的教案包',
+      gradient: gradients.cyan,
+      route: '/batch-downloads',
     },
     {
       icon: <InboxOutlined />,

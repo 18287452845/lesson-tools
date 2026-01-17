@@ -722,6 +722,12 @@ const BatchGenerate: React.FC = () => {
     },
   ];
 
+  const shouldShowFailureAlert = Boolean(
+    batchTask
+    && batchTask.failed_count > 0
+    && (batchTask.status === 'completed' || batchTask.status === 'failed')
+  );
+
   return (
     <div style={{ padding: '24px' }}>
       <Card>
@@ -1395,9 +1401,9 @@ const BatchGenerate: React.FC = () => {
                 </Text>
               </div>
 
-              {batchTask.failed_count > 0 && (
+              {shouldShowFailureAlert && (
                 <Alert
-                  message={`${batchTask.failed_count} 份教案生成失败，请稍后重试`}
+                  message={`仍有 ${batchTask.failed_count} 份教案未成功生成，可稍后重试`}
                   type="warning"
                   showIcon
                   style={{ marginTop: 16 }}

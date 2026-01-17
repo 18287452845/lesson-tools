@@ -1,7 +1,9 @@
 """
 AI generator service for creating lesson plans using multiple AI providers (DeepSeek, Anthropic).
 """
+import asyncio
 import json
+import logging
 import re
 from typing import Dict, Optional, Any, List
 
@@ -12,6 +14,8 @@ from ..models.schemas import (
     FieldConfig,
 )
 from .ai_provider import AIProviderFactory, generate_with_ai
+
+logger = logging.getLogger(__name__)
 
 
 class AIGenerator:
@@ -155,18 +159,56 @@ class AIGenerator:
         Returns:
             Generated lesson plan content
         """
-        prompt = self._build_generation_prompt(input_data, field_configs, generate_reflection)
-
-        content = await generate_with_ai(
-            prompt=prompt,
-            system_prompt=self.SYSTEM_PROMPT,
-            provider=self.provider,
-            api_key=self.api_key,
-            model=self.model,
+        base_prompt = self._build_generation_prompt(input_data, field_configs, generate_reflection)
+        retry_prompt_suffix = (
+            "\n\n## 输出要求补充\n"
+            "- 仅返回严格的JSON对象，不要使用Markdown代码块或任何说明文字\n"
+            "- 所有字符串必须正确转义，避免出现控制字符或不合法的转义序列\n"
+            "- 不要添加多余的字段或注释\n"
         )
 
-        parsed_data = self._parse_json_response(content)
-        return GeneratedContent(**parsed_data)
+        max_attempts = settings.ai_max_retries + 1
+        last_error: Optional[Exception] = None
+
+        for attempt in range(max_attempts):
+            prompt = base_prompt if attempt == 0 else f"{base_prompt}{retry_prompt_suffix}"
+            content = await generate_with_ai(
+                prompt=prompt,
+                system_prompt=self.SYSTEM_PROMPT,
+                provider=self.provider,
+                api_key=self.api_key,
+                model=self.model,
+            )
+
+            try:
+                parsed_data = self._parse_json_response(content)
+                return GeneratedContent(**parsed_data)
+            except ValueError as e:
+                last_error = e
+                cleaned_content = self._clean_ai_response(content)
+                if cleaned_content != content:
+                    try:
+                        parsed_data = self._parse_json_response(cleaned_content)
+                        return GeneratedContent(**parsed_data)
+                    except ValueError as cleaned_error:
+                        last_error = cleaned_error
+
+                if attempt >= max_attempts - 1:
+                    break
+
+                delay = settings.ai_retry_delay * (settings.ai_retry_backoff ** attempt)
+                logger.warning(
+                    "AI response parse failed on attempt %s/%s: %s. Retrying in %.1fs.",
+                    attempt + 1,
+                    max_attempts,
+                    last_error,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+        if last_error:
+            raise last_error
+        raise ValueError("Failed to parse AI response as JSON after retries.")
 
     async def regenerate_field(
         self,
@@ -748,32 +790,34 @@ class AIGenerator:
                                 brace_count += 1
                             elif char == '}':
                                 brace_count -= 1
-                                if brace_count == 0:
-                                    content = content[start_idx:i+1]
-                                    break
+                if brace_count == 0:
+                    content = content[start_idx:i+1]
+                    break
 
         # Parse JSON with multiple fallback attempts
         attempts = [
             # 1. Try parsing as-is
             lambda c: json.loads(c),
-            # 2. Try after removing trailing commas
+            # 2. Try parsing with relaxed control character handling
+            lambda c: json.loads(c, strict=False),
+            # 3. Try after removing trailing commas
             lambda c: json.loads(re.sub(r",\s*([}\]])", r"\1", c)),
-            # 3. Try after fixing unquoted keys (only for simple cases)
+            # 4. Try after fixing unquoted keys (only for simple cases)
             lambda c: json.loads(re.sub(r"(\w+)\s*:", r'"\1":', c)),
-            # 4. Try after removing control characters
+            # 5. Try after removing control characters
             lambda c: json.loads(re.sub(r'[\x00-\x1f\x7f-\x9f]', '', c)),
-            # 5. Try after fixing comments (// style)
+            # 6. Try after fixing comments (// style)
             lambda c: json.loads(re.sub(r'//.*?(\n|$)', '', c)),
-            # 6. Try after adding missing commas between array items and object properties
+            # 7. Try after adding missing commas between array items and object properties
             lambda c: json.loads(re.sub(r'([}\]])\s*\n\s*"', r'\1,\n  "', c)),
             lambda c: json.loads(re.sub(r'([}\]])\s*\n\s*(\d+)', r'\1,\n  \2', c)),
             lambda c: json.loads(re.sub(r'([}\]])\s*\n\s*\{', r'\1,\n  {', c)),
             lambda c: json.loads(re.sub(r'"([a-zA-Z_]+)"\s*\n\s*\{', r'"\1": {', c)),
-            # 7. Try aggressive comma fixing (no newline)
+            # 8. Try aggressive comma fixing (no newline)
             lambda c: json.loads(re.sub(r'([}\]])\s+"', r'\1, "', c)),
             lambda c: json.loads(re.sub(r'([}\]])\s+\{', r'\1, {', c)),
             lambda c: json.loads(re.sub(r'"(\w+)"\s+\{', r'"\1": {', c)),
-            # 8. Try fixing multiline string issues
+            # 9. Try fixing multiline string issues
             lambda c: json.loads(re.sub(r'\n\s+', ' ', c)),
         ]
 
@@ -783,9 +827,9 @@ class AIGenerator:
                 result = attempt(content)
                 # Validate the result has expected structure
                 if isinstance(result, dict) and 'teaching_steps' in result:
-                    return result
+                    return self._sanitize_control_chars(result)
                 elif isinstance(result, dict):
-                    return result
+                    return self._sanitize_control_chars(result)
             except (json.JSONDecodeError, ValueError) as e:
                 last_error = e
                 continue
@@ -795,6 +839,24 @@ class AIGenerator:
             f"Failed to parse AI response as JSON. Last error: {last_error}\n"
             f"Content preview (first 500 chars): {content[:500]}..."
         )
+
+    @staticmethod
+    def _sanitize_control_chars(value: Any) -> Any:
+        if isinstance(value, str):
+            return re.sub(r'[\x00-\x1f\x7f-\x9f]', '', value)
+        if isinstance(value, list):
+            return [AIGenerator._sanitize_control_chars(item) for item in value]
+        if isinstance(value, dict):
+            return {key: AIGenerator._sanitize_control_chars(val) for key, val in value.items()}
+        return value
+
+    @staticmethod
+    def _clean_ai_response(content: str) -> str:
+        if not content:
+            return content
+        cleaned = content.replace("\ufeff", "")
+        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', cleaned)
+        return cleaned
 
 
 async def generate_lesson_plan(
