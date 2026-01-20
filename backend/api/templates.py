@@ -454,11 +454,8 @@ async def get_onlyoffice_config(template_id: str, request: Request):
         try:
             import jwt
 
-            token = jwt.encode(
-                {"payload": config},
-                settings.onlyoffice_jwt_secret,
-                algorithm="HS256",
-            )
+            # JWT payload must mirror the editor config for Document Server validation
+            token = jwt.encode(config, settings.onlyoffice_jwt_secret, algorithm="HS256")
         except ImportError:
             # JWT library not installed; skip token generation
             token = None
