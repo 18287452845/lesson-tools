@@ -4,21 +4,11 @@
  * 渲染 Jinja2 语法为可视化的徽章
  */
 import React from 'react'
+import type { ReactNodeViewProps } from '@tiptap/react'
 import { NodeViewWrapper } from '@tiptap/react'
 import { Tag } from 'antd'
 
-interface JinjaPlaceholderViewProps {
-  node: {
-    attrs: {
-      jinja: string
-      type: 'variable' | 'block' | 'comment'
-      blockType?: string
-      id?: string
-    }
-  }
-}
-
-const JinjaPlaceholderView: React.FC<JinjaPlaceholderViewProps> = ({ node }) => {
+const JinjaPlaceholderView: React.FC<ReactNodeViewProps> = ({ node }) => {
   const { jinja, type, blockType } = node.attrs
 
   // 根据类型选择颜色

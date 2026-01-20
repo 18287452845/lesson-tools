@@ -34,7 +34,6 @@ function NewLessonPlan() {
   const navigate = useNavigate();
   const { templates, loading: templatesLoading, fetchTemplates } = useTemplateStore();
   const {
-    currentLessonPlan,
     generatedContent,
     isGenerating,
     isRegenerating,

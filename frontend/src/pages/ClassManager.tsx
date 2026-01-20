@@ -19,7 +19,7 @@ import {
   EditOutlined,
   DeleteOutlined,
 } from '@ant-design/icons';
-import type { ClassInfo, ClassCreateRequest, ClassUpdateRequest } from '@/types';
+import type { ClassInfo } from '@/types';
 import { classApi } from '@/services/api';
 
 const { Title } = Typography;

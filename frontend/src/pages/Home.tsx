@@ -2,7 +2,7 @@
  * Home page - Main landing page with research-style design
  */
 import { useNavigate } from 'react-router-dom';
-import { Card, Row, Col, Typography, Space, Button, FloatButton, Statistic, Progress } from 'antd';
+import { Card, Row, Col, Typography, Space, Button, FloatButton, Statistic } from 'antd';
 import {
   FileTextOutlined,
   EditOutlined,
@@ -14,7 +14,6 @@ import {
   RocketOutlined,
   ThunderboltOutlined,
   CheckCircleOutlined,
-  ClockCircleOutlined,
   RobotOutlined,
   ExperimentOutlined,
   DatabaseOutlined,
@@ -501,7 +500,6 @@ function Home() {
                         top: 28,
                         color: '#cbd5e1',
                         fontSize: 20,
-                        display: { xs: 'none', sm: 'block' },
                       }} />
                     )}
                   </div>

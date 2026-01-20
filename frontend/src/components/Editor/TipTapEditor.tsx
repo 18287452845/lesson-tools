@@ -46,10 +46,7 @@ const TipTapEditor: React.FC<TipTapEditorProps> = ({
 }) => {
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({
-        // 禁用默认的表格支持，使用自定义的
-        table: false,
-      }),
+      StarterKit,
       Table.configure({
         resizable: true,
         HTMLAttributes: {

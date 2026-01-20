@@ -29,6 +29,13 @@ export interface TemplateInfo {
   updated_at: string;
 }
 
+export interface OnlyOfficeEditorConfig {
+  config: Record<string, any>;
+  token?: string | null;
+  documentServerUrl: string;
+  apiJsUrl: string;
+}
+
 // ============================================================================
 // Lesson Plan Generation Types
 // ============================================================================
@@ -621,6 +628,7 @@ export interface TextbookInfo {
   edition?: string;
   subject?: string;
   grade?: string;
+  total_hours?: number;
   cover_image?: string;
   description?: string;
   status: TextbookStatus;

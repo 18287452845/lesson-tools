@@ -15,7 +15,6 @@ import {
   message,
   Empty,
   Spin,
-  Divider,
   Typography,
   Checkbox,
   Tooltip,
@@ -30,7 +29,7 @@ import {
 } from '@ant-design/icons'
 import axios from 'axios'
 
-const { Title, Text, Paragraph } = Typography
+const { Text, Paragraph } = Typography
 const { confirm } = Modal
 
 const API_BASE = 'http://127.0.0.1:8000/api'

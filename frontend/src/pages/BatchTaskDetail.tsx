@@ -21,8 +21,6 @@ import {
   Collapse,
   Empty,
   Checkbox,
-  Row,
-  Col,
   Progress,
   Alert,
 } from 'antd';
@@ -39,7 +37,6 @@ import lessonPlanApi from '@/services/lessonPlanApi';
 import GeneratedContent from '@/components/generator/GeneratedContent';
 
 const { Title, Text } = Typography;
-const { Panel } = Collapse;
 
 const BatchTaskDetail: React.FC = () => {
   const { taskId } = useParams<{ taskId: string }>();

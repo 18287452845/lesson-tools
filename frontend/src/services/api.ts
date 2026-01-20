@@ -6,9 +6,7 @@ import type {
   TemplateInfo,
   LessonPlanInput,
   LessonPlanResponse,
-  GeneratedContent,
   DocumentUploadResponse,
-  ParsedSection,
   SectionEditRequest,
   AIEnhanceRequest,
   TemplateHtmlResponse,
@@ -31,6 +29,7 @@ import type {
   GradeCreateRequest,
   GradeUpdateRequest,
   GradeListResponse,
+  OnlyOfficeEditorConfig,
 } from '@/types';
 
 const api = axios.create({
@@ -578,6 +577,14 @@ export const templateEditorApi = {
    */
   getFields: async (templateId: string): Promise<{ fields: FieldConfig[] }> => {
     const response = await api.get(`/templates/${templateId}/fields`);
+    return response.data;
+  },
+
+  /**
+   * Get OnlyOffice editor configuration
+   */
+  getOnlyOfficeConfig: async (templateId: string): Promise<OnlyOfficeEditorConfig> => {
+    const response = await api.get(`/templates/${templateId}/onlyoffice/config`);
     return response.data;
   },
 };

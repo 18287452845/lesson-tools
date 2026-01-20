@@ -7,7 +7,6 @@ import React, { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Layout,
-  Card,
   Button,
   Space,
   message,
@@ -20,7 +19,6 @@ import {
   Form,
   Input,
   Switch,
-  Badge,
 } from 'antd'
 import {
   SaveOutlined,
@@ -42,10 +40,12 @@ import JinjaInsertModal from '../components/Editor/JinjaInsertModal'
 import PreviewPanel from '../components/Editor/PreviewPanel'
 import VersionHistory from '../components/Editor/VersionHistory'
 import FieldMappingPanel from '../components/Editor/FieldMappingPanel'
+import OnlyOfficeEditor from '../components/Editor/OnlyOfficeEditor'
 import type { Editor } from '@tiptap/react'
 import axios from 'axios'
 
-const { Header, Content, Sider } = Layout
+const { Header, Content } = Layout
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
 
 const TemplateEditor: React.FC = () => {
   const { templateId } = useParams<{ templateId: string }>()
@@ -78,11 +78,12 @@ const TemplateEditor: React.FC = () => {
   const [versionHistoryVisible, setVersionHistoryVisible] = useState(false)
   const [realTimePreviewVisible, setRealTimePreviewVisible] = useState(false)
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true)
+  const [editorMode, setEditorMode] = useState<'onlyoffice' | 'html'>('onlyoffice')
   const [previewForm] = Form.useForm()
   const editorRef = useRef<Editor | null>(null)
 
   // 自动保存功能
-  const { saveNow, cancelAutoSave } = useAutoSave({
+  useAutoSave({
     enabled: autoSaveEnabled,
     delay: 3000, // 3秒后自动保存
     onSave: saveTemplate,
@@ -181,15 +182,16 @@ const TemplateEditor: React.FC = () => {
   const handleExportHTML = async () => {
     try {
       const response = await axios.post(
-        `http://127.0.0.1:8000/api/templates/${templateId}/export/html`,
+        `${API_BASE}/templates/${templateId}/export/html`,
         { html: htmlContent },
         { headers: { 'Content-Type': 'application/json' } }
       )
 
-      const { filename, download_url } = response.data
+      const { download_url } = response.data
 
       // 下载文件
-      window.open(`http://127.0.0.1:8000${download_url}`, '_blank')
+      const base = API_BASE === '/api' ? '' : API_BASE.replace('/api', '')
+      window.open(`${base}${download_url}`, '_blank')
       message.success('导出成功！')
     } catch (err: any) {
       message.error('导出失败: ' + err.message)
@@ -201,6 +203,16 @@ const TemplateEditor: React.FC = () => {
     if (templateId) {
       await loadTemplate(templateId)
       message.success('模板已重新加载')
+    }
+  }
+
+  const handleReloadTemplate = async () => {
+    if (!templateId) return
+    try {
+      await loadTemplate(templateId)
+      message.success('已同步最新模板内容')
+    } catch (err: any) {
+      message.error(err.message || '同步失败')
     }
   }
 
@@ -268,25 +280,87 @@ const TemplateEditor: React.FC = () => {
             </h2>
           </Space>
 
-          <Space>
-            {/* 自动保存开关 */}
-            <Space>
-              <span style={{ fontSize: 12, color: '#666' }}>自动保存:</span>
-              <Switch
-                checked={autoSaveEnabled}
-                onChange={setAutoSaveEnabled}
-                checkedChildren="开"
-                unCheckedChildren="关"
-              />
-            </Space>
+          <Space size="middle">
+            <Button.Group>
+              <Button
+                type={editorMode === 'onlyoffice' ? 'primary' : 'default'}
+                onClick={() => setEditorMode('onlyoffice')}
+              >
+                OnlyOffice 编辑
+              </Button>
+              <Button
+                type={editorMode === 'html' ? 'primary' : 'default'}
+                onClick={() => setEditorMode('html')}
+              >
+                HTML 模式
+              </Button>
+            </Button.Group>
 
             <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => setJinjaInsertVisible(true)}
+              icon={<CloudSyncOutlined />}
+              onClick={handleReloadTemplate}
             >
-              插入 Jinja2
+              同步模板
             </Button>
+
+            {editorMode === 'html' && (
+              <>
+                {/* 自动保存开关 */}
+                <Space>
+                  <span style={{ fontSize: 12, color: '#666' }}>自动保存:</span>
+                  <Switch
+                    checked={autoSaveEnabled}
+                    onChange={setAutoSaveEnabled}
+                    checkedChildren="开"
+                    unCheckedChildren="关"
+                  />
+                </Space>
+
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() => setJinjaInsertVisible(true)}
+                >
+                  插入 Jinja2
+                </Button>
+                <Button
+                  icon={<CheckCircleOutlined />}
+                  onClick={handleValidate}
+                >
+                  验证语法
+                </Button>
+                <Button
+                  icon={<EyeOutlined />}
+                  onClick={handlePreview}
+                  loading={isPreviewLoading}
+                >
+                  预览
+                </Button>
+                <Button
+                  icon={realTimePreviewVisible ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                  type={realTimePreviewVisible ? 'primary' : 'default'}
+                  onClick={() => setRealTimePreviewVisible(!realTimePreviewVisible)}
+                >
+                  {realTimePreviewVisible ? '关闭' : '打开'}实时预览
+                </Button>
+                <Button
+                  icon={<DownloadOutlined />}
+                  onClick={handleExportHTML}
+                >
+                  导出 HTML
+                </Button>
+                <Button
+                  type="primary"
+                  icon={<SaveOutlined />}
+                  onClick={handleSave}
+                  loading={isSaving}
+                  disabled={!isDirty}
+                >
+                  保存
+                </Button>
+              </>
+            )}
+
             <Button
               icon={<InfoCircleOutlined />}
               onClick={() => setMetadataVisible(true)}
@@ -300,45 +374,10 @@ const TemplateEditor: React.FC = () => {
               字段配置
             </Button>
             <Button
-              icon={<CheckCircleOutlined />}
-              onClick={handleValidate}
-            >
-              验证语法
-            </Button>
-            <Button
-              icon={<EyeOutlined />}
-              onClick={handlePreview}
-              loading={isPreviewLoading}
-            >
-              预览
-            </Button>
-            <Button
-              icon={realTimePreviewVisible ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-              type={realTimePreviewVisible ? 'primary' : 'default'}
-              onClick={() => setRealTimePreviewVisible(!realTimePreviewVisible)}
-            >
-              {realTimePreviewVisible ? '关闭' : '打开'}实时预览
-            </Button>
-            <Button
               icon={<HistoryOutlined />}
               onClick={() => setVersionHistoryVisible(true)}
             >
               版本历史
-            </Button>
-            <Button
-              icon={<DownloadOutlined />}
-              onClick={handleExportHTML}
-            >
-              导出 HTML
-            </Button>
-            <Button
-              type="primary"
-              icon={<SaveOutlined />}
-              onClick={handleSave}
-              loading={isSaving}
-              disabled={!isDirty}
-            >
-              保存
             </Button>
           </Space>
         </div>
@@ -346,33 +385,53 @@ const TemplateEditor: React.FC = () => {
 
       {/* 内容区域 */}
       <Content style={{ padding: '24px' }}>
-        {/* 转换消息/警告 */}
-        {messages.length > 0 && (
-          <Alert
-            message="转换提示"
-            description={
-              <ul style={{ margin: 0, paddingLeft: 20 }}>
-                {messages.map((msg, idx) => (
-                  <li key={idx}>{msg}</li>
-                ))}
-              </ul>
-            }
-            type="info"
-            closable
-            style={{ marginBottom: 16 }}
-          />
-        )}
+        {editorMode === 'onlyoffice' ? (
+          <>
+            <Alert
+              message="OnlyOffice 模式（保持原始排版样式）"
+              description="在工具栏中点击保存后，文档将通过回调写回模板文件并同步到版本历史。"
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+            {templateId && (
+              <OnlyOfficeEditor
+                templateId={templateId}
+                onRefresh={handleReloadTemplate}
+              />
+            )}
+          </>
+        ) : (
+          <>
+            {/* 转换消息/警告 */}
+            {messages.length > 0 && (
+              <Alert
+                message="转换提示"
+                description={
+                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                    {messages.map((msg, idx) => (
+                      <li key={idx}>{msg}</li>
+                    ))}
+                  </ul>
+                }
+                type="info"
+                closable
+                style={{ marginBottom: 16 }}
+              />
+            )}
 
-        {/* 编辑器 */}
-        <TipTapEditor
-          content={htmlContent}
-          onChange={updateHtml}
-          editable={true}
-          onInsertJinjaClick={() => setJinjaInsertVisible(true)}
-          onEditorReady={(editor) => {
-            editorRef.current = editor
-          }}
-        />
+            {/* 编辑器 */}
+            <TipTapEditor
+              content={htmlContent}
+              onChange={updateHtml}
+              editable={true}
+              onInsertJinjaClick={() => setJinjaInsertVisible(true)}
+              onEditorReady={(editor) => {
+                editorRef.current = editor
+              }}
+            />
+          </>
+        )}
       </Content>
 
       {/* Jinja2 插入弹窗 */}
@@ -454,20 +513,21 @@ const TemplateEditor: React.FC = () => {
           ))}
 
           {previewHtml && (
-            <>
-              <Descriptions.Item label="预览结果" />
-              <div
-                style={{
-                  border: '1px solid #d9d9d9',
-                  borderRadius: 4,
-                  padding: 16,
-                  marginTop: 16,
-                  maxHeight: 400,
-                  overflow: 'auto',
-                }}
-                dangerouslySetInnerHTML={{ __html: previewHtml }}
-              />
-            </>
+            <Descriptions column={1} bordered size="small">
+              <Descriptions.Item label="预览结果">
+                <div
+                  style={{
+                    border: '1px solid #d9d9d9',
+                    borderRadius: 4,
+                    padding: 16,
+                    marginTop: 8,
+                    maxHeight: 400,
+                    overflow: 'auto',
+                  }}
+                  dangerouslySetInnerHTML={{ __html: previewHtml }}
+                />
+              </Descriptions.Item>
+            </Descriptions>
           )}
         </Form>
       </Modal>

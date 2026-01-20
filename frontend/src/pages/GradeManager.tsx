@@ -25,7 +25,7 @@ import {
   DeleteOutlined,
   InfoCircleOutlined,
 } from '@ant-design/icons';
-import type { GradeInfo, GradeWithUsageStats, GradeCreateRequest, GradeUpdateRequest } from '@/types';
+import type { GradeInfo, GradeWithUsageStats } from '@/types';
 import { gradeApi } from '@/services/api';
 
 const { Title, Text } = Typography;
@@ -82,7 +82,7 @@ const GradeManager: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
+  const handleDelete = async (id: string) => {
     try {
       await gradeApi.deleteGrade(id);
       message.success('删除成功');
@@ -188,7 +188,7 @@ const GradeManager: React.FC = () => {
             <Popconfirm
               title="确定删除？"
               description="如果该年级正在被使用，将无法删除"
-              onConfirm={() => handleDelete(record.id, record.name)}
+              onConfirm={() => handleDelete(record.id)}
               okText="确定"
               cancelText="取消"
             >

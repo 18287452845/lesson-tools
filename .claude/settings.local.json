@@ -91,7 +91,8 @@
       "Bash(find:*)",
       "Bash(tee:*)",
       "Bash(grep:*)",
-      "Bash(ss:*)"
+      "Bash(ss:*)",
+      "mcp__bingcn__bing_search"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -790,9 +790,9 @@ class AIGenerator:
                                 brace_count += 1
                             elif char == '}':
                                 brace_count -= 1
-                if brace_count == 0:
-                    content = content[start_idx:i+1]
-                    break
+                            if brace_count == 0:
+                                content = content[start_idx:i + 1]
+                                break
 
         # Parse JSON with multiple fallback attempts
         attempts = [

@@ -29,9 +29,7 @@ import {
   Space,
   Tag,
   Typography,
-  Modal,
   Radio,
-  Divider,
   Alert,
   Checkbox,
   Row,
@@ -42,14 +40,9 @@ import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   ExclamationCircleOutlined,
-  HistoryOutlined,
   EditOutlined,
-  CalendarOutlined,
   BookOutlined,
   PlusOutlined,
-  DeleteOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
 } from '@ant-design/icons';
 import type {
   ChapterInfo,
@@ -61,7 +54,6 @@ import type {
   CourseChapterTemplate,
   ClassInfo,
   TextbookInfo,
-  FieldConfig,
 } from '@/types';
 import {
   SUBJECT_OPTIONS,
@@ -87,9 +79,6 @@ const BatchGenerate: React.FC = () => {
   // Selected cached template ID (for existing mode)
   const [selectedCachedTemplateId, setSelectedCachedTemplateId] = useState<string | undefined>();
 
-  // Selected template's field config (for dynamic field display)
-  const [selectedTemplateFields, setSelectedTemplateFields] = useState<FieldConfig[]>([]);
-
   // Task type: 'normal' (generate and export ZIP) or 'draft' (save as drafts only)
   const [taskType, setTaskType] = useState<'normal' | 'draft'>('normal');
 
@@ -107,7 +96,6 @@ const BatchGenerate: React.FC = () => {
   // Step 2: Chapters
   const [chapters, setChapters] = useState<ChapterInfo[]>([]);
   const [splittingChapters, setSplittingChapters] = useState(false);
-  const [totalLessons, setTotalLessons] = useState(0);
 
   // Streaming state
   const [streamProgress, setStreamProgress] = useState({ current: 0, total: 0, message: '' });
@@ -182,29 +170,6 @@ const BatchGenerate: React.FC = () => {
     }
   };
 
-  // Load template fields when template is selected
-  const loadTemplateFields = async (templateId: string) => {
-    try {
-      const template = templates.find((t) => t.id === templateId);
-      if (template && template.fields_config) {
-        setSelectedTemplateFields(template.fields_config);
-      } else {
-        // If not in cache, fetch from API
-        const data = await templateApi.getTemplate(templateId);
-        setSelectedTemplateFields(data.fields_config || []);
-      }
-    } catch (error) {
-      console.error('Failed to load template fields:', error);
-      setSelectedTemplateFields([]);
-    }
-  };
-
-  // Check if a dynamic field should be shown based on template
-  const shouldShowDynamicField = (fieldName: string): boolean => {
-    if (!selectedTemplateFields.length) return false;
-    return selectedTemplateFields.some((f) => f.name === fieldName);
-  };
-
   // Get chapter mode based on current state
   const getChapterMode = (): 'textbook' | 'cached' | 'manual' | 'ai' => {
     if (selectedTextbookId && chapters.length > 0) return 'textbook';
@@ -254,11 +219,9 @@ const BatchGenerate: React.FC = () => {
           5
         );
         setChapters([]);
-        setTotalLessons(0);
       } else {
         // Cached chapters count is correct, use it
         setChapters(selected.chapters);
-        setTotalLessons(selected.chapters.length);
       }
 
       if (currentTemplateId) {
@@ -274,7 +237,6 @@ const BatchGenerate: React.FC = () => {
     if (!textbookId) {
       setSelectedTextbookId(undefined);
       setChapters([]);
-      setTotalLessons(0);
       form.setFieldValue('chapters_input', '');
       return;
     }
@@ -331,7 +293,6 @@ const BatchGenerate: React.FC = () => {
 
         // Don't set chapters yet - let user click "下一步" to generate with proper count
         setChapters([]);
-        setTotalLessons(0);
       } else {
         // Chapter count matches - convert and use directly
         const chapters: ChapterInfo[] = textbook.chapters.map((ch, idx) => ({
@@ -342,7 +303,6 @@ const BatchGenerate: React.FC = () => {
         }));
 
         setChapters(chapters);
-        setTotalLessons(chapters.length);
 
         message.success(`已加载 ${textbook.name} 的 ${chapters.length} 个章节`);
       }
@@ -367,7 +327,6 @@ const BatchGenerate: React.FC = () => {
           key_concepts: [],
         }));
         setChapters(updatedChapters);
-        setTotalLessons(updatedChapters.length);
       }
 
       setSavedFormValues(values);
@@ -392,7 +351,6 @@ const BatchGenerate: React.FC = () => {
       }));
 
       setChapters(parsedChapters);
-      setTotalLessons(parsedChapters.length);
       setSavedFormValues(values);
       setCurrentStep(1);
       message.success(`成功解析 ${parsedChapters.length} 个章节`);
@@ -431,7 +389,6 @@ const BatchGenerate: React.FC = () => {
         // onComplete callback
         (response: ChapterSplitResponse) => {
           setChapters(response.chapters);
-          setTotalLessons(response.total_lessons);
           setCurrentStep(1);
           const numDocs = Math.ceil(response.total_lessons / 2);
           message.success(`成功生成 ${response.total_lessons} 份教案（${numDocs} 个文档）`);
@@ -537,7 +494,6 @@ const BatchGenerate: React.FC = () => {
       key_concepts: [],
     };
     setChapters([...chapters, newChapter]);
-    setTotalLessons(chapters.length + 1);
     message.success('已添加新章节');
   };
 
@@ -555,7 +511,6 @@ const BatchGenerate: React.FC = () => {
       lesson_number: idx + 1,
     }));
     setChapters(renumberedChapters);
-    setTotalLessons(renumberedChapters.length);
     message.success('已删除章节');
   };
 
@@ -598,7 +553,7 @@ const BatchGenerate: React.FC = () => {
       title: '课题',
       dataIndex: 'topic',
       key: 'topic',
-      render: (text: string, record: ChapterInfo, index: number) => (
+      render: (text: string, _record: ChapterInfo, index: number) => (
         <Input
           value={text}
           placeholder="请输入课题名称"
@@ -614,7 +569,7 @@ const BatchGenerate: React.FC = () => {
       title: '内容概述',
       dataIndex: 'content_summary',
       key: 'content_summary',
-      render: (text: string, record: ChapterInfo, index: number) => (
+      render: (text: string, _record: ChapterInfo, index: number) => (
         <TextArea
           value={text}
           rows={2}
@@ -631,7 +586,7 @@ const BatchGenerate: React.FC = () => {
       title: '核心概念',
       dataIndex: 'key_concepts',
       key: 'key_concepts',
-      render: (concepts: string[] = [], record: ChapterInfo, index: number) => (
+      render: (concepts: string[] = [], _record: ChapterInfo, index: number) => (
         <Select
           mode="tags"
           value={concepts}
@@ -650,7 +605,7 @@ const BatchGenerate: React.FC = () => {
       title: '操作',
       key: 'actions',
       width: 150,
-      render: (_, record: ChapterInfo, index: number) => (
+      render: (_: unknown, _record: ChapterInfo, index: number) => (
         <Space>
           <Button
             type="text"
@@ -788,7 +743,6 @@ const BatchGenerate: React.FC = () => {
                           } else {
                             setSelectedCachedTemplateId(undefined);
                             setChapters([]);
-                            setTotalLessons(0);
                           }
                         }}
                       />
@@ -807,7 +761,7 @@ const BatchGenerate: React.FC = () => {
                     <Input
                       placeholder="例如：Java程序设计"
                       size="large"
-                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -825,7 +779,7 @@ const BatchGenerate: React.FC = () => {
                       size="large"
                       options={SUBJECT_OPTIONS.map((s) => ({ label: s, value: s }))}
                       showSearch
-                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -841,7 +795,7 @@ const BatchGenerate: React.FC = () => {
                       size="large"
                       options={GRADE_OPTIONS.map((g) => ({ label: g, value: g }))}
                       showSearch
-                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -880,7 +834,7 @@ const BatchGenerate: React.FC = () => {
                       allowClear
                       value={selectedTextbookId}
                       onChange={handleSelectTextbook}
-                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                       filterOption={(input, option) =>
                         (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                       }
@@ -929,7 +883,7 @@ const BatchGenerate: React.FC = () => {
                       min={2}
                       max={200}
                       step={2}
-                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                       addonAfter="课时"
                       size="large"
                       style={{ width: '100%' }}
@@ -946,7 +900,7 @@ const BatchGenerate: React.FC = () => {
                     <InputNumber
                       min={1}
                       max={4}
-                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                       addonAfter="课时"
                       size="large"
                       style={{ width: '100%' }}
@@ -964,7 +918,7 @@ const BatchGenerate: React.FC = () => {
                     <InputNumber
                       min={1}
                       max={20}
-                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                       addonAfter="周"
                       size="large"
                       style={{ width: '100%' }}
@@ -1007,7 +961,7 @@ const BatchGenerate: React.FC = () => {
                       mode="multiple"
                       placeholder="选择班级（可多选）"
                       size="large"
-                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                       options={classes.map((c) => ({ label: c.name, value: c.id }))}
                       allowClear
                       showSearch
@@ -1027,7 +981,7 @@ const BatchGenerate: React.FC = () => {
                     <Input
                       placeholder="例如：教学楼301教室"
                       size="large"
-                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -1040,7 +994,7 @@ const BatchGenerate: React.FC = () => {
                     <Input
                       placeholder="例如：《Python程序设计基础》第3版"
                       size="large"
-                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -1055,7 +1009,7 @@ const BatchGenerate: React.FC = () => {
                     <Input
                       placeholder="留空由AI生成，或填写：慕课平台、教学视频链接等"
                       size="large"
-                      disabled={selectedCachedTemplateId && chapters.length > 0}
+                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>

@@ -25,7 +25,7 @@ import {
   DeleteOutlined,
   InfoCircleOutlined,
 } from '@ant-design/icons';
-import type { SubjectInfo, SubjectWithUsageStats, SubjectCreateRequest, SubjectUpdateRequest } from '@/types';
+import type { SubjectInfo, SubjectWithUsageStats } from '@/types';
 import { subjectApi } from '@/services/api';
 
 const { Title, Text } = Typography;
@@ -82,7 +82,7 @@ const SubjectManager: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
+  const handleDelete = async (id: string) => {
     try {
       await subjectApi.deleteSubject(id);
       message.success('删除成功');
@@ -176,7 +176,7 @@ const SubjectManager: React.FC = () => {
             <Popconfirm
               title="确定删除？"
               description="如果该学科正在被使用，将无法删除"
-              onConfirm={() => handleDelete(record.id, record.name)}
+              onConfirm={() => handleDelete(record.id)}
               okText="确定"
               cancelText="取消"
             >

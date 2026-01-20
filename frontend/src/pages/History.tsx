@@ -12,7 +12,7 @@ import {
   Card,
   message,
 } from 'antd';
-import { ArrowLeftOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, EyeOutlined } from '@ant-design/icons';
 import { generateApi } from '@/services/api';
 
 const { Title } = Typography;
@@ -45,16 +45,6 @@ function History() {
       message.error('获取历史记录失败');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    try {
-      await generateApi.deleteLessonPlan(id);
-      message.success('删除成功');
-      fetchHistory();
-    } catch (err) {
-      message.error('删除失败');
     }
   };
 

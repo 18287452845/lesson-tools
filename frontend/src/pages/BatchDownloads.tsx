@@ -15,7 +15,6 @@ import {
   Tag,
   Space,
   message,
-  Modal,
   Progress,
   Spin,
   Typography,
@@ -40,7 +39,6 @@ const BatchDownloads: React.FC = () => {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<BatchTask[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
   // Load tasks on mount
   useEffect(() => {
@@ -56,18 +54,6 @@ const BatchDownloads: React.FC = () => {
       message.error(error.message || '加载任务列表失败');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const refreshTasks = async () => {
-    setRefreshing(true);
-    try {
-      const response = await batchApi.listBatchTasks();
-      setTasks(response.tasks);
-    } catch (error) {
-      console.error('Auto-refresh failed:', error);
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -281,9 +267,9 @@ const BatchDownloads: React.FC = () => {
 
           <Space>
             <Button
-              icon={<ReloadOutlined spin={refreshing} />}
+              icon={<ReloadOutlined spin={loading} />}
               onClick={loadTasks}
-              loading={refreshing}
+              loading={loading}
             >
               刷新
             </Button>

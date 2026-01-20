@@ -31,6 +31,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 
 const { Title, Text, Paragraph } = Typography;
 const { Password } = Input;
+type ProviderId = 'deepseek' | 'anthropic';
 
 function SettingsPage() {
   const navigate = useNavigate();
@@ -47,7 +48,7 @@ function SettingsPage() {
   } = useSettingsStore();
 
   const [form] = Form.useForm();
-  const [selectedProvider, setSelectedProvider] = useState<'deepseek' | 'anthropic'>('deepseek');
+  const [selectedProvider, setSelectedProvider] = useState<ProviderId>('deepseek');
   const [selectedModel, setSelectedModel] = useState<string>('deepseek-chat');
 
   useEffect(() => {
@@ -84,6 +85,10 @@ function SettingsPage() {
   };
 
   const currentProviderInfo = getProviderInfo(selectedProvider);
+  const providerKeys: Record<ProviderId, string | undefined> = {
+    deepseek: savedApiKeys.deepseek,
+    anthropic: savedApiKeys.anthropic,
+  };
 
   return (
     <div style={{ maxWidth: 800, margin: '0 auto' }}>
@@ -158,13 +163,13 @@ function SettingsPage() {
               <Radio.Group
                 value={selectedProvider}
                 onChange={(e) => {
-                  const provider = e.target.value;
+                  const provider = e.target.value as ProviderId;
                   setSelectedProvider(provider);
                   const providerInfo = getProviderInfo(provider);
                   if (providerInfo) {
                     setSelectedModel(providerInfo.default_model);
                   }
-                  form.setFieldValue('api_key', savedApiKeys[provider] || '');
+                  form.setFieldValue('api_key', providerKeys[provider] || '');
                 }}
               >
                 <Space direction="vertical">
@@ -194,7 +199,7 @@ function SettingsPage() {
               <Select
                 value={selectedModel}
                 onChange={setSelectedModel}
-                options={currentProviderInfo?.models.map((m) => ({
+                options={(currentProviderInfo?.models ?? []).map((m) => ({
                   label: m.name,
                   value: m.id,
                 }))}
@@ -283,9 +288,10 @@ function SettingsPage() {
                     size="small"
                     type="link"
                     onClick={() => {
-                      setSelectedProvider(provider.id as 'deepseek' | 'anthropic');
+                      const targetProvider = provider.id as ProviderId;
+                      setSelectedProvider(targetProvider);
                       setSelectedModel(provider.default_model);
-                      form.setFieldValue('api_key', savedApiKeys[provider.id] || '');
+                      form.setFieldValue('api_key', providerKeys[targetProvider] || '');
                     }}
                   >
                     切换到 {provider.name}

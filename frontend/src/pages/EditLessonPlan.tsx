@@ -11,7 +11,6 @@ import {
   Space,
   Alert,
   List,
-  Tag,
   Modal,
   Input,
   Select,
@@ -33,7 +32,6 @@ import {
 import { useEditorStore } from '@/stores/editorStore';
 import { downloadBlob } from '@/services/fileService';
 import TipTapEditor from '@/components/Editor/TipTapEditor';
-import EditorToolbar from '@/components/Editor/EditorToolbar';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;

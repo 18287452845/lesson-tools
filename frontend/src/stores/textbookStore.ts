@@ -6,9 +6,7 @@ import type {
   TextbookInfo,
   TextbookCreateRequest,
   TextbookUpdateRequest,
-  TextbookChapterInfo,
   TextbookChapterCreateRequest,
-  TextbookChapterBatchCreateRequest,
   TextbookChapterGenerateRequest,
   TextbookChapterGenerateResponse,
 } from '@/types';

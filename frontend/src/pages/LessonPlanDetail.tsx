@@ -20,8 +20,6 @@ import {
   ArrowLeftOutlined,
   DownloadOutlined,
   DeleteOutlined,
-  EditOutlined,
-  EyeOutlined,
 } from '@ant-design/icons';
 import { generateApi } from '@/services/api';
 

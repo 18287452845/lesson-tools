@@ -25,7 +25,6 @@ import {
   Tooltip,
 } from 'antd';
 import {
-  FileTextOutlined,
   DeleteOutlined,
   ReloadOutlined,
   CloudUploadOutlined,

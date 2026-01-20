@@ -233,7 +233,7 @@ const TextbookManager: React.FC = () => {
 
   const handleSubmit = async () => {
     try {
-      const values = await form.validateFields();
+      const values = (await form.validateFields()) as TextbookCreateRequest;
 
       if (editingTextbook) {
         await updateTextbook(editingTextbook.id, values);

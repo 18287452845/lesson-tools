@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     upload_dir: Path = storage_dir / "uploads"
     output_dir: Path = storage_dir / "outputs"
     database_path: str = str(storage_dir / "database.db")
+    public_base_url: str = os.getenv("PUBLIC_BASE_URL", "")
+
+    # OnlyOffice Document Server
+    onlyoffice_docs_url: str = os.getenv("ONLYOFFICE_DOCS_URL", "")
+    onlyoffice_jwt_secret: Optional[str] = os.getenv("ONLYOFFICE_JWT_SECRET")
 
     # AI Settings
     ai_max_tokens: int = 4096

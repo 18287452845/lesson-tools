@@ -4,9 +4,11 @@ Template management API endpoints.
 import os
 import shutil
 import json
+import tempfile
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, Body
+from urllib.request import urlopen
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, Body, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -374,6 +376,179 @@ async def update_template(
 
 
 # ============================================================================
+# OnlyOffice Integration
+# ============================================================================
+
+class OnlyOfficeCallbackRequest(BaseModel):
+    status: int
+    url: Optional[str] = None
+    changesurl: Optional[str] = None
+    key: Optional[str] = None
+    forcesavetype: Optional[int] = None
+
+
+def _build_base_url(request: Request) -> str:
+    """Return public base URL for callbacks and file access."""
+    if settings.public_base_url:
+        return settings.public_base_url.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+@router.get("/{template_id}/onlyoffice/config")
+async def get_onlyoffice_config(template_id: str, request: Request):
+    """
+    Return OnlyOffice editor configuration for the given template.
+    """
+    if not settings.onlyoffice_docs_url:
+        raise HTTPException(
+            status_code=503,
+            detail="OnlyOffice Document Server URL not configured"
+        )
+
+    row = await db.fetch_one(
+        "SELECT file_path, name FROM templates WHERE id = ?",
+        (template_id,),
+    )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    file_path = row["file_path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Template file not found")
+
+    base_url = _build_base_url(request)
+    file_stat = Path(file_path).stat()
+
+    download_url = f"{base_url}{settings.api_prefix}/templates/{template_id}/download"
+    callback_url = f"{base_url}{settings.api_prefix}/templates/{template_id}/onlyoffice/callback"
+    document_server = settings.onlyoffice_docs_url.rstrip("/")
+
+    config = {
+        "documentType": "word",
+        "document": {
+            "fileType": "docx",
+            "key": f"{template_id}-{int(file_stat.st_mtime)}",
+            "title": f"{row['name']}.docx",
+            "url": download_url,
+            "permissions": {
+                "edit": True,
+                "download": True,
+                "print": True,
+            },
+        },
+        "editorConfig": {
+            "lang": "zh-CN",
+            "callbackUrl": callback_url,
+            "mode": "edit",
+            "user": {
+                "id": "template-editor",
+                "name": "模板编辑器",
+            },
+        },
+    }
+
+    # Optional JWT protection
+    token = None
+    if settings.onlyoffice_jwt_secret:
+        try:
+            import jwt
+
+            token = jwt.encode(
+                {"payload": config},
+                settings.onlyoffice_jwt_secret,
+                algorithm="HS256",
+            )
+        except ImportError:
+            # JWT library not installed; skip token generation
+            token = None
+
+    return {
+        "config": config,
+        "token": token,
+        "documentServerUrl": document_server,
+        "apiJsUrl": f"{document_server}/web-apps/apps/api/documents/api.js",
+    }
+
+
+@router.post("/{template_id}/onlyoffice/callback")
+async def onlyoffice_callback(template_id: str, payload: OnlyOfficeCallbackRequest):
+    """
+    Handle OnlyOffice Document Server save callbacks.
+    """
+    row = await db.fetch_one(
+        "SELECT file_path FROM templates WHERE id = ?",
+        (template_id,),
+    )
+
+    if not row:
+        return {"error": 1}
+
+    file_path = row["file_path"]
+    status = payload.status
+
+    # Status codes 2, 3, 6, 7 mean the document must be saved
+    if status in (2, 3, 6, 7):
+        if not payload.url:
+            return {"error": 1}
+
+        temp_fd, temp_path = tempfile.mkstemp(suffix=".docx")
+        backup_path = file_path + ".backup"
+
+        try:
+            with urlopen(payload.url) as remote, os.fdopen(temp_fd, "wb") as tmp_file:
+                shutil.copyfileobj(remote, tmp_file)
+
+            # Backup current file
+            if os.path.exists(file_path):
+                shutil.copy2(file_path, backup_path)
+
+            # Replace with updated file
+            shutil.copy2(temp_path, file_path)
+
+            # Remove backup after successful save
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+
+            # Persist version history as HTML snapshot (best effort)
+            try:
+                from ..services.docx_converter import convert_docx_to_html
+
+                result = convert_docx_to_html(file_path)
+                await save_version(
+                    template_id=template_id,
+                    content=result.get("html", ""),
+                    user="OnlyOffice",
+                    comment="OnlyOffice 保存",
+                )
+            except Exception:
+                # Conversion is optional; continue even if it fails
+                pass
+
+            await db.execute(
+                "UPDATE templates SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (template_id,),
+                commit=True,
+            )
+
+            return {"error": 0}
+        except Exception:
+            # Restore from backup if something goes wrong
+            if os.path.exists(backup_path):
+                shutil.copy2(backup_path, file_path)
+                os.remove(backup_path)
+            return {"error": 1}
+        finally:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+    # Other statuses: acknowledge without changes
+    return {"error": 0}
+
+
+# ============================================================================
 # Template Editor API Endpoints
 # ============================================================================
 
@@ -410,24 +585,14 @@ async def get_template_html(template_id: str):
         raise HTTPException(status_code=404, detail="Template file not found")
 
     try:
-        import mammoth
+        from ..services.docx_converter import convert_docx_to_html
 
-        with open(file_path, "rb") as docx_file:
-            result = mammoth.convert_to_html(docx_file)
-            html = result.value
-            messages = [str(msg) for msg in result.messages]
-
-        # Extract basic metadata from docx
-        from docx import Document
-        doc = Document(file_path)
-        metadata = {
-            "title": doc.core_properties.title or row["name"],
-            "author": doc.core_properties.author or "",
-            "created": str(doc.core_properties.created) if doc.core_properties.created else "",
-            "modified": str(doc.core_properties.modified) if doc.core_properties.modified else "",
-            "paragraphs_count": len(doc.paragraphs),
-            "tables_count": len(doc.tables),
-        }
+        result = convert_docx_to_html(file_path)
+        html = result["html"]
+        messages = result.get("messages", [])
+        metadata = result.get("metadata", {})
+        if "title" not in metadata or not metadata["title"]:
+            metadata["title"] = row["name"]
 
         return {
             "html": html,
@@ -504,8 +669,7 @@ async def save_template_html(template_id: str, request: SaveHtmlRequest = Body(.
         raise HTTPException(status_code=404, detail="Template file not found")
 
     try:
-        from htmldocx import HtmlToDocx
-        from docx import Document
+        from ..services.docx_converter import convert_html_to_docx
 
         # 保存版本记录（在修改DOCX之前）
         version_comment = "保存更新"
@@ -521,26 +685,24 @@ async def save_template_html(template_id: str, request: SaveHtmlRequest = Body(.
             comment=version_comment
         )
 
-        # Create a new document
-        doc = Document()
-
-        # Convert HTML to DOCX
-        parser = HtmlToDocx()
-        parser.add_html_to_document(request.html, doc)
-
-        # Update metadata if provided
-        if request.metadata:
-            if "title" in request.metadata:
-                doc.core_properties.title = request.metadata["title"]
-            if "author" in request.metadata:
-                doc.core_properties.author = request.metadata["author"]
-
         # Save to the same file (backup original first)
         backup_path = file_path + ".backup"
         shutil.copy2(file_path, backup_path)
 
         try:
-            doc.save(file_path)
+            convert_html_to_docx(
+                html=request.html,
+                output_path=file_path,
+                original_docx_path=file_path,
+            )
+            if request.metadata:
+                from docx import Document
+                doc = Document(file_path)
+                if "title" in request.metadata:
+                    doc.core_properties.title = request.metadata["title"]
+                if "author" in request.metadata:
+                    doc.core_properties.author = request.metadata["author"]
+                doc.save(file_path)
             # If successful, remove backup
             os.remove(backup_path)
         except Exception as e:
@@ -698,8 +860,7 @@ async def restore_template_version(template_id: str, version_id: str):
             )
             if row and os.path.exists(row["file_path"]):
                 try:
-                    from htmldocx import HtmlToDocx
-                    from docx import Document
+                    from ..services.docx_converter import convert_html_to_docx
 
                     # 备份原文件
                     backup_path = row["file_path"] + ".backup"
@@ -707,10 +868,11 @@ async def restore_template_version(template_id: str, version_id: str):
 
                     try:
                         # 转换HTML为DOCX
-                        doc = Document()
-                        parser = HtmlToDocx()
-                        parser.add_html_to_document(content, doc)
-                        doc.save(row["file_path"])
+                        convert_html_to_docx(
+                            html=content,
+                            output_path=row["file_path"],
+                            original_docx_path=row["file_path"],
+                        )
                         os.remove(backup_path)
                     except Exception:
                         # 恢复备份
@@ -831,4 +993,3 @@ async def export_template_html(template_id: str, request: ExportHtmlRequest = Bo
             status_code=500,
             detail=f"导出HTML失败: {str(e)}"
         )
-
