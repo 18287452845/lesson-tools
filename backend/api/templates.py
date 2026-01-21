@@ -415,6 +415,8 @@ async def update_template(
 # OnlyOffice Integration
 # ============================================================================
 
+ONLYOFFICE_ASSET_VERSION = "20260121-fix5"
+
 class OnlyOfficeCallbackRequest(BaseModel):
     status: int
     url: Optional[str] = None
@@ -511,7 +513,7 @@ async def get_onlyoffice_config(template_id: str, request: Request):
         "config": config,
         "token": token,
         "documentServerUrl": document_server,
-        "apiJsUrl": f"{document_server}/web-apps/apps/api/documents/api.js",
+        "apiJsUrl": f"{document_server}/web-apps/apps/api/documents/api.js?v={ONLYOFFICE_ASSET_VERSION}",
     }
 
 
