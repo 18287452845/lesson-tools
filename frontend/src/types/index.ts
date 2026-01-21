@@ -669,6 +669,8 @@ export interface TextbookListResponse {
 }
 
 export interface TextbookChapterCreateRequest {
+  id?: string;
+  client_id?: string;
   chapter_number: string;
   chapter_title: string;
   content_summary?: string;

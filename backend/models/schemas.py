@@ -256,6 +256,10 @@ class TextbookChapterGenerateRequest(BaseModel):
 
 class TextbookChapterCreateRequest(BaseModel):
     """Request to create a single chapter."""
+    id: Optional[str] = Field(None, description="章节ID（可选，用于保持层级关系）")
+    client_id: Optional[str] = Field(
+        None, description="客户端生成的临时ID，用于父子映射（可选）"
+    )
     chapter_number: str = Field(..., description="章节号，如'第1章'")
     chapter_title: str = Field(..., min_length=1, max_length=200, description="章节标题")
     content_summary: Optional[str] = Field(None, description="内容概述")
@@ -712,4 +716,3 @@ class DraftTaskCreateResponse(BaseModel):
     """Response from draft task creation."""
     task_id: str
     status: str
-

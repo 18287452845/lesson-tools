@@ -408,14 +408,25 @@ async def save_chapters(
         commit=True,
     )
 
-    # Insert new chapters
+    # Insert new chapters with client_id mapping to preserve hierarchy
     timestamp = datetime.now().isoformat()
-    for chapter in request.chapters:
-        chapter_id = str(uuid4())
+    id_map = {}
+    resolved_chapters = []
 
-        # Convert key_concepts list to JSON string
+    for index, chapter in enumerate(request.chapters):
+        chapter_id = chapter.id or str(uuid4())
+        client_key = chapter.client_id or chapter.id or chapter_id
+        id_map[client_key] = chapter_id
+        id_map[chapter_id] = chapter_id  # allow direct id references
+        resolved_chapters.append((index, chapter, chapter_id, client_key))
+
+    for index, chapter, chapter_id, _ in resolved_chapters:
+        parent_id = None
+        if chapter.parent_chapter_id:
+            parent_id = id_map.get(chapter.parent_chapter_id, chapter.parent_chapter_id)
+
         key_concepts_json = json.dumps(
-            chapter.key_concepts, ensure_ascii=False
+            chapter.key_concepts or [], ensure_ascii=False
         )
 
         await db.execute(
@@ -435,9 +446,9 @@ async def save_chapters(
                 chapter.chapter_title,
                 chapter.content_summary,
                 key_concepts_json,
-                chapter.sort_order,
+                chapter.sort_order if chapter.sort_order is not None else index + 1,
                 chapter.hours_required,
-                chapter.parent_chapter_id,
+                parent_id,
                 timestamp,
                 timestamp,
             ),
@@ -671,4 +682,3 @@ async def extract_keywords(
             status_code=500,
             detail=f"AI关键词提取失败: {str(e)}"
         )
-

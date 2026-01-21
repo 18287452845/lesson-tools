@@ -1,5 +1,5 @@
 /**
- * Textbook Management Page - Full CRUD operations with chapter management
+ * Textbook Management Page - Full CRUD operations with hierarchical chapter management
  */
 import React, { useEffect, useState } from 'react';
 import {
@@ -13,7 +13,6 @@ import {
   Form,
   Input,
   InputNumber,
-  List,
   Modal,
   Popconfirm,
   Row,
@@ -44,46 +43,104 @@ import type {
   TextbookInfo,
   TextbookUpdateRequest,
 } from '@/types';
-import { useTextbookStore } from '@/stores/textbookStore';
 import { SUBJECT_OPTIONS, GRADE_OPTIONS } from '@/types';
+import { useTextbookStore } from '@/stores/textbookStore';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 
-const buildChapterDrafts = (chapters: TextbookChapterInfo[]): TextbookChapterCreateRequest[] => {
-  const sorted = [...chapters].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-  return sorted.map((chapter, index) => ({
-    chapter_number: chapter.chapter_number || `第${index + 1}章`,
-    chapter_title: chapter.chapter_title || '',
-    content_summary: chapter.content_summary ?? '',
-    key_concepts: chapter.key_concepts ?? [],
-    sort_order: chapter.sort_order ?? index + 1,
-    hours_required: chapter.hours_required,
-    parent_chapter_id: chapter.parent_chapter_id,
+const MAX_LEVEL = 3;
+
+interface ChapterNode extends TextbookChapterCreateRequest {
+  client_id: string;
+  children: ChapterNode[];
+  level: number;
+}
+
+const generateClientId = () =>
+  `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+const recalcLevels = (nodes: ChapterNode[], level = 1): ChapterNode[] =>
+  nodes.map((node, index) => ({
+    ...node,
+    level,
+    sort_order: index + 1,
+    children: recalcLevels(node.children || [], level + 1),
   }));
+
+const sortTreeByOrder = (nodes: ChapterNode[]): ChapterNode[] =>
+  nodes
+    .map((node) => ({
+      ...node,
+      children: sortTreeByOrder(node.children || []),
+    }))
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+const buildChapterTree = (
+  chapters: Array<TextbookChapterInfo | TextbookChapterCreateRequest>
+): ChapterNode[] => {
+  const map = new Map<string, ChapterNode>();
+  const roots: ChapterNode[] = [];
+
+  const sorted = [...chapters].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+  sorted.forEach((chapter, index) => {
+    const node: ChapterNode = {
+      id: chapter.id,
+      client_id: chapter.id || generateClientId(),
+      chapter_number: chapter.chapter_number || `第${index + 1}章`,
+      chapter_title: chapter.chapter_title || '',
+      content_summary: chapter.content_summary ?? '',
+      key_concepts: chapter.key_concepts ?? [],
+      sort_order: chapter.sort_order ?? index + 1,
+      hours_required: chapter.hours_required,
+      parent_chapter_id: chapter.parent_chapter_id,
+      children: [],
+      level: 1,
+    };
+    map.set(node.client_id, node);
+  });
+
+  map.forEach((node) => {
+    if (node.parent_chapter_id && map.has(node.parent_chapter_id)) {
+      const parent = map.get(node.parent_chapter_id);
+      parent?.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  });
+
+  return recalcLevels(sortTreeByOrder(roots), 1);
 };
 
-const normalizeDraftsForSave = (
-  drafts: TextbookChapterCreateRequest[]
-): TextbookChapterCreateRequest[] =>
-  drafts.map((chapter, index) => ({
-    chapter_number: chapter.chapter_number?.trim()
-      ? chapter.chapter_number.trim()
-      : `第${index + 1}章`,
-    chapter_title: chapter.chapter_title?.trim()
-      ? chapter.chapter_title.trim()
-      : `章节${index + 1}`,
-    content_summary: chapter.content_summary?.trim() || '',
-    key_concepts: chapter.key_concepts?.filter(Boolean) || [],
-    sort_order: index + 1,
-    hours_required: chapter.hours_required,
-    parent_chapter_id: chapter.parent_chapter_id,
-  }));
+const flattenChapterTreeForSave = (nodes: ChapterNode[]): TextbookChapterCreateRequest[] => {
+  const result: TextbookChapterCreateRequest[] = [];
 
-const parseChapterLines = (
-  input: string,
-  startIndex: number
-): TextbookChapterCreateRequest[] => {
+  const walk = (list: ChapterNode[], parentKey?: string) => {
+    list.forEach((node) => {
+      const clientKey = node.client_id || node.id || generateClientId();
+      result.push({
+        id: node.id,
+        client_id: clientKey,
+        chapter_number: node.chapter_number?.trim() || `章节${result.length + 1}`,
+        chapter_title: node.chapter_title?.trim() || node.chapter_number || `章节${result.length + 1}`,
+        content_summary: node.content_summary?.trim() || '',
+        key_concepts: node.key_concepts?.filter(Boolean) || [],
+        sort_order: result.length + 1,
+        hours_required: node.hours_required,
+        parent_chapter_id: parentKey,
+      });
+      if (node.children?.length) {
+        walk(node.children, clientKey);
+      }
+    });
+  };
+
+  walk(nodes);
+  return result;
+};
+
+const parseChapterLines = (input: string, startIndex: number): ChapterNode[] => {
   const lines = input
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -97,33 +154,54 @@ const parseChapterLines = (
       const chapterNumber = fullMatch[1].replace(/\s+/g, '');
       const chapterTitle = fullMatch[2].trim() || chapterNumber;
       return {
+        client_id: generateClientId(),
         chapter_number: chapterNumber,
         chapter_title: chapterTitle,
         content_summary: '',
         key_concepts: [],
-      };
+        children: [],
+        level: 1,
+      } as ChapterNode;
     }
 
     const numberMatch = line.match(/^(\d+(?:\.\d+)?)\s*[\\.、-]?\s*(.+)$/);
     if (numberMatch) {
       return {
+        client_id: generateClientId(),
         chapter_number: `第${numberMatch[1]}章`,
         chapter_title: numberMatch[2].trim() || `章节${numberMatch[1]}`,
         content_summary: '',
         key_concepts: [],
-      };
+        children: [],
+        level: 1,
+      } as ChapterNode;
     }
 
     const chapterNumber = `第${autoIndex}章`;
     autoIndex += 1;
     return {
+      client_id: generateClientId(),
       chapter_number: chapterNumber,
       chapter_title: line || chapterNumber,
       content_summary: '',
       key_concepts: [],
-    };
+      children: [],
+      level: 1,
+    } as ChapterNode;
   });
 };
+
+const createChapterNode = (level: number, order: number): ChapterNode => ({
+  client_id: generateClientId(),
+  chapter_number: level === 1 ? `第${order}章` : `第${level}-${order}节`,
+  chapter_title: '',
+  content_summary: '',
+  key_concepts: [],
+  sort_order: order,
+  hours_required: undefined,
+  children: [],
+  level,
+});
 
 const TextbookManager: React.FC = () => {
   const {
@@ -148,7 +226,7 @@ const TextbookManager: React.FC = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingTextbook, setEditingTextbook] = useState<TextbookInfo | null>(null);
   const [chapterDrawerVisible, setChapterDrawerVisible] = useState(false);
-  const [chapterDrafts, setChapterDrafts] = useState<TextbookChapterCreateRequest[]>([]);
+  const [chapterTree, setChapterTree] = useState<ChapterNode[]>([]);
   const [draftLoadedTextbookId, setDraftLoadedTextbookId] = useState<string | null>(null);
   const [chapterModalVisible, setChapterModalVisible] = useState(false);
   const [generatingChapters, setGeneratingChapters] = useState(false);
@@ -182,8 +260,8 @@ const TextbookManager: React.FC = () => {
       return;
     }
 
-    const drafts = buildChapterDrafts(selectedTextbook.chapters || []);
-    setChapterDrafts(drafts);
+    const drafts = buildChapterTree(selectedTextbook.chapters || []);
+    setChapterTree(drafts);
     setDraftLoadedTextbookId(selectedTextbook.id);
   }, [chapterDrawerVisible, selectedTextbook, draftLoadedTextbookId]);
 
@@ -196,7 +274,7 @@ const TextbookManager: React.FC = () => {
         grade: filterGrade,
         status: 'active',
       });
-    } catch (error: any) {
+    } catch {
       // Error handled by store
     }
   };
@@ -226,7 +304,7 @@ const TextbookManager: React.FC = () => {
     try {
       await deleteTextbook(id);
       message.success('删除成功');
-    } catch (error: any) {
+    } catch {
       // Error handled by store
     }
   };
@@ -254,7 +332,7 @@ const TextbookManager: React.FC = () => {
       }
 
       setModalVisible(false);
-    } catch (error: any) {
+    } catch {
       // Error handled by store or form validation
     }
   };
@@ -267,7 +345,7 @@ const TextbookManager: React.FC = () => {
       if (openAi) {
         openAiGenerateModal(textbook);
       }
-    } catch (error: any) {
+    } catch {
       // Error handled by store
     }
   };
@@ -289,7 +367,7 @@ const TextbookManager: React.FC = () => {
       return;
     }
 
-    if (chapterDrafts.length === 0) {
+    if (chapterTree.length === 0) {
       openAiGenerateModal(selectedTextbook);
       return;
     }
@@ -314,77 +392,142 @@ const TextbookManager: React.FC = () => {
       setGeneratingChapters(true);
 
       const response = await generateChapters(selectedTextbook.id, values);
-      setChapterDrafts(
-        response.chapters.map((chapter, index) => ({
-          chapter_number: chapter.chapter_number || `第${index + 1}章`,
-          chapter_title: chapter.chapter_title || '',
-          content_summary: chapter.content_summary ?? '',
-          key_concepts: chapter.key_concepts ?? [],
-          sort_order: chapter.sort_order ?? index + 1,
-          hours_required: chapter.hours_required,
-          parent_chapter_id: chapter.parent_chapter_id,
-        }))
-      );
+      setChapterTree(buildChapterTree(response.chapters || []));
       setChapterModalVisible(false);
       message.success(response.message || '章节生成成功');
-    } catch (error: any) {
+    } catch {
       // Error handled by store
     } finally {
       setGeneratingChapters(false);
     }
   };
 
-  const handleAddChapter = () => {
-    setChapterDrafts((prev) => [
-      ...prev,
-      {
-        chapter_number: `第${prev.length + 1}章`,
-        chapter_title: '',
-        content_summary: '',
-        key_concepts: [],
-        sort_order: prev.length + 1,
-      },
-    ]);
+  const findNodeById = (nodes: ChapterNode[], clientId: string): ChapterNode | null => {
+    for (const node of nodes) {
+      if (node.client_id === clientId) {
+        return node;
+      }
+      if (node.children?.length) {
+        const found = findNodeById(node.children, clientId);
+        if (found) return found;
+      }
+    }
+    return null;
   };
 
-  const handleUpdateChapter = (
-    index: number,
-    patch: Partial<TextbookChapterCreateRequest>
-  ) => {
-    setChapterDrafts((prev) =>
-      prev.map((chapter, idx) => (idx === index ? { ...chapter, ...patch } : chapter))
-    );
+  const addChildNode = (
+    nodes: ChapterNode[],
+    parentId: string,
+    child: ChapterNode
+  ): ChapterNode[] =>
+    nodes.map((node) => {
+      if (node.client_id === parentId) {
+        return { ...node, children: [...(node.children || []), child] };
+      }
+      if (node.children?.length) {
+        const updatedChildren = addChildNode(node.children, parentId, child);
+        if (updatedChildren !== node.children) {
+          return { ...node, children: updatedChildren };
+        }
+      }
+      return node;
+    });
+
+  const updateNode = (
+    nodes: ChapterNode[],
+    clientId: string,
+    patch: Partial<ChapterNode>
+  ): ChapterNode[] =>
+    nodes.map((node) => {
+      if (node.client_id === clientId) {
+        return { ...node, ...patch };
+      }
+      if (node.children?.length) {
+        const updatedChildren = updateNode(node.children, clientId, patch);
+        if (updatedChildren !== node.children) {
+          return { ...node, children: updatedChildren };
+        }
+      }
+      return node;
+    });
+
+  const removeNode = (nodes: ChapterNode[], clientId: string): ChapterNode[] =>
+    nodes
+      .map((node) => ({
+        ...node,
+        children: removeNode(node.children || [], clientId),
+      }))
+      .filter((node) => node.client_id !== clientId);
+
+  const moveNode = (
+    nodes: ChapterNode[],
+    clientId: string,
+    delta: number
+  ): { updated: ChapterNode[]; moved: boolean } => {
+    const index = nodes.findIndex((node) => node.client_id === clientId);
+    if (index !== -1) {
+      const newIndex = index + delta;
+      if (newIndex < 0 || newIndex >= nodes.length) {
+        return { updated: nodes, moved: true };
+      }
+      const next = [...nodes];
+      const [movedNode] = next.splice(index, 1);
+      next.splice(newIndex, 0, movedNode);
+      return { updated: next, moved: true };
+    }
+
+    for (let i = 0; i < nodes.length; i += 1) {
+      const child = nodes[i];
+      const { updated: updatedChildren, moved } = moveNode(
+        child.children || [],
+        clientId,
+        delta
+      );
+      if (moved) {
+        const updatedNode = { ...child, children: updatedChildren };
+        const next = [...nodes];
+        next.splice(i, 1, updatedNode);
+        return { updated: next, moved: true };
+      }
+    }
+
+    return { updated: nodes, moved: false };
   };
 
-  const handleMoveChapter = (from: number, to: number) => {
-    setChapterDrafts((prev) => {
-      if (to < 0 || to >= prev.length) {
+  const handleAddChapter = (parentId?: string) => {
+    setChapterTree((prev) => {
+      const parent = parentId ? findNodeById(prev, parentId) : null;
+      const parentLevel = parent?.level ?? 0;
+      const targetLevel = parentLevel + 1;
+      if (targetLevel > MAX_LEVEL) {
+        message.warning('目前最多支持三级章节');
         return prev;
       }
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      return next;
+
+      const siblingCount = parent ? (parent.children?.length || 0) + 1 : prev.length + 1;
+      const newNode = {
+        ...createChapterNode(targetLevel, siblingCount),
+        parent_chapter_id: parent?.client_id,
+      };
+
+      const next = parentId ? addChildNode(prev, parentId, newNode) : [...prev, newNode];
+      return recalcLevels(next);
     });
   };
 
-  const handleDeleteChapter = (index: number) => {
-    setChapterDrafts((prev) => prev.filter((_, idx) => idx !== index));
+  const handleUpdateChapter = (clientId: string, patch: Partial<ChapterNode>) => {
+    setChapterTree((prev) => recalcLevels(updateNode(prev, clientId, patch)));
   };
 
-  const validateDrafts = () => {
-    for (let i = 0; i < chapterDrafts.length; i += 1) {
-      const chapter = chapterDrafts[i];
-      if (!chapter.chapter_number?.trim()) {
-        message.error(`第 ${i + 1} 条章节编号为空`);
-        return false;
-      }
-      if (!chapter.chapter_title?.trim()) {
-        message.error(`第 ${i + 1} 条章节标题为空`);
-        return false;
-      }
-    }
-    return true;
+  const handleDeleteChapter = (clientId: string) => {
+    setChapterTree((prev) => recalcLevels(removeNode(prev, clientId)));
+  };
+
+  const handleMoveChapter = (clientId: string, delta: number) => {
+    setChapterTree((prev) => {
+      const { updated, moved } = moveNode(prev, clientId, delta);
+      return moved ? recalcLevels(updated) : prev;
+    });
   };
 
   const handleSaveChapters = async () => {
@@ -392,16 +535,19 @@ const TextbookManager: React.FC = () => {
       message.warning('请先选择教材');
       return;
     }
-    if (!validateDrafts()) {
+
+    if (chapterTree.length === 0) {
+      message.warning('请先添加章节');
       return;
     }
 
     try {
       setSavingChapters(true);
-      await saveChapters(selectedTextbook.id, normalizeDraftsForSave(chapterDrafts));
-      message.success('章节保存成功');
-      setDraftLoadedTextbookId(null);
-    } catch (error: any) {
+      const payload = flattenChapterTreeForSave(recalcLevels(chapterTree));
+      await saveChapters(selectedTextbook.id, payload);
+      await getTextbook(selectedTextbook.id);
+      message.success('章节已保存');
+    } catch {
       // Error handled by store
     } finally {
       setSavingChapters(false);
@@ -409,16 +555,25 @@ const TextbookManager: React.FC = () => {
   };
 
   const handleBatchImportSubmit = () => {
-    const startIndex = batchImportReplace ? 1 : chapterDrafts.length + 1;
-    const imported = parseChapterLines(batchImportText, startIndex);
-    if (imported.length === 0) {
-      message.warning('没有可导入的内容');
+    if (!batchImportText.trim()) {
+      message.warning('请输入章节内容');
       return;
     }
 
-    setChapterDrafts((prev) =>
-      batchImportReplace ? imported : [...prev, ...imported]
+    const imported = parseChapterLines(batchImportText, chapterTree.length + 1).map(
+      (node, index) => ({
+        ...node,
+        sort_order: index + 1,
+        level: 1,
+        parent_chapter_id: undefined,
+      })
     );
+
+    setChapterTree((prev) => {
+      const nextRoots = batchImportReplace ? imported : [...prev, ...imported];
+      return recalcLevels(nextRoots);
+    });
+
     setBatchImportVisible(false);
     setBatchImportText('');
     setBatchImportReplace(false);
@@ -428,12 +583,124 @@ const TextbookManager: React.FC = () => {
   const handleCloseDrawer = () => {
     setChapterDrawerVisible(false);
     setDraftLoadedTextbookId(null);
-    setChapterDrafts([]);
+    setChapterTree([]);
   };
 
   const handlePageChange = (page: number) => {
     setPage(page);
   };
+
+  const renderChapterNodes = (nodes: ChapterNode[]) =>
+    nodes.map((chapter, index) => (
+      <div
+        key={chapter.client_id}
+        style={{ marginBottom: 12, marginLeft: (chapter.level - 1) * 16 }}
+      >
+        <Card
+          size="small"
+          title={
+            <Space>
+              <Text type="secondary">#{index + 1}</Text>
+              <Input
+                value={chapter.chapter_number}
+                onChange={(e) =>
+                  handleUpdateChapter(chapter.client_id, { chapter_number: e.target.value })
+                }
+                placeholder="第1章"
+                style={{ width: 120 }}
+              />
+              <Input
+                value={chapter.chapter_title}
+                onChange={(e) =>
+                  handleUpdateChapter(chapter.client_id, { chapter_title: e.target.value })
+                }
+                placeholder="章节标题"
+                style={{ width: 280 }}
+              />
+            </Space>
+          }
+          extra={
+            <Space size="small">
+              <Button
+                size="small"
+                icon={<ArrowUpOutlined />}
+                disabled={index === 0}
+                onClick={() => handleMoveChapter(chapter.client_id, -1)}
+              />
+              <Button
+                size="small"
+                icon={<ArrowDownOutlined />}
+                disabled={index === nodes.length - 1}
+                onClick={() => handleMoveChapter(chapter.client_id, 1)}
+              />
+              {chapter.level < MAX_LEVEL && (
+                <Button
+                  size="small"
+                  icon={<PlusOutlined />}
+                  onClick={() => handleAddChapter(chapter.client_id)}
+                >
+                  子章节
+                </Button>
+              )}
+              <Popconfirm
+                title="删除章节？"
+                onConfirm={() => handleDeleteChapter(chapter.client_id)}
+                okText="删除"
+                cancelText="取消"
+              >
+                <Button size="small" danger icon={<DeleteOutlined />} />
+              </Popconfirm>
+            </Space>
+          }
+        >
+          <Row gutter={16}>
+            <Col span={16}>
+              <Text type="secondary">内容概述</Text>
+              <TextArea
+                value={chapter.content_summary}
+                onChange={(e) =>
+                  handleUpdateChapter(chapter.client_id, { content_summary: e.target.value })
+                }
+                rows={3}
+                style={{ marginTop: 8 }}
+                placeholder="简要描述本章内容"
+              />
+            </Col>
+            <Col span={8}>
+              <Text type="secondary">核心概念</Text>
+              <Select
+                mode="tags"
+                tokenSeparators={[',', '，', ';', '；']}
+                value={chapter.key_concepts}
+                onChange={(value) =>
+                  handleUpdateChapter(chapter.client_id, { key_concepts: value as string[] })
+                }
+                style={{ width: '100%', marginTop: 8 }}
+                placeholder="输入后回车或逗号分隔"
+              />
+              <div style={{ marginTop: 12 }}>
+                <Text type="secondary">建议课时</Text>
+                <InputNumber
+                  min={0}
+                  step={0.5}
+                  value={chapter.hours_required}
+                  onChange={(value) =>
+                    handleUpdateChapter(chapter.client_id, {
+                      hours_required: typeof value === 'number' ? value : undefined,
+                    })
+                  }
+                  style={{ width: '100%', marginTop: 8 }}
+                  placeholder="例如：2"
+                />
+              </div>
+            </Col>
+          </Row>
+          {chapter.children?.length > 0 && (
+            <div style={{ marginTop: 12 }}>{renderChapterNodes(chapter.children)}</div>
+          )}
+        </Card>
+      </div>
+    ));
 
   const columns = [
     {
@@ -582,7 +849,7 @@ const TextbookManager: React.FC = () => {
             total: total,
             onChange: handlePageChange,
             showSizeChanger: false,
-            showTotal: (total) => `共 ${total} 条`,
+            showTotal: (value) => `共 ${value} 条`,
           }}
         />
       </Card>
@@ -710,7 +977,7 @@ const TextbookManager: React.FC = () => {
         }
         open={chapterDrawerVisible}
         onClose={handleCloseDrawer}
-        width={900}
+        width={980}
       >
         <Spin spinning={loading} tip="加载章节中...">
           {selectedTextbook && (
@@ -723,7 +990,7 @@ const TextbookManager: React.FC = () => {
               </div>
 
               <Space wrap style={{ marginBottom: 16 }}>
-                <Button icon={<PlusOutlined />} onClick={handleAddChapter}>
+                <Button icon={<PlusOutlined />} onClick={() => handleAddChapter()}>
                   新增章节
                 </Button>
                 <Button icon={<UploadOutlined />} onClick={() => setBatchImportVisible(true)}>
@@ -743,17 +1010,17 @@ const TextbookManager: React.FC = () => {
               </Space>
 
               <Text type="secondary">
-                这里是教材章节的唯一编辑列表，保存后将替换教材章节。章节数量可与教材不一致，AI生成时会自动调整。
+                支持三级层级。保存后将覆盖当前教材的章节配置。
               </Text>
 
               <Divider />
 
-              {chapterDrafts.length === 0 ? (
+              {chapterTree.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '32px 0' }}>
                   <Text type="secondary">暂无章节</Text>
                   <div style={{ marginTop: 16 }}>
                     <Space>
-                      <Button type="primary" icon={<PlusOutlined />} onClick={handleAddChapter}>
+                      <Button type="primary" icon={<PlusOutlined />} onClick={() => handleAddChapter()}>
                         新增章节
                       </Button>
                       <Button icon={<ThunderboltOutlined />} onClick={confirmAiOverwrite}>
@@ -763,105 +1030,7 @@ const TextbookManager: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <List
-                  dataSource={chapterDrafts}
-                  renderItem={(chapter, index) => (
-                    <List.Item key={`${chapter.chapter_number}-${index}`}>
-                      <Card
-                        size="small"
-                        style={{ width: '100%' }}
-                        title={
-                          <Space>
-                            <Text type="secondary">#{index + 1}</Text>
-                            <Input
-                              value={chapter.chapter_number}
-                              onChange={(e) =>
-                                handleUpdateChapter(index, { chapter_number: e.target.value })
-                              }
-                              placeholder="第1章"
-                              style={{ width: 110 }}
-                            />
-                            <Input
-                              value={chapter.chapter_title}
-                              onChange={(e) =>
-                                handleUpdateChapter(index, { chapter_title: e.target.value })
-                              }
-                              placeholder="章节标题"
-                              style={{ width: 260 }}
-                            />
-                          </Space>
-                        }
-                        extra={
-                          <Space>
-                            <Button
-                              size="small"
-                              icon={<ArrowUpOutlined />}
-                              disabled={index === 0}
-                              onClick={() => handleMoveChapter(index, index - 1)}
-                            />
-                            <Button
-                              size="small"
-                              icon={<ArrowDownOutlined />}
-                              disabled={index === chapterDrafts.length - 1}
-                              onClick={() => handleMoveChapter(index, index + 1)}
-                            />
-                            <Popconfirm
-                              title="删除章节？"
-                              onConfirm={() => handleDeleteChapter(index)}
-                              okText="删除"
-                              cancelText="取消"
-                            >
-                              <Button size="small" danger icon={<DeleteOutlined />} />
-                            </Popconfirm>
-                          </Space>
-                        }
-                      >
-                        <Row gutter={16}>
-                          <Col span={16}>
-                            <Text type="secondary">内容概述</Text>
-                            <TextArea
-                              value={chapter.content_summary}
-                              onChange={(e) =>
-                                handleUpdateChapter(index, { content_summary: e.target.value })
-                              }
-                              rows={3}
-                              style={{ marginTop: 8 }}
-                              placeholder="简要描述本章内容"
-                            />
-                          </Col>
-                          <Col span={8}>
-                            <Text type="secondary">核心概念</Text>
-                            <Select
-                              mode="tags"
-                              tokenSeparators={[',', '，', ';', '；']}
-                              value={chapter.key_concepts}
-                              onChange={(value) =>
-                                handleUpdateChapter(index, { key_concepts: value as string[] })
-                              }
-                              style={{ width: '100%', marginTop: 8 }}
-                              placeholder="输入后回车或逗号分隔"
-                            />
-                            <div style={{ marginTop: 12 }}>
-                              <Text type="secondary">建议课时</Text>
-                              <InputNumber
-                                min={0}
-                                step={0.5}
-                                value={chapter.hours_required}
-                                onChange={(value) =>
-                                  handleUpdateChapter(index, {
-                                    hours_required: typeof value === 'number' ? value : undefined,
-                                  })
-                                }
-                                style={{ width: '100%', marginTop: 8 }}
-                                placeholder="例如：2"
-                              />
-                            </div>
-                          </Col>
-                        </Row>
-                      </Card>
-                    </List.Item>
-                  )}
-                />
+                <div>{renderChapterNodes(chapterTree)}</div>
               )}
             </>
           )}
