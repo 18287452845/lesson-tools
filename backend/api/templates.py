@@ -415,7 +415,7 @@ async def update_template(
 # OnlyOffice Integration
 # ============================================================================
 
-ONLYOFFICE_ASSET_VERSION = "20260121-fix6"
+ONLYOFFICE_ASSET_VERSION = "20260121-fix7"
 
 class OnlyOfficeCallbackRequest(BaseModel):
     status: int
