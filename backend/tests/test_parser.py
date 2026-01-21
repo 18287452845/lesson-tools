@@ -128,6 +128,8 @@ class TestDatabase:
             "textbooks",  # Added
             "textbook_chapters",  # Added
             "lesson_plan_textbooks",  # Added
+            "subjects",
+            "grades",
         }
 
         assert tables == expected_tables

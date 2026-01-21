@@ -9,6 +9,7 @@ import type {
   TextbookChapterCreateRequest,
   TextbookChapterGenerateRequest,
   TextbookChapterGenerateResponse,
+  TextbookChapterEnrichResponse,
 } from '@/types';
 import { textbookApi } from '@/services/textbookApi';
 
@@ -54,6 +55,11 @@ interface TextbookState {
     textbookId: string,
     chapters: TextbookChapterCreateRequest[]
   ) => Promise<void>;
+
+  enrichChapters: (
+    textbookId: string,
+    chapters: TextbookChapterCreateRequest[]
+  ) => Promise<TextbookChapterEnrichResponse>;
 
   updateChapter: (
     textbookId: string,
@@ -222,6 +228,21 @@ export const useTextbookStore = create<TextbookState>((set, get) => ({
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : '保存章节失败',
+        loading: false,
+      });
+      throw error;
+    }
+  },
+
+  enrichChapters: async (textbookId, chapters) => {
+    set({ loading: true, error: null });
+    try {
+      const response = await textbookApi.enrichChapters(textbookId, { chapters });
+      set({ loading: false });
+      return response;
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : '生成章节概述失败',
         loading: false,
       });
       throw error;

@@ -280,6 +280,17 @@ class TextbookChapterGenerateResponse(BaseModel):
     message: str = "章节生成成功"
 
 
+class TextbookChapterEnrichRequest(BaseModel):
+    """Request to AI补充章节概述和核心概念。"""
+    chapters: List[TextbookChapterCreateRequest]
+
+
+class TextbookChapterEnrichResponse(BaseModel):
+    """Response for AI enriched chapters."""
+    chapters: List[TextbookChapterCreateRequest]
+    message: str = "章节内容概述和核心概念已生成"
+
+
 # ============================================================================
 # Lesson Plan Generation Models
 # ============================================================================

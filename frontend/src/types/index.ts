@@ -697,3 +697,12 @@ export interface TextbookChapterGenerateResponse {
   message: string;
 }
 
+export interface TextbookChapterEnrichRequest {
+  chapters: TextbookChapterCreateRequest[];
+}
+
+export interface TextbookChapterEnrichResponse {
+  chapters: TextbookChapterCreateRequest[];
+  message: string;
+}
+

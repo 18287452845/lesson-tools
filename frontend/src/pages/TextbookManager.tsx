@@ -115,18 +115,20 @@ const buildChapterTree = (
 
 const flattenChapterTreeForSave = (nodes: ChapterNode[]): TextbookChapterCreateRequest[] => {
   const result: TextbookChapterCreateRequest[] = [];
+  let counter = 0;
 
   const walk = (list: ChapterNode[], parentKey?: string) => {
     list.forEach((node) => {
       const clientKey = node.client_id || node.id || generateClientId();
+      counter += 1;
       result.push({
         id: node.id,
         client_id: clientKey,
-        chapter_number: node.chapter_number?.trim() || `章节${result.length + 1}`,
-        chapter_title: node.chapter_title?.trim() || node.chapter_number || `章节${result.length + 1}`,
+        chapter_number: node.chapter_number?.trim() || `章节${counter}`,
+        chapter_title: node.chapter_title?.trim() || node.chapter_number || `章节${counter}`,
         content_summary: node.content_summary?.trim() || '',
         key_concepts: node.key_concepts?.filter(Boolean) || [],
-        sort_order: result.length + 1,
+        sort_order: counter,
         hours_required: node.hours_required,
         parent_chapter_id: parentKey,
       });
@@ -140,55 +142,138 @@ const flattenChapterTreeForSave = (nodes: ChapterNode[]): TextbookChapterCreateR
   return result;
 };
 
+const applyEnrichmentToTree = (
+  nodes: ChapterNode[],
+  enrichments: TextbookChapterCreateRequest[]
+): ChapterNode[] => {
+  const map = new Map<string, TextbookChapterCreateRequest>();
+  enrichments.forEach((item) => {
+    const key = item.client_id || item.id || item.chapter_title;
+    if (key) {
+      map.set(key, item);
+    }
+  });
+
+  const walk = (list: ChapterNode[]): ChapterNode[] =>
+    list.map((node) => {
+      const key = node.client_id || node.id || node.chapter_title;
+      const enriched = key ? map.get(key) : undefined;
+      const merged: ChapterNode = {
+        ...node,
+        chapter_number: enriched?.chapter_number || node.chapter_number,
+        chapter_title: enriched?.chapter_title || node.chapter_title,
+        content_summary:
+          enriched?.content_summary !== undefined
+            ? enriched.content_summary ?? node.content_summary
+            : node.content_summary,
+        key_concepts:
+          enriched?.key_concepts && enriched.key_concepts.length > 0
+            ? enriched.key_concepts
+            : node.key_concepts || [],
+      };
+      return {
+        ...merged,
+        children: walk(node.children || []),
+      };
+    });
+
+  return walk(nodes);
+};
+
 const parseChapterLines = (input: string, startIndex: number): ChapterNode[] => {
   const lines = input
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  let autoIndex = startIndex;
-
-  return lines.map((line) => {
-    const fullMatch = line.match(/^(第?\s*\d+(?:\.\d+)?\s*章)\s*(.*)$/);
-    if (fullMatch) {
-      const chapterNumber = fullMatch[1].replace(/\s+/g, '');
-      const chapterTitle = fullMatch[2].trim() || chapterNumber;
+    .map((raw) => {
+      const normalized = raw.replace(/\t/g, '  ');
+      const match = normalized.match(/^(\s*)(.*)$/);
       return {
-        client_id: generateClientId(),
-        chapter_number: chapterNumber,
-        chapter_title: chapterTitle,
-        content_summary: '',
-        key_concepts: [],
-        children: [],
-        level: 1,
-      } as ChapterNode;
+        indent: match?.[1]?.length ?? 0,
+        text: match?.[2]?.trim() ?? '',
+      };
+    })
+    .filter((item) => item.text);
+
+  if (lines.length === 0) {
+    return [];
+  }
+
+  const positiveIndents = lines.map((item) => item.indent).filter((value) => value > 0);
+  const indentUnit = positiveIndents.length > 0 ? Math.min(...positiveIndents) : 2;
+  const roots: ChapterNode[] = [];
+  const stack: Array<{ level: number; node: ChapterNode }> = [];
+  const counters = [0, Math.max(0, startIndex - 1), 0, 0]; // level-based counters
+
+  const buildChapterNumber = (level: number, provided?: string) => {
+    if (provided) {
+      return provided;
+    }
+    const l1 = counters[1];
+    const l2 = counters[2];
+    const l3 = counters[3];
+    if (level === 1) return `第${l1}章`;
+    if (level === 2) return `第${l1}-${l2}节`;
+    return `第${l1}-${l2}-${l3}小节`;
+  };
+
+  const parseLine = (text: string, level: number): ChapterNode => {
+    const fullMatch = text.match(/^(第?\s*\d+(?:\.\d+)?\s*章)\s*(.*)$/);
+    const numberMatch = text.match(/^(\d+(?:\.\d+)?)\s*[\\.、-]?\s*(.+)$/);
+
+    counters[level] = (counters[level] || 0) + 1;
+    for (let i = level + 1; i < counters.length; i += 1) {
+      counters[i] = 0;
     }
 
-    const numberMatch = line.match(/^(\d+(?:\.\d+)?)\s*[\\.、-]?\s*(.+)$/);
-    if (numberMatch) {
-      return {
-        client_id: generateClientId(),
-        chapter_number: `第${numberMatch[1]}章`,
-        chapter_title: numberMatch[2].trim() || `章节${numberMatch[1]}`,
-        content_summary: '',
-        key_concepts: [],
-        children: [],
-        level: 1,
-      } as ChapterNode;
-    }
+    const chapterNumber = buildChapterNumber(
+      level,
+      fullMatch
+        ? fullMatch[1].replace(/\s+/g, '')
+        : numberMatch
+        ? `第${numberMatch[1]}章`
+        : undefined
+    );
 
-    const chapterNumber = `第${autoIndex}章`;
-    autoIndex += 1;
+    const chapterTitle =
+      fullMatch?.[2]?.trim() ||
+      numberMatch?.[2]?.trim() ||
+      text ||
+      chapterNumber ||
+      '章节';
+
     return {
       client_id: generateClientId(),
       chapter_number: chapterNumber,
-      chapter_title: line || chapterNumber,
+      chapter_title: chapterTitle,
       content_summary: '',
       key_concepts: [],
       children: [],
-      level: 1,
+      level,
     } as ChapterNode;
+  };
+
+  lines.forEach(({ indent, text }) => {
+    const level = Math.min(MAX_LEVEL, Math.floor(indent / indentUnit) + 1);
+    while (stack.length && stack[stack.length - 1].level >= level) {
+      stack.pop();
+    }
+
+    const parentChildren = stack.length ? stack[stack.length - 1].node.children : roots;
+
+    const node = parseLine(text, level);
+    node.sort_order = parentChildren.length + 1;
+
+    if (stack.length) {
+      const parentNode = stack[stack.length - 1].node;
+      node.parent_chapter_id = parentNode.client_id;
+      parentNode.children.push(node);
+    } else {
+      roots.push(node);
+    }
+
+    stack.push({ level, node });
   });
+
+  return roots;
 };
 
 const createChapterNode = (level: number, order: number): ChapterNode => ({
@@ -219,6 +304,7 @@ const TextbookManager: React.FC = () => {
     getTextbook,
     generateChapters,
     saveChapters,
+    enrichChapters,
     clearError,
     setPage,
   } = useTextbookStore();
@@ -234,6 +320,7 @@ const TextbookManager: React.FC = () => {
   const [batchImportVisible, setBatchImportVisible] = useState(false);
   const [batchImportReplace, setBatchImportReplace] = useState(false);
   const [batchImportText, setBatchImportText] = useState('');
+  const [batchImportLoading, setBatchImportLoading] = useState(false);
   const [filterSubject, setFilterSubject] = useState<string | undefined>();
   const [filterGrade, setFilterGrade] = useState<string | undefined>();
 
@@ -554,30 +641,60 @@ const TextbookManager: React.FC = () => {
     }
   };
 
-  const handleBatchImportSubmit = () => {
+  const handleBatchImportSubmit = async () => {
+    if (!selectedTextbook) {
+      message.warning('请先选择教材');
+      return;
+    }
+
     if (!batchImportText.trim()) {
       message.warning('请输入章节内容');
       return;
     }
 
-    const imported = parseChapterLines(batchImportText, chapterTree.length + 1).map(
-      (node, index) => ({
-        ...node,
-        sort_order: index + 1,
-        level: 1,
-        parent_chapter_id: undefined,
-      })
-    );
+    const startIndex = batchImportReplace ? 1 : chapterTree.length + 1;
+    const importedRoots = recalcLevels(parseChapterLines(batchImportText, startIndex));
 
-    setChapterTree((prev) => {
-      const nextRoots = batchImportReplace ? imported : [...prev, ...imported];
-      return recalcLevels(nextRoots);
-    });
+    if (importedRoots.length === 0) {
+      message.warning('未识别到有效章节，请检查格式');
+      return;
+    }
 
-    setBatchImportVisible(false);
-    setBatchImportText('');
-    setBatchImportReplace(false);
-    message.success(`已导入 ${imported.length} 个章节`);
+    const mergeTree = (
+      currentTree: ChapterNode[],
+      enrichments?: TextbookChapterCreateRequest[]
+    ) => {
+      const nextRoots = batchImportReplace ? importedRoots : [...currentTree, ...importedRoots];
+      const recalculated = recalcLevels(nextRoots);
+      if (enrichments?.length) {
+        return recalcLevels(applyEnrichmentToTree(recalculated, enrichments));
+      }
+      return recalculated;
+    };
+
+    setBatchImportLoading(true);
+    try {
+      let enrichments: TextbookChapterCreateRequest[] | undefined;
+      const payload = flattenChapterTreeForSave(importedRoots);
+
+      if (payload.length > 0) {
+        const response = await enrichChapters(selectedTextbook.id, payload);
+        enrichments = response.chapters;
+      }
+
+      setChapterTree((prev) => mergeTree(prev, enrichments));
+      message.success(
+        `已导入 ${importedRoots.length} 个章节${enrichments?.length ? '，AI已生成概述和核心概念' : ''}`
+      );
+    } catch {
+      setChapterTree((prev) => mergeTree(prev));
+      message.warning('章节已导入，但AI生成概述失败，请稍后重试');
+    } finally {
+      setBatchImportVisible(false);
+      setBatchImportText('');
+      setBatchImportReplace(false);
+      setBatchImportLoading(false);
+    }
   };
 
   const handleCloseDrawer = () => {
@@ -1010,7 +1127,7 @@ const TextbookManager: React.FC = () => {
               </Space>
 
               <Text type="secondary">
-                支持三级层级。保存后将覆盖当前教材的章节配置。
+                支持三级层级，批量导入时可通过空格/Tab 缩进控制父子章节。保存后将覆盖当前教材的章节配置。
               </Text>
 
               <Divider />
@@ -1047,23 +1164,32 @@ const TextbookManager: React.FC = () => {
           setBatchImportText('');
           setBatchImportReplace(false);
         }}
+        confirmLoading={batchImportLoading}
         width={600}
         destroyOnClose
       >
-        <TextArea
-          rows={8}
-          value={batchImportText}
-          onChange={(e) => setBatchImportText(e.target.value)}
-          placeholder="每行一个章节，例如：&#10;第1章 计算机基础&#10;第2章 程序结构&#10;3 数据类型"
-        />
-        <div style={{ marginTop: 12 }}>
-          <Checkbox
-            checked={batchImportReplace}
-            onChange={(e) => setBatchImportReplace(e.target.checked)}
-          >
-            覆盖现有章节
-          </Checkbox>
-        </div>
+        <Spin spinning={batchImportLoading} tip="正在导入并生成章节概述...">
+          <TextArea
+            rows={8}
+            value={batchImportText}
+            onChange={(e) => setBatchImportText(e.target.value)}
+            placeholder="支持缩进控制层级：&#10;第1章 计算机基础&#10;  1.1 计算机发展史&#10;  1.2 计算机组成与性能&#10;    1.2.1 CPU 与内存"
+          />
+          <div style={{ marginTop: 8 }}>
+            <Text type="secondary">
+              同级无需缩进，子级使用空格/Tab 缩进即可自动归为下级；导入后将尝试自动生成内容概述与核心概念。
+            </Text>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Checkbox
+              checked={batchImportReplace}
+              onChange={(e) => setBatchImportReplace(e.target.checked)}
+              disabled={batchImportLoading}
+            >
+              覆盖现有章节
+            </Checkbox>
+          </div>
+        </Spin>
       </Modal>
     </div>
   );

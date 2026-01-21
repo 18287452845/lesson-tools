@@ -3,6 +3,7 @@ Textbook management API endpoints.
 Handles textbook CRUD, AI chapter generation, and chapter management.
 """
 import json
+import re
 from datetime import datetime
 from typing import Optional, List
 from uuid import uuid4
@@ -20,6 +21,8 @@ from ..models.schemas import (
     TextbookChapterBatchCreateRequest,
     TextbookChapterGenerateRequest,
     TextbookChapterGenerateResponse,
+    TextbookChapterEnrichRequest,
+    TextbookChapterEnrichResponse,
 )
 from ..services.textbook_generator import TextbookChapterGenerator
 from ..services.ai_provider import AIProviderFactory
@@ -375,6 +378,140 @@ async def generate_chapters(
         raise HTTPException(
             status_code=500,
             detail=f"AI章节生成失败: {str(e)}"
+        )
+
+
+@router.post(
+    "/{textbook_id}/chapters/ai-enrich",
+    response_model=TextbookChapterEnrichResponse,
+)
+async def ai_enrich_chapters(
+    textbook_id: str,
+    request: TextbookChapterEnrichRequest,
+):
+    """
+    为手动输入的章节生成内容概述和核心概念。
+
+    Args:
+        textbook_id: 教材ID
+        request: 章节列表
+
+    Returns:
+        带有AI生成内容概述与核心概念的章节列表
+    """
+    if not request.chapters:
+        raise HTTPException(status_code=400, detail="请提供至少一个章节")
+
+    textbook_row = await db.fetch_one(
+        "SELECT name, subject, grade FROM textbooks WHERE id = ?",
+        (textbook_id,),
+    )
+    if not textbook_row:
+        raise HTTPException(status_code=404, detail="教材不存在")
+
+    textbook_data = dict(textbook_row)
+    textbook_name = textbook_data.get("name", "")
+    subject = textbook_data.get("subject") or "未指定学科"
+    grade = textbook_data.get("grade") or "未指定年级"
+
+    chapter_lines = "\n".join(
+        [
+            f"{idx + 1}. {chapter.chapter_number} {chapter.chapter_title}"
+            + (f"（已有概述：{chapter.content_summary}）" if chapter.content_summary else "")
+            for idx, chapter in enumerate(request.chapters)
+        ]
+    )
+
+    prompt = f"""你是一名教材教研专家，帮助教师补充章节简介。
+教材：{textbook_name}
+学科：{subject}；年级：{grade}
+请为下列章节生成内容概述（80-120字）并提取3-5个核心概念关键词，保持输入顺序。
+仅输出JSON数组，每个元素格式：
+{{
+  "chapter_number": "与输入一致或自动补全",
+  "chapter_title": "章节标题",
+  "content_summary": "简洁概述",
+  "key_concepts": ["概念1", "概念2", "概念3"]
+}}
+章节列表：
+{chapter_lines}
+"""
+
+    try:
+        provider = AIProviderFactory.create_provider(
+            provider=settings.ai_provider,
+            api_key=settings.get_active_api_key(),
+            model=settings.get_active_model(),
+        )
+
+        response_text = await provider.generate(prompt)
+
+        ai_result = None
+        try:
+            ai_result = json.loads(response_text)
+        except (json.JSONDecodeError, TypeError):
+            match = re.search(r"\[[\s\S]*\]", response_text)
+            if match:
+                ai_result = json.loads(match.group(0))
+
+        if not isinstance(ai_result, list):
+            ai_result = []
+
+        def normalize_keywords(raw_keywords):
+            if isinstance(raw_keywords, list):
+                return [
+                    kw.strip()
+                    for kw in raw_keywords
+                    if isinstance(kw, str) and kw.strip()
+                ]
+            if isinstance(raw_keywords, str):
+                return [
+                    kw.strip()
+                    for kw in re.split(r"[，,；;\n]+", raw_keywords)
+                    if kw.strip()
+                ]
+            return []
+
+        enriched_chapters: List[TextbookChapterCreateRequest] = []
+        for idx, chapter in enumerate(request.chapters):
+            ai_item = (
+                ai_result[idx]
+                if idx < len(ai_result) and isinstance(ai_result[idx], dict)
+                else {}
+            )
+
+            content_summary = (
+                ai_item.get("content_summary")
+                or ai_item.get("summary")
+                or chapter.content_summary
+                or ""
+            )
+            key_concepts = normalize_keywords(
+                ai_item.get("key_concepts") or ai_item.get("keywords")
+            )
+
+            enriched_chapters.append(
+                TextbookChapterCreateRequest(
+                    id=chapter.id,
+                    client_id=chapter.client_id,
+                    chapter_number=ai_item.get("chapter_number") or chapter.chapter_number,
+                    chapter_title=ai_item.get("chapter_title") or chapter.chapter_title,
+                    content_summary=content_summary,
+                    key_concepts=key_concepts[:5],
+                    sort_order=chapter.sort_order,
+                    hours_required=chapter.hours_required,
+                    parent_chapter_id=chapter.parent_chapter_id,
+                )
+            )
+
+        return TextbookChapterEnrichResponse(
+            chapters=enriched_chapters,
+            message=f"成功生成 {len(enriched_chapters)} 个章节的内容概述和核心概念",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI章节概述生成失败: {str(e)}",
         )
 
 

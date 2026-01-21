@@ -12,6 +12,8 @@ import type {
   TextbookChapterBatchCreateRequest,
   TextbookChapterGenerateRequest,
   TextbookChapterGenerateResponse,
+  TextbookChapterEnrichRequest,
+  TextbookChapterEnrichResponse,
 } from '@/types';
 
 const api = axios.create({
@@ -94,6 +96,20 @@ export const textbookApi = {
   ): Promise<TextbookChapterGenerateResponse> => {
     const response = await api.post(
       `/textbooks/${textbookId}/generate-chapters`,
+      data
+    );
+    return response.data;
+  },
+
+  /**
+   * AI enrich manually entered chapters with summary and key concepts
+   */
+  enrichChapters: async (
+    textbookId: string,
+    data: TextbookChapterEnrichRequest
+  ): Promise<TextbookChapterEnrichResponse> => {
+    const response = await api.post(
+      `/textbooks/${textbookId}/chapters/ai-enrich`,
       data
     );
     return response.data;
