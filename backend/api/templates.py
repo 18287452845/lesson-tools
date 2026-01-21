@@ -204,7 +204,7 @@ async def get_template(template_id: str):
     )
 
 
-@router.get("/{template_id}/download")
+@router.api_route("/{template_id}/download", methods=["GET", "HEAD"])
 async def download_template(template_id: str):
     """
     Download a template file.
