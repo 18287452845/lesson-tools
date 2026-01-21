@@ -80,6 +80,19 @@ server {
 - **JWT 校验错误**：确保 Document Server 与后端的密钥一致，且请求头名称一致。
 - **跨域问题**：OnlyOffice 使用自身 iframe，不依赖后端 CORS。前端访问后端仍需在 FastAPI CORS 列表添加前端域名（`backend/main.py`）。
 - **样式丢失**：OnlyOffice 直接编辑 DOCX，可最大化保留样式。如需 HTML 模式，请切换到 “HTML 模式”。
+- **inspector.js 404 / InvalidStateError**（9.2.x 常见）：刷新静态资源缓存并补一个占位脚本，避免浏览器在加载调试脚本时抛错：
+  ```bash
+  # 在 Document Server 容器内
+  echo 'set $cache_tag "fix1";' > /etc/nginx/includes/ds-cache.conf
+  sed -i 's#/9.2.1-[^'\"'']*#/9.2.1-fix1#' /var/www/onlyoffice/documentserver/web-apps/apps/api/documents/api.js
+  gzip -c /var/www/onlyoffice/documentserver/web-apps/apps/api/documents/api.js > /var/www/onlyoffice/documentserver/web-apps/apps/api/documents/api.js.gz
+  echo '// Inspector disabled' > /var/www/onlyoffice/documentserver/web-apps/apps/debug/inspector.js
+  nginx -s reload
+  # 验证
+  curl -s https://docs.example.com/web-apps/apps/api/documents/api.js | grep 9.2.1-fix1
+  curl -I https://docs.example.com/web-apps/apps/debug/inspector.js
+  ```
+  如容器重建需重跑上述命令，可将其写成宿主机脚本以便快速执行。
 
 ## 9. 验证流程
 1) 填写 `.env` 并重启后端（或 docker-compose）。
