@@ -47,6 +47,7 @@ const FieldMappingPanel: React.FC<FieldMappingPanelProps> = ({
   onClose,
 }) => {
   const {
+    templateId,
     fieldsConfig,
     standardFields,
     isFieldsDirty,
@@ -66,11 +67,11 @@ const FieldMappingPanel: React.FC<FieldMappingPanelProps> = ({
 
   // 加载数据
   useEffect(() => {
-    if (visible) {
+    if (visible && templateId) {
       loadFieldsConfig()
       loadStandardFields()
     }
-  }, [visible, loadFieldsConfig, loadStandardFields])
+  }, [visible, templateId, loadFieldsConfig, loadStandardFields])
 
   // 处理添加字段
   const handleAdd = () => {

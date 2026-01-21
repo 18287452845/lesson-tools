@@ -127,6 +127,9 @@ export const useTemplateEditorStore = create<TemplateEditorState>((set, get) => 
         isDirty: false,
         isLoading: false,
       })
+
+      // 预先加载字段配置，确保字段配置面板能显示已有字段
+      await get().loadFieldsConfig()
     } catch (error: any) {
       console.error('加载模板失败:', error)
       set({
