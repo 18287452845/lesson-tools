@@ -384,7 +384,17 @@ const TemplateEditor: React.FC = () => {
       </Header>
 
       {/* 内容区域 */}
-      <Content style={{ padding: '24px' }}>
+      <Content
+        style={{
+          padding: '24px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 16,
+          height: 'calc(100vh - 64px)',
+          boxSizing: 'border-box',
+          overflow: 'hidden',
+        }}
+      >
         {editorMode === 'onlyoffice' ? (
           <>
             <Alert
@@ -392,17 +402,23 @@ const TemplateEditor: React.FC = () => {
               description="在工具栏中点击保存后，文档将通过回调写回模板文件并同步到版本历史。"
               type="info"
               showIcon
-              style={{ marginBottom: 16 }}
+              style={{ marginBottom: 0 }}
             />
-            {templateId && (
-              <OnlyOfficeEditor
-                templateId={templateId}
-                onRefresh={handleReloadTemplate}
-              />
-            )}
+            <div style={{ flex: 1, minHeight: 0 }}>
+              {templateId && (
+                <OnlyOfficeEditor
+                  templateId={templateId}
+                  onRefresh={handleReloadTemplate}
+                  style={{
+                    height: '100%',
+                    minHeight: 'calc(100vh - 200px)',
+                  }}
+                />
+              )}
+            </div>
           </>
         ) : (
-          <>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
             {/* 转换消息/警告 */}
             {messages.length > 0 && (
               <Alert
@@ -430,7 +446,7 @@ const TemplateEditor: React.FC = () => {
                 editorRef.current = editor
               }}
             />
-          </>
+          </div>
         )}
       </Content>
 

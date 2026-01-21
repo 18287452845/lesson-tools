@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Spin } from 'antd'
 import { templateEditorApi } from '@/services/api'
 import type { OnlyOfficeEditorConfig } from '@/types'
+import type { CSSProperties } from 'react'
 
 declare global {
   interface Window {
@@ -12,6 +13,7 @@ declare global {
 interface OnlyOfficeEditorProps {
   templateId: string
   onRefresh?: () => void
+  style?: CSSProperties
 }
 
 const loadScript = (src: string) => {
@@ -29,7 +31,7 @@ const loadScript = (src: string) => {
   })
 }
 
-const OnlyOfficeEditor: React.FC<OnlyOfficeEditorProps> = ({ templateId, onRefresh }) => {
+const OnlyOfficeEditor: React.FC<OnlyOfficeEditorProps> = ({ templateId, onRefresh, style }) => {
   const containerId = useMemo(() => `onlyoffice-editor-${templateId}`, [templateId])
   const editorRef = useRef<any>(null)
   const [config, setConfig] = useState<OnlyOfficeEditorConfig | null>(null)
@@ -129,8 +131,10 @@ const OnlyOfficeEditor: React.FC<OnlyOfficeEditorProps> = ({ templateId, onRefre
         border: '1px solid #e5e5e5',
         borderRadius: 8,
         overflow: 'hidden',
-        minHeight: '70vh',
         background: '#fafafa',
+        height: '100%',
+        minHeight: '70vh',
+        ...style,
       }}
     />
   )
