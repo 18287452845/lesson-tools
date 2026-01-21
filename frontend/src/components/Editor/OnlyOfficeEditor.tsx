@@ -128,12 +128,15 @@ const OnlyOfficeEditor: React.FC<OnlyOfficeEditorProps> = ({ templateId, onRefre
     <div
       id={containerId}
       style={{
+        display: 'flex',
+        flexDirection: 'column',
+        width: '100%',
         border: '1px solid #e5e5e5',
         borderRadius: 8,
         overflow: 'hidden',
         background: '#fafafa',
         height: '100%',
-        minHeight: '70vh',
+        minHeight: 'calc(100vh - 180px)',
         ...style,
       }}
     />

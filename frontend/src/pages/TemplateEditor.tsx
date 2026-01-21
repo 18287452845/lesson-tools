@@ -396,7 +396,7 @@ const TemplateEditor: React.FC = () => {
         }}
       >
         {editorMode === 'onlyoffice' ? (
-          <>
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: 16 }}>
             <Alert
               message="OnlyOffice 模式（保持原始排版样式）"
               description="在工具栏中点击保存后，文档将通过回调写回模板文件并同步到版本历史。"
@@ -411,12 +411,12 @@ const TemplateEditor: React.FC = () => {
                   onRefresh={handleReloadTemplate}
                   style={{
                     height: '100%',
-                    minHeight: 'calc(100vh - 200px)',
+                    minHeight: 'calc(100vh - 180px)',
                   }}
                 />
               )}
             </div>
-          </>
+          </div>
         ) : (
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
             {/* 转换消息/警告 */}

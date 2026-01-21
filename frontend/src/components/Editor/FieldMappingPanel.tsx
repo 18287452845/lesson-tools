@@ -67,6 +67,13 @@ const FieldMappingPanel: React.FC<FieldMappingPanelProps> = ({
 
   // 加载数据
   useEffect(() => {
+    if (templateId) {
+      loadFieldsConfig()
+      loadStandardFields()
+    }
+  }, [templateId, loadFieldsConfig, loadStandardFields])
+
+  useEffect(() => {
     if (visible && templateId) {
       loadFieldsConfig()
       loadStandardFields()
