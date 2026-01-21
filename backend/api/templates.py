@@ -5,6 +5,7 @@ import os
 import shutil
 import json
 import tempfile
+import logging
 from pathlib import Path
 from typing import Optional
 from urllib.request import urlopen
@@ -30,6 +31,33 @@ from ..services.template_versioning import (
 )
 
 router = APIRouter(prefix="/templates", tags=["templates"])
+logger = logging.getLogger(__name__)
+
+
+async def _ensure_fields_config(template_id: str, file_path: str, fields_config_json: Optional[str]) -> list[dict]:
+    """Ensure fields_config is populated; parse and persist if missing."""
+    if fields_config_json:
+        try:
+            fields = json.loads(fields_config_json)
+            if fields:
+                return fields
+        except Exception:
+            pass
+
+    # Parse template to recover fields_config
+    try:
+        parser = TemplateParser(file_path)
+        fields = parser.parse()
+        fields_config = [f.model_dump() for f in fields]
+        await db.execute(
+            "UPDATE templates SET fields_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(fields_config), template_id),
+            commit=True,
+        )
+        return fields_config
+    except Exception as exc:
+        logger.warning("Failed to rebuild fields_config for template %s: %s", template_id, exc)
+        return []
 
 
 @router.post("/upload", response_model=TemplateUploadResponse)
@@ -187,7 +215,11 @@ async def get_template(template_id: str):
     if not row:
         raise HTTPException(status_code=404, detail="Template not found")
 
-    fields_config = json.loads(row["fields_config"]) if row["fields_config"] else []
+    fields_config = await _ensure_fields_config(
+        template_id=template_id,
+        file_path=row["file_path"],
+        fields_config_json=row["fields_config"],
+    )
 
     return TemplateInfo(
         id=row["id"],
@@ -283,14 +315,18 @@ async def get_template_fields(template_id: str):
     Get fields configuration for a template.
     """
     row = await db.fetch_one(
-        "SELECT fields_config FROM templates WHERE id = ?",
+        "SELECT fields_config, file_path FROM templates WHERE id = ?",
         (template_id,),
     )
 
     if not row:
         raise HTTPException(status_code=404, detail="Template not found")
 
-    fields_config = json.loads(row["fields_config"]) if row["fields_config"] else []
+    fields_config = await _ensure_fields_config(
+        template_id=template_id,
+        file_path=row["file_path"],
+        fields_config_json=row["fields_config"],
+    )
     return {"fields": fields_config}
 
 
@@ -455,7 +491,18 @@ async def get_onlyoffice_config(template_id: str, request: Request):
             import jwt
 
             # JWT payload must mirror the editor config for Document Server validation
-            token = jwt.encode(config, settings.onlyoffice_jwt_secret, algorithm="HS256")
+            payload = json.loads(json.dumps(config))
+            token = jwt.encode(payload, settings.onlyoffice_jwt_secret, algorithm="HS256")
+            if isinstance(token, bytes):
+                token = token.decode("utf-8")
+
+            # Attach token in all expected locations (DS 7.1+ enforces document.key in JWT)
+            config["token"] = token
+            config["jwt"] = token
+            config["document"]["token"] = token
+            config["document"]["jwt"] = token
+            config["editorConfig"]["token"] = token
+            config["editorConfig"]["jwt"] = token
         except ImportError:
             # JWT library not installed; skip token generation
             token = None
