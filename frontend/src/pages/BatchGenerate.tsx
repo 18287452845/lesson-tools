@@ -329,25 +329,8 @@ const BatchGenerate: React.FC = () => {
       // Auto-fill form fields
       form.setFieldsValue(formValues);
 
-      // Load chapters but validate count matches expected
-      const expectedLessons = selected.total_hours / (selected.hours_per_lesson ?? 2);
-
-      // If cached chapters count doesn't match expected, warn user and clear chapters
-      if (selected.chapters.length !== expectedLessons) {
-        console.warn(
-          `Cached template chapter count mismatch: ` +
-          `cached=${selected.chapters.length}, expected=${expectedLessons}. ` +
-          `Clearing chapters - user should regenerate.`
-        );
-        message.warning(
-          `缓存的章节数量(${selected.chapters.length})与课时设置(${expectedLessons}份教案)不匹配，请重新生成章节`,
-          5
-        );
-        applyChapters([]);
-      } else {
-        // Cached chapters count is correct, use it
-        applyChapters(selected.chapters);
-      }
+      // Load cached chapters
+      applyChapters(selected.chapters);
 
       if (currentTemplateId) {
         message.success(`已加载 ${selected.course_name} 的 ${selected.chapters.length} 份教案章节`);
@@ -396,48 +379,22 @@ const BatchGenerate: React.FC = () => {
         (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
       );
       const outline = buildOutlineFromTextbook(sortedChapters);
+      const rootChapters = sortedChapters.filter((ch) => !ch.parent_chapter_id);
       const chapterTitles = flattenOutlineToLines(outline).join('\n');
       form.setFieldValue('chapters_input', chapterTitles);
 
-      // Get expected lesson count from form values
-      const totalHours = form.getFieldValue('total_hours') || textbook.total_hours || 64;
-      const hoursPerLesson = form.getFieldValue('hours_per_lesson') || 2;
-      const expectedLessons = totalHours / hoursPerLesson;
-      const rootChapters = sortedChapters.filter((ch) => !ch.parent_chapter_id);
-      const outlineRoots = outline.length;
-      const rootCount = rootChapters.length || outlineRoots;
+      const chapters: ChapterInfo[] = rootChapters.map((ch, idx) => ({
+        lesson_number: idx + 1,
+        topic: ch.chapter_title || ch.chapter_number || `第${idx + 1}章`,
+        content_summary: ch.content_summary || '',
+        key_concepts: ch.key_concepts || [],
+      }));
 
-      // Warn user if textbook chapters don't match expected lesson count
-      if (rootCount !== expectedLessons) {
-        console.warn(
-          `Textbook chapter count mismatch: ` +
-          `textbook has ${rootCount} top-level chapters, ` +
-          `but course needs ${expectedLessons} lessons (${totalHours} hours / ${hoursPerLesson} hours per lesson)`
-        );
+      const { outlines } = outlineToChapters(outline);
+      const normalizedOutlines = chapters.map((_chapter, idx) => outlines[idx] ?? []);
+      applyChapters(chapters, normalizedOutlines);
 
-        message.warning(
-          `教材有 ${rootCount} 个一级章节，但课程需要 ${expectedLessons} 份教案。` +
-          `章节已填入输入框，点击"下一步"时系统会自动调整到 ${expectedLessons} 份。`,
-          6
-        );
-
-        // Don't set chapters yet - let user click "下一步" to generate with proper count
-        applyChapters([]);
-      } else {
-        // Chapter count matches - convert and use directly
-        const chapters: ChapterInfo[] = rootChapters.map((ch, idx) => ({
-          lesson_number: idx + 1,
-          topic: ch.chapter_title || ch.chapter_number || `第${idx + 1}章`,
-          content_summary: ch.content_summary || '',
-          key_concepts: ch.key_concepts || [],
-        }));
-
-        const { outlines } = outlineToChapters(outline);
-        const normalizedOutlines = chapters.map((_chapter, idx) => outlines[idx] ?? []);
-        applyChapters(chapters, normalizedOutlines);
-
-        message.success(`已加载 ${textbook.name} 的 ${chapters.length} 个章节`);
-      }
+      message.success(`已加载 ${textbook.name} 的 ${chapters.length} 个章节`);
     } catch (error: any) {
       message.error(error.message || '加载教材失败');
     }
@@ -520,8 +477,8 @@ const BatchGenerate: React.FC = () => {
         (response: ChapterSplitResponse) => {
           applyChapters(response.chapters);
           setCurrentStep(1);
-          const numDocs = Math.ceil(response.total_lessons / 2);
-          message.success(`成功生成 ${response.total_lessons} 份教案（${numDocs} 个文档）`);
+          const numDocs = Math.ceil(response.chapters.length / 2);
+          message.success(`成功生成 ${response.chapters.length} 份教案（${numDocs} 个文档）`);
           setSplittingChapters(false);
         },
         // onError callback
@@ -1081,7 +1038,8 @@ const BatchGenerate: React.FC = () => {
                 message={(() => {
                   const totalHours = form.getFieldValue('total_hours') || 64;
                   const hoursPerLesson = form.getFieldValue('hours_per_lesson') || 2;
-                  const numLessons = Math.floor(totalHours / hoursPerLesson);
+                  const chapterCount = chapters.length;
+                  const numLessons = chapterCount > 0 ? chapterCount : Math.floor(totalHours / hoursPerLesson);
                   const numDocs = Math.ceil(numLessons / 2);
                   return `预计生成 ${numLessons} 份教案，共 ${numDocs} 个文档`;
                 })()}

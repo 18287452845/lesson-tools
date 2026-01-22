@@ -45,6 +45,7 @@
 - **📄 文档导出** - 支持导出为 Word 文档格式（完美保留格式和表格）
 - **🔌 多 AI 提供商** - 支持 DeepSeek 和 Anthropic Claude
 - **💻 桌面应用** - 支持 Electron 跨平台桌面应用
+- **📚 教材章节层级** - 默认支持教材-章节-小节三层结构
 
 ### 模板编辑器特性
 - **Jinja2 语法支持** - 可视化插入变量、循环和条件
@@ -642,6 +643,29 @@ lesson-tools/
 5. 支持编辑和删除班级
 
 ## ❓ 常见问题
+
+### OnlyOffice 集成
+
+**Q: 打开模板编辑器提示“OnlyOffice Document Server URL not configured”？**
+
+A: 确认后端环境变量已设置且进程重启：
+```env
+ONLYOFFICE_DOCS_URL=https://your-onlyoffice-domain   # 例如 https://only.linnera.link
+ONLYOFFICE_JWT_SECRET=your-jwt-secret                # 文档安全令牌
+PUBLIC_BASE_URL=https://your-frontend-domain         # 例如 https://ls.linnera.link
+```
+Docker 模式修改 `.env` 后需 `docker-compose up -d --build` 重新构建。
+
+**Q: OnlyOffice 提示“文档安全令牌格式不正确”或 JWT 校验失败？**
+
+A: 文档服务器与后端的密钥必须一致，且 Document Server 开启了 JWT 验证。
+1. 确认 `.env` 的 `ONLYOFFICE_JWT_SECRET` 与 Document Server `/etc/onlyoffice/documentserver/local.json` 中的 `services.CoAuthoring.secret` 相同。
+2. 重启 Document Server（或其容器）和后端。
+3. 浏览器清除缓存后重试。
+
+**Q: 控制台报 `inspector.js ... responseType 'arraybuffer'`？**
+
+A: 升级到最新代码并确保 Document Server 使用新的静态版本号（当前为 `20260121-fix8`）。后端会在加载脚本时追加该版本号，Document Server Nginx 需将 `$cache_tag` 设为相同值并为 `inspector.js` 提供占位文件以避免调试脚本拦截。更新后重新部署 Docker 后端与前端。
 
 ### 安装和启动
 

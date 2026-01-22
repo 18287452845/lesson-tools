@@ -84,7 +84,7 @@ async def split_chapters(request: ChapterSplitRequest):
                 chapters_input=request.chapters_input,
                 additional_info=request.additional_info,
             )
-            return ChapterSplitResponse(chapters=chapters, total_lessons=num_lessons)
+            return ChapterSplitResponse(chapters=chapters, total_lessons=len(chapters))
 
         # Step 1: Check if template exists in database
         db = await get_db()
@@ -107,42 +107,23 @@ async def split_chapters(request: ChapterSplitRequest):
             # Found cached template
             chapters_json = json.loads(existing["chapters"])
             chapters = [ChapterInfo(**c) for c in chapters_json]
+            # Increment use count
+            await db.execute(
+                """
+                UPDATE course_chapter_templates
+                SET use_count = use_count + 1, updated_at = ?
+                WHERE id = ?
+                """,
+                (datetime.now().isoformat(), existing["id"]),
+                commit=True,
+            )
 
-            # Validate cached chapters count matches expected num_lessons
-            if len(chapters) != num_lessons:
-                logger.warning(
-                    f"Cached template chapter count mismatch: "
-                    f"cached={len(chapters)}, expected={num_lessons}. "
-                    f"Deleting invalid cache and regenerating."
-                )
+            logger.info(
+                f"Using cached template (id={existing['id']}, "
+                f"use_count={existing['use_count'] + 1})"
+            )
 
-                # Delete invalid cached template
-                await db.execute(
-                    "DELETE FROM course_chapter_templates WHERE id = ?",
-                    (existing["id"],),
-                    commit=True,
-                )
-
-                # Fall through to regenerate
-            else:
-                # Cached chapters count is correct, use it
-                # Increment use count
-                await db.execute(
-                    """
-                    UPDATE course_chapter_templates
-                    SET use_count = use_count + 1, updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (datetime.now().isoformat(), existing["id"]),
-                    commit=True,
-                )
-
-                logger.info(
-                    f"Using cached template (id={existing['id']}, "
-                    f"use_count={existing['use_count'] + 1})"
-                )
-
-                return ChapterSplitResponse(chapters=chapters, total_lessons=num_lessons)
+            return ChapterSplitResponse(chapters=chapters, total_lessons=len(chapters))
 
         # Step 2: No cached template, call AI to generate
         logger.info("No cached template found, calling AI...")
@@ -191,7 +172,7 @@ async def split_chapters(request: ChapterSplitRequest):
             f"(template_id={template_id})"
         )
 
-        return ChapterSplitResponse(chapters=chapters, total_lessons=num_lessons)
+        return ChapterSplitResponse(chapters=chapters, total_lessons=len(chapters))
 
     except Exception as e:
         logger.error(f"Failed to split chapters: {str(e)}", exc_info=True)
@@ -211,11 +192,6 @@ async def split_chapters_stream(request: ChapterSplitRequest):
     """
     async def event_generator():
         try:
-            num_lessons = request.total_hours // request.hours_per_lesson
-
-            # 发送初始进度
-            yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': num_lessons, 'message': f'准备生成 {num_lessons} 份教案...'}, ensure_ascii=False)}\n\n"
-
             db = await get_db()
 
             # 如果用户提供了章节输入，直接解析（不缓存）
@@ -231,13 +207,18 @@ async def split_chapters_stream(request: ChapterSplitRequest):
                     additional_info=request.additional_info,
                 )
 
+                total_lessons = len(chapters)
+
+                # 发送初始进度
+                yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': total_lessons, 'message': f'准备解析 {total_lessons} 个章节...'}, ensure_ascii=False)}\n\n"
+
                 # 流式返回解析的章节
                 for idx, chapter in enumerate(chapters, 1):
-                    yield f"event: progress\ndata: {json.dumps({'current': idx, 'total': num_lessons, 'message': f'解析第 {idx}/{num_lessons} 个章节'}, ensure_ascii=False)}\n\n"
+                    yield f"event: progress\ndata: {json.dumps({'current': idx, 'total': total_lessons, 'message': f'解析第 {idx}/{total_lessons} 个章节'}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.02)  # 小延迟用于视觉反馈
                     yield f"event: chapter\ndata: {json.dumps(chapter.model_dump(), ensure_ascii=False)}\n\n"
 
-                yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters], 'total_lessons': num_lessons}, ensure_ascii=False)}\n\n"
+                yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters], 'total_lessons': total_lessons}, ensure_ascii=False)}\n\n"
                 return
 
             # 检查是否有缓存的模板
@@ -257,29 +238,14 @@ async def split_chapters_stream(request: ChapterSplitRequest):
             )
 
             if existing:
-                # 有缓存 - 验证章节数量
+                # 有缓存 - 直接使用章节
                 chapters_json = json.loads(existing["chapters"])
                 chapters = [ChapterInfo(**c) for c in chapters_json]
+                total_lessons = len(chapters)
 
-                # Validate cached chapters count matches expected num_lessons
-                if len(chapters) != num_lessons:
-                    logger.warning(
-                        f"Cached template chapter count mismatch (stream): "
-                        f"cached={len(chapters)}, expected={num_lessons}. "
-                        f"Deleting invalid cache and regenerating."
-                    )
+                # 发送初始进度
+                yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': total_lessons, 'message': f'准备加载 {total_lessons} 个章节...'}, ensure_ascii=False)}\n\n"
 
-                    # Delete invalid cached template
-                    await db.execute(
-                        "DELETE FROM course_chapter_templates WHERE id = ?",
-                        (existing["id"],),
-                        commit=True,
-                    )
-
-                    # Set existing to None to trigger regeneration
-                    existing = None
-
-            if existing:
                 # 有缓存且章节数量正确 - 流式返回缓存的章节
                 # 更新使用计数
                 await db.execute(
@@ -294,14 +260,19 @@ async def split_chapters_stream(request: ChapterSplitRequest):
 
                 # 模拟进度流式返回
                 for idx, chapter in enumerate(chapters, 1):
-                    yield f"event: progress\ndata: {json.dumps({'current': idx, 'total': num_lessons, 'message': f'加载第 {idx}/{num_lessons} 个章节'}, ensure_ascii=False)}\n\n"
+                    yield f"event: progress\ndata: {json.dumps({'current': idx, 'total': total_lessons, 'message': f'加载第 {idx}/{total_lessons} 个章节'}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.05)  # 小延迟用于视觉反馈
                     yield f"event: chapter\ndata: {json.dumps(chapter.model_dump(), ensure_ascii=False)}\n\n"
 
-                yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters], 'total_lessons': num_lessons}, ensure_ascii=False)}\n\n"
+                yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters], 'total_lessons': total_lessons}, ensure_ascii=False)}\n\n"
                 return
 
             # AI 生成模式 - 流式生成
+            num_lessons = request.total_hours // request.hours_per_lesson
+
+            # 发送初始进度
+            yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': num_lessons, 'message': f'准备生成 {num_lessons} 份教案...'}, ensure_ascii=False)}\n\n"
+
             splitter = ChapterSplitter(
                 provider=settings.ai_provider,
                 api_key=settings.get_active_api_key(),
@@ -349,7 +320,7 @@ async def split_chapters_stream(request: ChapterSplitRequest):
                 commit=True,
             )
 
-            yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters[:num_lessons]], 'total_lessons': num_lessons}, ensure_ascii=False)}\n\n"
+            yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters], 'total_lessons': len(chapters)}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
             logger.error(f"Stream chapter generation failed: {str(e)}", exc_info=True)
@@ -1111,4 +1082,3 @@ async def export_selected_lesson_plans(
             exc_info=True
         )
         raise HTTPException(status_code=500, detail=str(e))
-

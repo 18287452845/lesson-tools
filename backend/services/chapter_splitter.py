@@ -232,13 +232,12 @@ class ChapterSplitter:
         Raises:
             ValueError: If the response cannot be parsed
         """
-        num_lessons = total_hours // hours_per_lesson
-
         if chapters_input and chapters_input.strip():
             # Mode 1: Parse user-provided chapters
-            return self._parse_manual_chapters(chapters_input, num_lessons)
+            return self._parse_manual_chapters(chapters_input)
         else:
             # Mode 2: AI-generated chapters
+            num_lessons = total_hours // hours_per_lesson
             return await self._generate_ai_chapters(
                 course_name, subject, grade,
                 total_hours, hours_per_lesson, num_lessons,
@@ -247,15 +246,13 @@ class ChapterSplitter:
 
     def _parse_manual_chapters(
         self,
-        chapters_input: str,
-        num_lessons: int
+        chapters_input: str
     ) -> List[ChapterInfo]:
         """
         Parse user-provided chapter titles.
 
         Args:
             chapters_input: User input with one chapter per line
-            num_lessons: Expected number of lessons
 
         Returns:
             List of ChapterInfo objects
@@ -267,14 +264,8 @@ class ChapterSplitter:
         ]
 
         chapters = []
-        for i in range(num_lessons):
+        for i, topic in enumerate(lines):
             lesson_number = i + 1
-            if i < len(lines):
-                topic = lines[i]
-            else:
-                # Fill with generic title if not enough lines
-                topic = f"第{lesson_number}课"
-
             chapters.append(ChapterInfo(
                 lesson_number=lesson_number,
                 topic=topic,
@@ -379,19 +370,7 @@ class ChapterSplitter:
 
             batch_start = batch_end + 1
 
-        # Final validation - ensure we have the exact number requested
-        if len(all_chapters) < num_lessons:
-            # Fill missing with generic titles
-            while len(all_chapters) < num_lessons:
-                lesson_num = len(all_chapters) + 1
-                all_chapters.append(ChapterInfo(
-                    lesson_number=lesson_num,
-                    topic=f"第{lesson_num}课",
-                    content_summary="",
-                    key_concepts=[]
-                ))
-
-        return all_chapters[:num_lessons]  # Trim if too many
+        return all_chapters
 
     async def _generate_ai_chapters_stream(
         self,
@@ -532,17 +511,6 @@ class ChapterSplitter:
                     yield chapter
 
             batch_start = batch_end + 1
-
-        # Fill missing chapters if AI generated fewer than expected
-        for lesson_num in range(1, num_lessons + 1):
-            if lesson_num not in yielded_chapters:
-                filler_chapter = ChapterInfo(
-                    lesson_number=lesson_num,
-                    topic=f"第{lesson_num}课",
-                    content_summary="",
-                    key_concepts=[]
-                )
-                yield filler_chapter
 
     def _try_parse_partial_chapters(self, content: str) -> List[ChapterInfo]:
         """
