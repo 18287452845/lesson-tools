@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     template_dir: Path = storage_dir / "templates"
     upload_dir: Path = storage_dir / "uploads"
     output_dir: Path = storage_dir / "outputs"
-    database_path: str = str(storage_dir / "database.db")
+    database_path: str = ""
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "")
 
     # OnlyOffice Document Server
@@ -88,10 +88,36 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.database_path = self._resolve_database_path()
         # Ensure directories exist
         self.template_dir.mkdir(parents=True, exist_ok=True)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_database_path(self) -> str:
+        database_url = os.getenv("DATABASE_URL")
+        if database_url and database_url.startswith("sqlite"):
+            if database_url.startswith("sqlite:///"):
+                raw_path = database_url[len("sqlite:///"):]
+            elif database_url.startswith("sqlite://"):
+                raw_path = database_url[len("sqlite://"):]
+            else:
+                raw_path = ""
+
+            if raw_path:
+                return self._normalize_path(raw_path)
+
+        database_path = os.getenv("DATABASE_PATH")
+        if database_path:
+            return self._normalize_path(database_path)
+
+        return str(self.storage_dir / "database.db")
+
+    def _normalize_path(self, raw_path: str) -> str:
+        path = Path(raw_path.strip())
+        if path.is_absolute():
+            return str(path)
+        return str((self.base_dir / path).resolve())
 
 
 # Global settings instance
