@@ -66,6 +66,125 @@ import { textbookApi } from '@/services/textbookApi';
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
+const OUTLINE_INDENT = 2;
+const MAX_OUTLINE_LEVEL = 4;
+
+type OutlineNode = {
+  title: string;
+  level: number;
+  children: OutlineNode[];
+};
+
+const parseOutlineInput = (input: string): OutlineNode[] => {
+  const lines = input
+    .split(/\r?\n/)
+    .map((raw) => {
+      const normalized = raw.replace(/\t/g, '  ');
+      const match = normalized.match(/^(\s*)(.*)$/);
+      return {
+        indent: match?.[1]?.length ?? 0,
+        text: match?.[2]?.trim() ?? '',
+      };
+    })
+    .filter((item) => item.text);
+
+  if (lines.length === 0) {
+    return [];
+  }
+
+  const positiveIndents = lines.map((item) => item.indent).filter((value) => value > 0);
+  const indentUnit = positiveIndents.length > 0 ? Math.min(...positiveIndents) : OUTLINE_INDENT;
+  const roots: OutlineNode[] = [];
+  const stack: OutlineNode[] = [];
+
+  lines.forEach(({ indent, text }) => {
+    const level = Math.min(MAX_OUTLINE_LEVEL, Math.floor(indent / indentUnit) + 1);
+    while (stack.length && stack[stack.length - 1].level >= level) {
+      stack.pop();
+    }
+    const node: OutlineNode = {
+      title: text,
+      level,
+      children: [],
+    };
+    if (stack.length) {
+      stack[stack.length - 1].children.push(node);
+    } else {
+      roots.push(node);
+    }
+    stack.push(node);
+  });
+
+  return roots;
+};
+
+const flattenOutlineToLines = (nodes: OutlineNode[], indent = 0): string[] => {
+  const lines: string[] = [];
+  nodes.forEach((node) => {
+    lines.push(`${' '.repeat(indent)}${node.title}`);
+    if (node.children.length > 0) {
+      lines.push(...flattenOutlineToLines(node.children, indent + OUTLINE_INDENT));
+    }
+  });
+  return lines;
+};
+
+const collectChildOutlineLines = (node: OutlineNode, indent = 0): string[] => {
+  const lines: string[] = [];
+  node.children.forEach((child) => {
+    lines.push(`${'  '.repeat(indent)}- ${child.title}`);
+    if (child.children.length > 0) {
+      lines.push(...collectChildOutlineLines(child, indent + 1));
+    }
+  });
+  return lines;
+};
+
+const outlineToChapters = (outline: OutlineNode[]): { chapters: ChapterInfo[]; outlines: string[][] } => {
+  const chapters: ChapterInfo[] = [];
+  const outlines: string[][] = [];
+
+  outline.forEach((node, idx) => {
+    chapters.push({
+      lesson_number: idx + 1,
+      topic: node.title,
+      content_summary: '',
+      key_concepts: [],
+    });
+    outlines.push(collectChildOutlineLines(node));
+  });
+
+  return { chapters, outlines };
+};
+
+const buildOutlineFromTextbook = (chapters: TextbookInfo['chapters']): OutlineNode[] => {
+  const map = new Map<string, OutlineNode>();
+  const sorted = [...chapters].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  const roots: OutlineNode[] = [];
+
+  sorted.forEach((chapter) => {
+    map.set(chapter.id, {
+      title: chapter.chapter_title || chapter.chapter_number || '章节',
+      level: 1,
+      children: [],
+    });
+  });
+
+  sorted.forEach((chapter) => {
+    const node = map.get(chapter.id);
+    if (!node) {
+      return;
+    }
+    if (chapter.parent_chapter_id && map.has(chapter.parent_chapter_id)) {
+      map.get(chapter.parent_chapter_id)?.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  });
+
+  return roots;
+};
+
 const BatchGenerate: React.FC = () => {
   const navigate = useNavigate();
   const [form] = Form.useForm();
@@ -95,6 +214,7 @@ const BatchGenerate: React.FC = () => {
 
   // Step 2: Chapters
   const [chapters, setChapters] = useState<ChapterInfo[]>([]);
+  const [chapterOutline, setChapterOutline] = useState<string[][]>([]);
   const [splittingChapters, setSplittingChapters] = useState(false);
 
   // Streaming state
@@ -178,6 +298,11 @@ const BatchGenerate: React.FC = () => {
     return 'ai';
   };
 
+  const applyChapters = (nextChapters: ChapterInfo[], outlines?: string[][]) => {
+    setChapters(nextChapters);
+    setChapterOutline(outlines ?? nextChapters.map(() => []));
+  };
+
   // Handle selecting an existing cached template
   const handleSelectCachedTemplate = (templateId: string) => {
     const selected = cachedTemplates.find((t) => t.id === templateId);
@@ -218,10 +343,10 @@ const BatchGenerate: React.FC = () => {
           `缓存的章节数量(${selected.chapters.length})与课时设置(${expectedLessons}份教案)不匹配，请重新生成章节`,
           5
         );
-        setChapters([]);
+        applyChapters([]);
       } else {
         // Cached chapters count is correct, use it
-        setChapters(selected.chapters);
+        applyChapters(selected.chapters);
       }
 
       if (currentTemplateId) {
@@ -236,7 +361,7 @@ const BatchGenerate: React.FC = () => {
   const handleSelectTextbook = async (textbookId: string) => {
     if (!textbookId) {
       setSelectedTextbookId(undefined);
-      setChapters([]);
+      applyChapters([]);
       form.setFieldValue('chapters_input', '');
       return;
     }
@@ -267,42 +392,49 @@ const BatchGenerate: React.FC = () => {
       form.setFieldsValue(formValues);
 
       // Pre-fill chapters_input with chapter titles (for manual editing)
-      const chapterTitles = textbook.chapters
-        .map((ch) => ch.chapter_title)
-        .join('\n');
+      const sortedChapters = [...textbook.chapters].sort(
+        (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
+      );
+      const outline = buildOutlineFromTextbook(sortedChapters);
+      const chapterTitles = flattenOutlineToLines(outline).join('\n');
       form.setFieldValue('chapters_input', chapterTitles);
 
       // Get expected lesson count from form values
       const totalHours = form.getFieldValue('total_hours') || textbook.total_hours || 64;
       const hoursPerLesson = form.getFieldValue('hours_per_lesson') || 2;
       const expectedLessons = totalHours / hoursPerLesson;
+      const rootChapters = sortedChapters.filter((ch) => !ch.parent_chapter_id);
+      const outlineRoots = outline.length;
+      const rootCount = rootChapters.length || outlineRoots;
 
       // Warn user if textbook chapters don't match expected lesson count
-      if (textbook.chapters.length !== expectedLessons) {
+      if (rootCount !== expectedLessons) {
         console.warn(
           `Textbook chapter count mismatch: ` +
-          `textbook has ${textbook.chapters.length} chapters, ` +
+          `textbook has ${rootCount} top-level chapters, ` +
           `but course needs ${expectedLessons} lessons (${totalHours} hours / ${hoursPerLesson} hours per lesson)`
         );
 
         message.warning(
-          `教材有 ${textbook.chapters.length} 个章节，但课程需要 ${expectedLessons} 份教案。` +
+          `教材有 ${rootCount} 个一级章节，但课程需要 ${expectedLessons} 份教案。` +
           `章节已填入输入框，点击"下一步"时系统会自动调整到 ${expectedLessons} 份。`,
           6
         );
 
         // Don't set chapters yet - let user click "下一步" to generate with proper count
-        setChapters([]);
+        applyChapters([]);
       } else {
         // Chapter count matches - convert and use directly
-        const chapters: ChapterInfo[] = textbook.chapters.map((ch, idx) => ({
+        const chapters: ChapterInfo[] = rootChapters.map((ch, idx) => ({
           lesson_number: idx + 1,
-          topic: ch.chapter_title,
+          topic: ch.chapter_title || ch.chapter_number || `第${idx + 1}章`,
           content_summary: ch.content_summary || '',
           key_concepts: ch.key_concepts || [],
         }));
 
-        setChapters(chapters);
+        const { outlines } = outlineToChapters(outline);
+        const normalizedOutlines = chapters.map((_chapter, idx) => outlines[idx] ?? []);
+        applyChapters(chapters, normalizedOutlines);
 
         message.success(`已加载 ${textbook.name} 的 ${chapters.length} 个章节`);
       }
@@ -319,14 +451,13 @@ const BatchGenerate: React.FC = () => {
     if (chapterMode === 'textbook' || chapterMode === 'cached') {
       // Check if user edited chapters_input
       if (values.chapters_input && values.chapters_input.trim()) {
-        const lines = values.chapters_input.trim().split('\n').filter(Boolean);
-        const updatedChapters = lines.map((line: string, idx: number) => ({
-          lesson_number: idx + 1,
-          topic: line.trim(),
-          content_summary: '',
-          key_concepts: [],
-        }));
-        setChapters(updatedChapters);
+        const outline = parseOutlineInput(values.chapters_input);
+        const { chapters: updatedChapters, outlines } = outlineToChapters(outline);
+        if (updatedChapters.length === 0) {
+          message.error('请输入章节标题');
+          return;
+        }
+        applyChapters(updatedChapters, outlines);
       }
 
       setSavedFormValues(values);
@@ -342,15 +473,14 @@ const BatchGenerate: React.FC = () => {
         return;
       }
 
-      const lines = values.chapters_input.trim().split('\n').filter(Boolean);
-      const parsedChapters = lines.map((line: string, idx: number) => ({
-        lesson_number: idx + 1,
-        topic: line.trim(),
-        content_summary: '',
-        key_concepts: [],
-      }));
+      const outline = parseOutlineInput(values.chapters_input);
+      const { chapters: parsedChapters, outlines } = outlineToChapters(outline);
+      if (parsedChapters.length === 0) {
+        message.error('请输入章节标题');
+        return;
+      }
 
-      setChapters(parsedChapters);
+      applyChapters(parsedChapters, outlines);
       setSavedFormValues(values);
       setCurrentStep(1);
       message.success(`成功解析 ${parsedChapters.length} 个章节`);
@@ -388,7 +518,7 @@ const BatchGenerate: React.FC = () => {
         },
         // onComplete callback
         (response: ChapterSplitResponse) => {
-          setChapters(response.chapters);
+          applyChapters(response.chapters);
           setCurrentStep(1);
           const numDocs = Math.ceil(response.total_lessons / 2);
           message.success(`成功生成 ${response.total_lessons} 份教案（${numDocs} 个文档）`);
@@ -493,7 +623,9 @@ const BatchGenerate: React.FC = () => {
       content_summary: '',
       key_concepts: [],
     };
-    setChapters([...chapters, newChapter]);
+    const nextChapters = [...chapters, newChapter];
+    const nextOutline = [...chapterOutline, []];
+    applyChapters(nextChapters, nextOutline);
     message.success('已添加新章节');
   };
 
@@ -505,12 +637,13 @@ const BatchGenerate: React.FC = () => {
     }
 
     const newChapters = chapters.filter((_, i) => i !== index);
+    const newOutline = chapterOutline.filter((_, i) => i !== index);
     // Re-number chapters
     const renumberedChapters = newChapters.map((ch, idx) => ({
       ...ch,
       lesson_number: idx + 1,
     }));
-    setChapters(renumberedChapters);
+    applyChapters(renumberedChapters, newOutline);
     message.success('已删除章节');
   };
 
@@ -519,12 +652,14 @@ const BatchGenerate: React.FC = () => {
     if (index === 0) return;
     const newChapters = [...chapters];
     [newChapters[index - 1], newChapters[index]] = [newChapters[index], newChapters[index - 1]];
+    const newOutline = [...chapterOutline];
+    [newOutline[index - 1], newOutline[index]] = [newOutline[index], newOutline[index - 1]];
     // Re-number chapters
     const renumberedChapters = newChapters.map((ch, idx) => ({
       ...ch,
       lesson_number: idx + 1,
     }));
-    setChapters(renumberedChapters);
+    applyChapters(renumberedChapters, newOutline);
   };
 
   // Handle moving chapter down
@@ -532,12 +667,14 @@ const BatchGenerate: React.FC = () => {
     if (index === chapters.length - 1) return;
     const newChapters = [...chapters];
     [newChapters[index], newChapters[index + 1]] = [newChapters[index + 1], newChapters[index]];
+    const newOutline = [...chapterOutline];
+    [newOutline[index], newOutline[index + 1]] = [newOutline[index + 1], newOutline[index]];
     // Re-number chapters
     const renumberedChapters = newChapters.map((ch, idx) => ({
       ...ch,
       lesson_number: idx + 1,
     }));
-    setChapters(renumberedChapters);
+    applyChapters(renumberedChapters, newOutline);
   };
 
   // Chapter table columns
@@ -553,17 +690,30 @@ const BatchGenerate: React.FC = () => {
       title: '课题',
       dataIndex: 'topic',
       key: 'topic',
-      render: (text: string, _record: ChapterInfo, index: number) => (
-        <Input
-          value={text}
-          placeholder="请输入课题名称"
-          onChange={(e) => {
-            const newChapters = [...chapters];
-            newChapters[index].topic = e.target.value;
-            setChapters(newChapters);
-          }}
-        />
-      ),
+      render: (text: string, _record: ChapterInfo, index: number) => {
+        const outlineLines = chapterOutline[index] || [];
+        return (
+          <div>
+            <Input
+              value={text}
+              placeholder="请输入课题名称"
+              onChange={(e) => {
+                const newChapters = [...chapters];
+                newChapters[index].topic = e.target.value;
+                setChapters(newChapters);
+              }}
+            />
+            {outlineLines.length > 0 && (
+              <Text
+                type="secondary"
+                style={{ display: 'block', marginTop: 6, whiteSpace: 'pre-wrap', fontSize: 12 }}
+              >
+                {outlineLines.join('\n')}
+              </Text>
+            )}
+          </div>
+        );
+      },
     },
     {
       title: '内容概述',
@@ -742,7 +892,7 @@ const BatchGenerate: React.FC = () => {
                             handleSelectCachedTemplate(value);
                           } else {
                             setSelectedCachedTemplateId(undefined);
-                            setChapters([]);
+                            applyChapters([]);
                           }
                         }}
                       />
@@ -1064,12 +1214,12 @@ const BatchGenerate: React.FC = () => {
                   label={selectedTextbookId || selectedCachedTemplateId ? "章节标题（可编辑）" : "章节标题（每行一个）"}
                   rules={[{ required: chapterInputMode === 'manual' && !selectedTextbookId && !selectedCachedTemplateId, message: '请输入章节标题' }]}
                   extra={selectedTextbookId || selectedCachedTemplateId
-                    ? "已从教材/模板加载章节，可编辑后继续"
-                    : `请输入章节标题，每行一个`}
+                    ? "已从教材/模板加载章节，可编辑后继续；支持用空格缩进表示子章节"
+                    : "请输入章节标题，每行一个；支持用空格缩进表示子章节"}
                 >
                   <TextArea
                     rows={10}
-                    placeholder={`第一章：Java语言概述\n第二章：Java基本语法\n第三章：面向对象编程基础\n...`}
+                    placeholder={`第一章：Java语言概述\n  1.1 发展历史\n  1.2 生态与应用\n第二章：Java基本语法\n  2.1 数据类型\n  2.2 流程控制\n第三章：面向对象编程基础\n...`}
                   />
                 </Form.Item>
               )}

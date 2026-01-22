@@ -630,9 +630,9 @@ const TextbookManager: React.FC = () => {
 
     try {
       setSavingChapters(true);
+      setDraftLoadedTextbookId(null);
       const payload = flattenChapterTreeForSave(recalcLevels(chapterTree));
       await saveChapters(selectedTextbook.id, payload);
-      await getTextbook(selectedTextbook.id);
       message.success('章节已保存');
     } catch {
       // Error handled by store
