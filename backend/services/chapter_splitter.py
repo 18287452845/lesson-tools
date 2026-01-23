@@ -3,7 +3,7 @@ Course chapter splitting service using AI.
 
 Supports:
 - AI-powered automatic chapter generation based on total hours
-- Manual chapter input (user provides chapter titles)
+- AI-assisted chapter partitioning using user-provided outlines as reference
 """
 import asyncio
 import json
@@ -53,6 +53,25 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
         seen.add(item)
         result.append(item)
     return result
+
+
+def _build_additional_info_section(additional_info: Optional[str]) -> str:
+    if additional_info and additional_info.strip():
+        return f"\n- 补充说明：{additional_info.strip()}"
+    return ""
+
+
+def _build_chapters_reference_section(chapters_input: Optional[str]) -> str:
+    if not chapters_input or not chapters_input.strip():
+        return ""
+    lines = [line.strip() for line in chapters_input.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    formatted_lines = "\n".join(f"- {line}" for line in lines)
+    return (
+        "\n## 参考章节（仅供理解课程范围，需基于总课时/每份教案课时重构知识点，不要按原章节一一对应）\n"
+        f"{formatted_lines}"
+    )
 
 
 def _normalize_chapters_to_count(
@@ -157,6 +176,7 @@ class ChapterSplitter:
 - 每份教案课时：{hours_per_lesson} 课时
 - 教案数量：{num_lessons} 份
 {additional_info}
+{chapters_reference}
 
 ## 输出要求
 请返回JSON数组格式，每份教案一个对象，严格按照以下格式：
@@ -195,11 +215,15 @@ class ChapterSplitter:
    - 理论与实践相结合
    - 考虑学生的接受能力
 
-4. **章节层级**：
-   - 只输出顶层教案主题，不要把子章节/子话题拆成独立教案
+4. **章节参考（如有）**：
+   - 仅用于理解课程范围，不要按原章节数量一一对应
+   - 可拆分/合并/重组以匹配 {num_lessons} 份教案
+
+5. **层级与表达**：
+   - 教案标题应为教学主题，不要简单复用原始子章节标题
    - 子章节或细分内容请并入对应教案的content_summary
 
-5. **格式要求**：
+6. **格式要求**：
    - 必须返回纯JSON格式，不要包含其他说明文字
    - lesson_number字段必须从1开始，到{num_lessons}结束
    - 每个key_concepts数组包含3-5个核心概念
@@ -305,9 +329,9 @@ class ChapterSplitter:
         """
         Generate chapters based on total hours.
 
-        Supports two modes:
-        - Manual: User provides chapter titles (one per line)
-        - AI: Automatically generate chapters
+        Always uses AI generation. If chapters_input is provided,
+        it is treated as a reference outline for AI to restructure
+        based on total hours.
 
         Args:
             course_name: Name of the course
@@ -326,18 +350,17 @@ class ChapterSplitter:
         """
         num_lessons = max(1, total_hours // hours_per_lesson)
 
-        if chapters_input and chapters_input.strip():
-            # Mode 1: Parse user-provided chapters
-            chapters = self._parse_manual_chapters(chapters_input)
-            return _normalize_chapters_to_count(chapters, num_lessons)
-
-        # Mode 2: AI-generated chapters
         chapters = await self._generate_ai_chapters(
             course_name, subject, grade,
             total_hours, hours_per_lesson, num_lessons,
-            additional_info
+            chapters_input,
+            additional_info,
         )
-        return _normalize_chapters_to_count(chapters, num_lessons)
+        if len(chapters) != num_lessons:
+            raise ValueError(
+                f"AI章节数量不匹配：期望 {num_lessons}，实际 {len(chapters)}。请重新生成。"
+            )
+        return chapters
 
     def _parse_manual_chapters(
         self,
@@ -378,6 +401,7 @@ class ChapterSplitter:
         total_hours: int,
         hours_per_lesson: int,
         num_lessons: int,
+        chapters_input: Optional[str] = None,
         additional_info: Optional[str] = None,
     ) -> List[ChapterInfo]:
         """
@@ -394,15 +418,14 @@ class ChapterSplitter:
             total_hours: Total course hours
             hours_per_lesson: Hours per lesson plan
             num_lessons: Number of lessons to generate
+            chapters_input: Optional reference outline from user
             additional_info: Optional additional information
 
         Returns:
             List of ChapterInfo objects
         """
-        # Build additional info section
-        additional_info_section = ""
-        if additional_info:
-            additional_info_section = f"\n- 补充说明：{additional_info}"
+        additional_info_section = _build_additional_info_section(additional_info)
+        chapters_reference_section = _build_chapters_reference_section(chapters_input)
 
         # Batch size: max 12 lessons per batch to stay within token limits
         BATCH_SIZE = 12
@@ -422,6 +445,7 @@ class ChapterSplitter:
                 hours_per_lesson=hours_per_lesson,
                 num_lessons=batch_count,
                 additional_info=additional_info_section,
+                chapters_reference=chapters_reference_section,
             )
 
             # Add context for continuation
@@ -475,6 +499,7 @@ class ChapterSplitter:
         total_hours: int,
         hours_per_lesson: int,
         num_lessons: int,
+        chapters_input: Optional[str] = None,
         additional_info: Optional[str] = None,
     ):
         """
@@ -489,15 +514,14 @@ class ChapterSplitter:
             total_hours: Total course hours
             hours_per_lesson: Hours per lesson plan
             num_lessons: Number of lessons to generate
+            chapters_input: Optional reference outline from user
             additional_info: Optional additional information
 
         Yields:
             ChapterInfo objects as they are generated
         """
-        # Build additional info section
-        additional_info_section = ""
-        if additional_info:
-            additional_info_section = f"\n- 补充说明：{additional_info}"
+        additional_info_section = _build_additional_info_section(additional_info)
+        chapters_reference_section = _build_chapters_reference_section(chapters_input)
 
         # Batch size: max 12 lessons per batch to stay within token limits
         BATCH_SIZE = 12
@@ -525,6 +549,7 @@ class ChapterSplitter:
                 hours_per_lesson=hours_per_lesson,
                 num_lessons=batch_count,
                 additional_info=additional_info_section,
+                chapters_reference=chapters_reference_section,
             )
 
             # Add context for continuation

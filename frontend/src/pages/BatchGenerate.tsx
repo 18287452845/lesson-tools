@@ -9,7 +9,7 @@
  * Now supports hours-based generation:
  * - Total hours (64, 72, etc.)
  * - Hours per lesson (default 2)
- * - Manual or AI chapter input
+ * - Optional chapter references, AI always splits by hours
  */
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -67,55 +67,11 @@ const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
 const OUTLINE_INDENT = 2;
-const MAX_OUTLINE_LEVEL = 4;
 
 type OutlineNode = {
   title: string;
   level: number;
   children: OutlineNode[];
-};
-
-const parseOutlineInput = (input: string): OutlineNode[] => {
-  const lines = input
-    .split(/\r?\n/)
-    .map((raw) => {
-      const normalized = raw.replace(/\t/g, '  ');
-      const match = normalized.match(/^(\s*)(.*)$/);
-      return {
-        indent: match?.[1]?.length ?? 0,
-        text: match?.[2]?.trim() ?? '',
-      };
-    })
-    .filter((item) => item.text);
-
-  if (lines.length === 0) {
-    return [];
-  }
-
-  const positiveIndents = lines.map((item) => item.indent).filter((value) => value > 0);
-  const indentUnit = positiveIndents.length > 0 ? Math.min(...positiveIndents) : OUTLINE_INDENT;
-  const roots: OutlineNode[] = [];
-  const stack: OutlineNode[] = [];
-
-  lines.forEach(({ indent, text }) => {
-    const level = Math.min(MAX_OUTLINE_LEVEL, Math.floor(indent / indentUnit) + 1);
-    while (stack.length && stack[stack.length - 1].level >= level) {
-      stack.pop();
-    }
-    const node: OutlineNode = {
-      title: text,
-      level,
-      children: [],
-    };
-    if (stack.length) {
-      stack[stack.length - 1].children.push(node);
-    } else {
-      roots.push(node);
-    }
-    stack.push(node);
-  });
-
-  return roots;
 };
 
 const flattenOutlineToLines = (nodes: OutlineNode[], indent = 0): string[] => {
@@ -127,157 +83,6 @@ const flattenOutlineToLines = (nodes: OutlineNode[], indent = 0): string[] => {
     }
   });
   return lines;
-};
-
-const collectChildOutlineLines = (node: OutlineNode, indent = 0): string[] => {
-  const lines: string[] = [];
-  node.children.forEach((child) => {
-    lines.push(`${'  '.repeat(indent)}- ${child.title}`);
-    if (child.children.length > 0) {
-      lines.push(...collectChildOutlineLines(child, indent + 1));
-    }
-  });
-  return lines;
-};
-
-const outlineToChapters = (outline: OutlineNode[]): { chapters: ChapterInfo[]; outlines: string[][] } => {
-  const chapters: ChapterInfo[] = [];
-  const outlines: string[][] = [];
-
-  outline.forEach((node, idx) => {
-    chapters.push({
-      lesson_number: idx + 1,
-      topic: node.title,
-      content_summary: '',
-      key_concepts: [],
-    });
-    outlines.push(collectChildOutlineLines(node));
-  });
-
-  return { chapters, outlines };
-};
-
-const dedupePreserveOrder = (items: string[]) => {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  items.forEach((item) => {
-    if (seen.has(item)) {
-      return;
-    }
-    seen.add(item);
-    result.push(item);
-  });
-  return result;
-};
-
-const normalizeChaptersToCount = (
-  chapters: ChapterInfo[],
-  outlines: string[][],
-  targetCount: number,
-): { chapters: ChapterInfo[]; outlines: string[][] } => {
-  if (targetCount <= 0) {
-    return { chapters: [], outlines: [] };
-  }
-
-  if (chapters.length === 0) {
-    return { chapters: [], outlines: [] };
-  }
-
-  const sourceOutlines = chapters.map((_, idx) => outlines[idx] ?? []);
-
-  const buildChapter = (
-    lessonNumber: number,
-    topic: string,
-    summary: string,
-    concepts: string[],
-  ): ChapterInfo => ({
-    lesson_number: lessonNumber,
-    topic: topic?.trim() ? topic : `第${lessonNumber}课`,
-    content_summary: summary ?? '',
-    key_concepts: concepts ?? [],
-  });
-
-  if (chapters.length === targetCount) {
-    return {
-      chapters: chapters.map((chapter, idx) =>
-        buildChapter(
-          idx + 1,
-          chapter.topic,
-          chapter.content_summary,
-          chapter.key_concepts,
-        )
-      ),
-      outlines: sourceOutlines,
-    };
-  }
-
-  if (chapters.length < targetCount) {
-    const expanded: ChapterInfo[] = [];
-    const expandedOutlines: string[][] = [];
-    const base = Math.floor(targetCount / chapters.length);
-    const remainder = targetCount % chapters.length;
-
-    chapters.forEach((chapter, idx) => {
-      const repeats = base + (idx < remainder ? 1 : 0);
-      for (let part = 0; part < repeats; part += 1) {
-        const suffix = repeats > 1 ? ` (${part + 1}/${repeats})` : '';
-        const topic = chapter.topic ? `${chapter.topic}${suffix}` : '';
-        expanded.push(buildChapter(
-          expanded.length + 1,
-          topic,
-          chapter.content_summary,
-          chapter.key_concepts,
-        ));
-        expandedOutlines.push(sourceOutlines[idx] ?? []);
-      }
-    });
-
-    return { chapters: expanded, outlines: expandedOutlines };
-  }
-
-  const merged: ChapterInfo[] = [];
-  const mergedOutlines: string[][] = [];
-  const base = Math.floor(chapters.length / targetCount);
-  const remainder = chapters.length % targetCount;
-  let start = 0;
-
-  for (let idx = 0; idx < targetCount; idx += 1) {
-    const size = base + (idx < remainder ? 1 : 0);
-    const group = chapters.slice(start, start + size);
-    const groupOutlines = sourceOutlines.slice(start, start + size);
-    start += size;
-
-    const topics = group
-      .map((chapter) => chapter.topic?.trim())
-      .filter(Boolean) as string[];
-    const summaryParts = group
-      .map((chapter) => chapter.content_summary?.trim())
-      .filter(Boolean) as string[];
-    const concepts = dedupePreserveOrder(
-      group.flatMap((chapter) => chapter.key_concepts ?? [])
-    );
-    const outlineLines = dedupePreserveOrder(groupOutlines.flat());
-
-    merged.push(buildChapter(
-      idx + 1,
-      topics.join(' / '),
-      summaryParts.join(' '),
-      concepts,
-    ));
-    mergedOutlines.push(outlineLines);
-  }
-
-  return { chapters: merged, outlines: mergedOutlines };
-};
-
-const normalizeChaptersForHours = (
-  chapters: ChapterInfo[],
-  outlines: string[][],
-  totalHours: number,
-  hoursPerLesson: number,
-): { chapters: ChapterInfo[]; outlines: string[][] } => {
-  const targetCount = Math.max(1, Math.floor(totalHours / hoursPerLesson));
-  return normalizeChaptersToCount(chapters, outlines, targetCount);
 };
 
 const buildOutlineFromTextbook = (chapters: TextbookInfo['chapters']): OutlineNode[] => {
@@ -413,14 +218,6 @@ const BatchGenerate: React.FC = () => {
     }
   };
 
-  // Get chapter mode based on current state
-  const getChapterMode = (): 'textbook' | 'cached' | 'manual' | 'ai' => {
-    if (selectedTextbookId && chapters.length > 0) return 'textbook';
-    if (selectedCachedTemplateId && chapters.length > 0) return 'cached';
-    if (chapterInputMode === 'manual') return 'manual';
-    return 'ai';
-  };
-
   const applyChapters = (nextChapters: ChapterInfo[], outlines?: string[][]) => {
     setChapters(nextChapters);
     setChapterOutline(outlines ?? nextChapters.map(() => []));
@@ -452,13 +249,21 @@ const BatchGenerate: React.FC = () => {
       // Auto-fill form fields
       form.setFieldsValue(formValues);
 
-      // Load cached chapters
+      const chapterTitles = selected.chapters
+        .map((chapter) => chapter.topic?.trim())
+        .filter(Boolean)
+        .join('\n');
+      if (chapterTitles) {
+        form.setFieldValue('chapters_input', chapterTitles);
+      }
+
+      // Load cached chapters as reference
       applyChapters(selected.chapters);
 
       if (currentTemplateId) {
-        message.success(`已加载 ${selected.course_name} 的 ${selected.chapters.length} 份教案章节`);
+        message.success(`已加载 ${selected.course_name} 的 ${selected.chapters.length} 个章节参考`);
       } else {
-        message.success(`已加载 ${selected.course_name} 的 ${selected.chapters.length} 份教案章节，请选择教案模板后继续`);
+        message.success(`已加载 ${selected.course_name} 的 ${selected.chapters.length} 个章节参考，请选择教案模板后继续`);
       }
     }
   };
@@ -497,7 +302,7 @@ const BatchGenerate: React.FC = () => {
       // Auto-fill form fields
       form.setFieldsValue(formValues);
 
-      // Pre-fill chapters_input with chapter titles (for manual editing)
+      // Pre-fill chapters_input with chapter titles (AI reference)
       const sortedChapters = [...textbook.chapters].sort(
         (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
       );
@@ -513,11 +318,9 @@ const BatchGenerate: React.FC = () => {
         key_concepts: ch.key_concepts || [],
       }));
 
-      const { outlines } = outlineToChapters(outline);
-      const normalizedOutlines = chapters.map((_chapter, idx) => outlines[idx] ?? []);
-      applyChapters(chapters, normalizedOutlines);
+      applyChapters(chapters);
 
-      message.success(`已加载 ${textbook.name} 的 ${chapters.length} 个章节`);
+      message.success(`已加载 ${textbook.name} 的 ${chapters.length} 个章节参考`);
     } catch (error: any) {
       message.error(error.message || '加载教材失败');
     }
@@ -525,69 +328,10 @@ const BatchGenerate: React.FC = () => {
 
   // Step 1: Submit basic info and split chapters
   const handleSplitChapters = async (values: any) => {
-    const chapterMode = getChapterMode();
     const totalHours = Number(values.total_hours ?? form.getFieldValue('total_hours') ?? 0);
     const hoursPerLesson = Number(values.hours_per_lesson ?? form.getFieldValue('hours_per_lesson') ?? 2);
+    const chaptersInput = values.chapters_input?.trim();
 
-    // If chapters already loaded from textbook or cache
-    if (chapterMode === 'textbook' || chapterMode === 'cached') {
-      let nextChapters = chapters;
-      let nextOutlines = chapterOutline;
-
-      // Check if user edited chapters_input
-      if (values.chapters_input && values.chapters_input.trim()) {
-        const outline = parseOutlineInput(values.chapters_input);
-        const { chapters: updatedChapters, outlines } = outlineToChapters(outline);
-        if (updatedChapters.length === 0) {
-          message.error('请输入章节标题');
-          return;
-        }
-        nextChapters = updatedChapters;
-        nextOutlines = outlines;
-      }
-
-      const normalized = normalizeChaptersForHours(
-        nextChapters,
-        nextOutlines,
-        totalHours,
-        hoursPerLesson,
-      );
-      applyChapters(normalized.chapters, normalized.outlines);
-
-      setSavedFormValues(values);
-      setCurrentStep(1);
-      message.success('进入章节确认步骤');
-      return;
-    }
-
-    // Manual input mode - parse chapters from input
-    if (chapterMode === 'manual') {
-      if (!values.chapters_input || !values.chapters_input.trim()) {
-        message.error('请输入章节标题');
-        return;
-      }
-
-      const outline = parseOutlineInput(values.chapters_input);
-      const { chapters: parsedChapters, outlines } = outlineToChapters(outline);
-      if (parsedChapters.length === 0) {
-        message.error('请输入章节标题');
-        return;
-      }
-
-      const normalized = normalizeChaptersForHours(
-        parsedChapters,
-        outlines,
-        totalHours,
-        hoursPerLesson,
-      );
-      applyChapters(normalized.chapters, normalized.outlines);
-      setSavedFormValues(values);
-      setCurrentStep(1);
-      message.success(`成功解析 ${normalized.chapters.length} 个章节`);
-      return;
-    }
-
-    // AI generation mode
     // Save form values before switching step
     setSavedFormValues(values);
 
@@ -598,6 +342,7 @@ const BatchGenerate: React.FC = () => {
       total_hours: values.total_hours,
       hours_per_lesson: values.hours_per_lesson ?? 2,
       additional_info: values.additional_info,
+      chapters_input: chaptersInput || undefined,
     };
 
     setSplittingChapters(true);
@@ -618,16 +363,16 @@ const BatchGenerate: React.FC = () => {
         },
         // onComplete callback
         (response: ChapterSplitResponse) => {
-          const normalized = normalizeChaptersForHours(
-            response.chapters,
-            [],
-            totalHours,
-            hoursPerLesson,
-          );
-          applyChapters(normalized.chapters, normalized.outlines);
+          const expectedCount = Math.max(1, Math.floor(totalHours / hoursPerLesson));
+          if (response.chapters.length !== expectedCount) {
+            message.error(`AI生成章节数量为 ${response.chapters.length}，应为 ${expectedCount}。请重试。`);
+            setSplittingChapters(false);
+            return;
+          }
+          applyChapters(response.chapters);
           setCurrentStep(1);
-          const numDocs = Math.ceil(normalized.chapters.length / 2);
-          message.success(`成功生成 ${normalized.chapters.length} 份教案（${numDocs} 个文档）`);
+          const numDocs = Math.ceil(response.chapters.length / 2);
+          message.success(`成功生成 ${response.chapters.length} 份教案（${numDocs} 个文档）`);
           setSplittingChapters(false);
         },
         // onError callback
@@ -668,15 +413,13 @@ const BatchGenerate: React.FC = () => {
       return;
     }
 
-    const normalized = normalizeChaptersForHours(
-      chapters,
-      chapterOutline,
-      Number(values.total_hours),
-      Number(values.hours_per_lesson ?? 2),
+    const expectedCount = Math.max(
+      1,
+      Math.floor(Number(values.total_hours) / Number(values.hours_per_lesson ?? 2)),
     );
-
-    if (normalized.chapters.length !== chapters.length) {
-      applyChapters(normalized.chapters, normalized.outlines);
+    if (chapters.length !== expectedCount) {
+      message.error(`章节数量为 ${chapters.length}，应为 ${expectedCount}。请返回上一步重新生成。`);
+      return;
     }
 
     setLoading(true);
@@ -690,7 +433,7 @@ const BatchGenerate: React.FC = () => {
           template_id: values.template_id,
           total_hours: values.total_hours,
           hours_per_lesson: values.hours_per_lesson ?? 2,
-          chapters: normalized.chapters,
+          chapters,
           textbook_name: values.textbook_name,
           location: values.location,
           online_resources: values.online_resources,
@@ -710,7 +453,7 @@ const BatchGenerate: React.FC = () => {
           template_id: values.template_id,
           total_hours: values.total_hours,
           hours_per_lesson: values.hours_per_lesson ?? 2,
-          chapters: normalized.chapters,
+          chapters,
           start_week: values.start_week ?? 1,
           class_ids: values.class_ids ?? [],
           location: values.location,
@@ -1300,7 +1043,7 @@ const BatchGenerate: React.FC = () => {
                   <EditOutlined />
                   <span>章节内容</span>
                   {(selectedTextbookId || selectedCachedTemplateId) && chapters.length > 0 && (
-                    <Tag color="blue">已加载 {chapters.length} 个章节</Tag>
+                    <Tag color="blue">已加载 {chapters.length} 个章节参考</Tag>
                   )}
                 </Space>
               }
@@ -1308,17 +1051,17 @@ const BatchGenerate: React.FC = () => {
             >
               {/* Show chapter source selection only if no textbook/cache selected */}
               {!selectedTextbookId && !selectedCachedTemplateId && (
-                <Form.Item label="章节来源">
+                <Form.Item label="章节来源（参考）">
                   <Radio.Group
                     value={chapterInputMode}
                     onChange={(e) => setChapterInputMode(e.target.value)}
                     size="large"
                   >
                     <Radio value="ai">
-                      <FileTextOutlined /> AI自动生成章节
+                      <FileTextOutlined /> AI根据课时自动生成
                     </Radio>
                     <Radio value="manual">
-                      <EditOutlined /> 手动输入章节标题
+                      <EditOutlined /> 提供章节参考（可选）
                     </Radio>
                   </Radio.Group>
                 </Form.Item>
@@ -1328,11 +1071,10 @@ const BatchGenerate: React.FC = () => {
               {(chapterInputMode === 'manual' || selectedTextbookId || selectedCachedTemplateId) && (
                 <Form.Item
                   name="chapters_input"
-                  label={selectedTextbookId || selectedCachedTemplateId ? "章节标题（可编辑）" : "章节标题（每行一个）"}
-                  rules={[{ required: chapterInputMode === 'manual' && !selectedTextbookId && !selectedCachedTemplateId, message: '请输入章节标题' }]}
+                  label={selectedTextbookId || selectedCachedTemplateId ? "章节标题（参考，可编辑）" : "章节标题（参考，每行一个）"}
                   extra={selectedTextbookId || selectedCachedTemplateId
-                    ? "已从教材/模板加载章节，可编辑后继续；支持用空格缩进表示子章节"
-                    : "请输入章节标题，每行一个；支持用空格缩进表示子章节"}
+                    ? "已从教材/模板加载章节，AI将根据总课时重新划分"
+                    : "可选填写，AI将根据总课时重新划分；支持用空格缩进表示子章节"}
                 >
                   <TextArea
                     rows={10}
@@ -1361,9 +1103,7 @@ const BatchGenerate: React.FC = () => {
                 >
                   {splittingChapters
                     ? '生成中...'
-                    : (selectedTextbookId || selectedCachedTemplateId)
-                      ? '下一步：确认章节'
-                      : (chapterInputMode === 'ai' ? '下一步：AI生成章节' : '下一步：解析章节')
+                    : '下一步：AI生成章节'
                   }
                 </Button>
                 <Button size="large" onClick={() => navigate('/')}>

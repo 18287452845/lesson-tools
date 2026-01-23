@@ -33,7 +33,7 @@ from ..models.schemas import (
     BatchLessonPlanListResponse,
     LessonPlan,
 )
-from ..services.chapter_splitter import ChapterSplitter, normalize_chapters_for_hours
+from ..services.chapter_splitter import ChapterSplitter
 from ..services.batch_processor import BatchTaskProcessor
 from ..services.background_runner import run_in_background
 
@@ -47,11 +47,9 @@ async def split_chapters(request: ChapterSplitRequest):
     """
     Generate lesson plan chapters based on total hours.
 
-    Supports two modes:
-    - If chapters_input is provided: Parse user-provided chapter titles
-    - Otherwise: AI generates chapters automatically
-
-    Also checks for cached templates to avoid regeneration.
+    Uses AI to generate chapters. If chapters_input is provided,
+    it is treated as a reference outline for AI to restructure.
+    When chapters_input is absent, cached templates may be reused.
     """
     try:
         # Debug logging to identify validation issues
@@ -64,17 +62,21 @@ async def split_chapters(request: ChapterSplitRequest):
             f"hours_per_lesson={request.hours_per_lesson} (type: {type(request.hours_per_lesson).__name__})"
         )
 
-        num_lessons = request.total_hours // request.hours_per_lesson
+        num_lessons = max(1, request.total_hours // request.hours_per_lesson)
 
         logger.info(
             f"Splitting course '{request.course_name}' into {num_lessons} lessons "
             f"({request.total_hours} hours, {request.hours_per_lesson} hours/lesson)"
         )
 
-        # If user provided chapters, parse them directly (no caching)
+        # If user provided chapters, use AI with reference outline (no caching)
         if request.chapters_input and request.chapters_input.strip():
-            logger.info("Using user-provided chapters")
-            splitter = ChapterSplitter()
+            logger.info("Using AI with reference chapters")
+            splitter = ChapterSplitter(
+                provider=settings.ai_provider,
+                api_key=settings.get_active_api_key(),
+                model=settings.get_active_model(),
+            )
             chapters = await splitter.split_course_chapters(
                 course_name=request.course_name,
                 subject=request.subject,
@@ -107,23 +109,29 @@ async def split_chapters(request: ChapterSplitRequest):
             # Found cached template
             chapters_json = json.loads(existing["chapters"])
             chapters = [ChapterInfo(**c) for c in chapters_json]
-            # Increment use count
-            await db.execute(
-                """
-                UPDATE course_chapter_templates
-                SET use_count = use_count + 1, updated_at = ?
-                WHERE id = ?
-                """,
-                (datetime.now().isoformat(), existing["id"]),
-                commit=True,
-            )
+            if len(chapters) == num_lessons:
+                # Increment use count
+                await db.execute(
+                    """
+                    UPDATE course_chapter_templates
+                    SET use_count = use_count + 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (datetime.now().isoformat(), existing["id"]),
+                    commit=True,
+                )
 
-            logger.info(
-                f"Using cached template (id={existing['id']}, "
-                f"use_count={existing['use_count'] + 1})"
-            )
+                logger.info(
+                    f"Using cached template (id={existing['id']}, "
+                    f"use_count={existing['use_count'] + 1})"
+                )
 
-            return ChapterSplitResponse(chapters=chapters, total_lessons=len(chapters))
+                return ChapterSplitResponse(chapters=chapters, total_lessons=len(chapters))
+
+            logger.warning(
+                "Cached template count mismatch; ignoring cache "
+                f"(expected={num_lessons}, actual={len(chapters)}, id={existing['id']})"
+            )
 
         # Step 2: No cached template, call AI to generate
         logger.info("No cached template found, calling AI...")
@@ -174,6 +182,9 @@ async def split_chapters(request: ChapterSplitRequest):
 
         return ChapterSplitResponse(chapters=chapters, total_lessons=len(chapters))
 
+    except ValueError as e:
+        logger.error(f"Failed to split chapters: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to split chapters: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -194,82 +205,63 @@ async def split_chapters_stream(request: ChapterSplitRequest):
         try:
             db = await get_db()
 
-            # 如果用户提供了章节输入，直接解析（不缓存）
-            if request.chapters_input and request.chapters_input.strip():
-                splitter = ChapterSplitter()
-                chapters = await splitter.split_course_chapters(
-                    course_name=request.course_name,
-                    subject=request.subject,
-                    grade=request.grade,
-                    total_hours=request.total_hours,
-                    hours_per_lesson=request.hours_per_lesson,
-                    chapters_input=request.chapters_input,
-                    additional_info=request.additional_info,
-                )
-
-                total_lessons = len(chapters)
-
-                # 发送初始进度
-                yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': total_lessons, 'message': f'准备解析 {total_lessons} 个章节...'}, ensure_ascii=False)}\n\n"
-
-                # 流式返回解析的章节
-                for idx, chapter in enumerate(chapters, 1):
-                    yield f"event: progress\ndata: {json.dumps({'current': idx, 'total': total_lessons, 'message': f'解析第 {idx}/{total_lessons} 个章节'}, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0.02)  # 小延迟用于视觉反馈
-                    yield f"event: chapter\ndata: {json.dumps(chapter.model_dump(), ensure_ascii=False)}\n\n"
-
-                yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters], 'total_lessons': total_lessons}, ensure_ascii=False)}\n\n"
-                return
+            chapters_input = request.chapters_input.strip() if request.chapters_input else ""
+            use_cache = not chapters_input
+            num_lessons = max(1, request.total_hours // request.hours_per_lesson)
 
             # 检查是否有缓存的模板
-            existing = await db.fetch_one(
-                """
-                SELECT * FROM course_chapter_templates
-                WHERE course_name = ? AND subject = ? AND grade = ?
-                AND total_hours = ? AND hours_per_lesson = ?
-                """,
-                (
-                    request.course_name,
-                    request.subject,
-                    request.grade,
-                    request.total_hours,
-                    request.hours_per_lesson,
-                )
-            )
-
-            if existing:
-                # 有缓存 - 直接使用章节
-                chapters_json = json.loads(existing["chapters"])
-                chapters = [ChapterInfo(**c) for c in chapters_json]
-                total_lessons = len(chapters)
-
-                # 发送初始进度
-                yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': total_lessons, 'message': f'准备加载 {total_lessons} 个章节...'}, ensure_ascii=False)}\n\n"
-
-                # 有缓存且章节数量正确 - 流式返回缓存的章节
-                # 更新使用计数
-                await db.execute(
+            if use_cache:
+                existing = await db.fetch_one(
                     """
-                    UPDATE course_chapter_templates
-                    SET use_count = use_count + 1, updated_at = ?
-                    WHERE id = ?
+                    SELECT * FROM course_chapter_templates
+                    WHERE course_name = ? AND subject = ? AND grade = ?
+                    AND total_hours = ? AND hours_per_lesson = ?
                     """,
-                    (datetime.now().isoformat(), existing["id"]),
-                    commit=True,
+                    (
+                        request.course_name,
+                        request.subject,
+                        request.grade,
+                        request.total_hours,
+                        request.hours_per_lesson,
+                    )
                 )
 
-                # 模拟进度流式返回
-                for idx, chapter in enumerate(chapters, 1):
-                    yield f"event: progress\ndata: {json.dumps({'current': idx, 'total': total_lessons, 'message': f'加载第 {idx}/{total_lessons} 个章节'}, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0.05)  # 小延迟用于视觉反馈
-                    yield f"event: chapter\ndata: {json.dumps(chapter.model_dump(), ensure_ascii=False)}\n\n"
+                if existing:
+                    # 有缓存 - 直接使用章节
+                    chapters_json = json.loads(existing["chapters"])
+                    chapters = [ChapterInfo(**c) for c in chapters_json]
+                    total_lessons = len(chapters)
+                    if total_lessons != num_lessons:
+                        logger.warning(
+                            "Cached template count mismatch; ignoring cache "
+                            f"(expected={num_lessons}, actual={total_lessons}, id={existing['id']})"
+                        )
+                    else:
+                        # 发送初始进度
+                        yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': total_lessons, 'message': f'准备加载 {total_lessons} 个章节...'}, ensure_ascii=False)}\n\n"
 
-                yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters], 'total_lessons': total_lessons}, ensure_ascii=False)}\n\n"
-                return
+                        # 有缓存且章节数量正确 - 流式返回缓存的章节
+                        # 更新使用计数
+                        await db.execute(
+                            """
+                            UPDATE course_chapter_templates
+                            SET use_count = use_count + 1, updated_at = ?
+                            WHERE id = ?
+                            """,
+                            (datetime.now().isoformat(), existing["id"]),
+                            commit=True,
+                        )
+
+                        # 模拟进度流式返回
+                        for idx, chapter in enumerate(chapters, 1):
+                            yield f"event: progress\ndata: {json.dumps({'current': idx, 'total': total_lessons, 'message': f'加载第 {idx}/{total_lessons} 个章节'}, ensure_ascii=False)}\n\n"
+                            await asyncio.sleep(0.05)  # 小延迟用于视觉反馈
+                            yield f"event: chapter\ndata: {json.dumps(chapter.model_dump(), ensure_ascii=False)}\n\n"
+
+                        yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters], 'total_lessons': total_lessons}, ensure_ascii=False)}\n\n"
+                        return
 
             # AI 生成模式 - 流式生成
-            num_lessons = request.total_hours // request.hours_per_lesson
-
             # 发送初始进度
             yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': num_lessons, 'message': f'准备生成 {num_lessons} 份教案...'}, ensure_ascii=False)}\n\n"
 
@@ -289,6 +281,7 @@ async def split_chapters_stream(request: ChapterSplitRequest):
                 total_hours=request.total_hours,
                 hours_per_lesson=request.hours_per_lesson,
                 num_lessons=num_lessons,
+                chapters_input=chapters_input or None,
                 additional_info=request.additional_info,
             ):
                 chapter_count += 1
@@ -296,29 +289,36 @@ async def split_chapters_stream(request: ChapterSplitRequest):
                 yield f"event: chapter\ndata: {json.dumps(chapter.model_dump(), ensure_ascii=False)}\n\n"
                 chapters.append(chapter)
 
-            # 保存到数据库
-            template_id = str(uuid4())
-            await db.execute(
-                """
-                INSERT INTO course_chapter_templates (
-                    id, course_name, subject, grade, total_hours, hours_per_lesson,
-                    chapters, use_count, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    template_id,
-                    request.course_name,
-                    request.subject,
-                    request.grade,
-                    request.total_hours,
-                    request.hours_per_lesson,
-                    json.dumps([c.model_dump() for c in chapters], ensure_ascii=False),
-                    0,
-                    datetime.now().isoformat(),
-                    datetime.now().isoformat(),
-                ),
-                commit=True,
-            )
+            if chapter_count != num_lessons:
+                error_msg = f"AI章节数量不匹配：期望 {num_lessons}，实际 {chapter_count}。请重新生成。"
+                logger.error(error_msg)
+                yield f"event: error\ndata: {json.dumps({'message': error_msg}, ensure_ascii=False)}\n\n"
+                return
+
+            if use_cache:
+                # 保存到数据库
+                template_id = str(uuid4())
+                await db.execute(
+                    """
+                    INSERT INTO course_chapter_templates (
+                        id, course_name, subject, grade, total_hours, hours_per_lesson,
+                        chapters, use_count, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        template_id,
+                        request.course_name,
+                        request.subject,
+                        request.grade,
+                        request.total_hours,
+                        request.hours_per_lesson,
+                        json.dumps([c.model_dump() for c in chapters], ensure_ascii=False),
+                        0,
+                        datetime.now().isoformat(),
+                        datetime.now().isoformat(),
+                    ),
+                    commit=True,
+                )
 
             yield f"event: complete\ndata: {json.dumps({'chapters': [c.model_dump() for c in chapters], 'total_lessons': len(chapters)}, ensure_ascii=False)}\n\n"
 
@@ -475,12 +475,8 @@ async def create_batch_task(request: BatchTaskCreateRequest):
     """
     try:
         task_id = str(uuid4())
-        normalized_chapters = normalize_chapters_for_hours(
-            request.chapters,
-            request.total_hours,
-            request.hours_per_lesson,
-        )
-        total_count = len(normalized_chapters)
+        expected_count = max(1, request.total_hours // request.hours_per_lesson)
+        total_count = len(request.chapters)
 
         logger.info(
             f"Creating batch task {task_id}: "
@@ -493,6 +489,15 @@ async def create_batch_task(request: BatchTaskCreateRequest):
             raise HTTPException(
                 status_code=400,
                 detail="Chapters list cannot be empty"
+            )
+
+        if total_count != expected_count:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Chapter count mismatch: expected {expected_count}, "
+                    f"got {total_count}. Please regenerate chapters with AI."
+                )
             )
 
         if total_count > 100:
@@ -530,7 +535,7 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 request.template_id,
                 request.total_hours,
                 request.hours_per_lesson,
-                json.dumps([c.model_dump() for c in normalized_chapters], ensure_ascii=False),
+                json.dumps([c.model_dump() for c in request.chapters], ensure_ascii=False),
                 request.start_week,
                 json.dumps(request.class_ids, ensure_ascii=False),
                 request.location or "",
@@ -878,12 +883,8 @@ async def create_draft_task(request: DraftTaskCreateRequest):
     """
     try:
         task_id = str(uuid4())
-        normalized_chapters = normalize_chapters_for_hours(
-            request.chapters,
-            request.total_hours,
-            request.hours_per_lesson,
-        )
-        total_count = len(normalized_chapters)
+        expected_count = max(1, request.total_hours // request.hours_per_lesson)
+        total_count = len(request.chapters)
 
         logger.info(
             f"Creating draft task {task_id}: "
@@ -895,6 +896,15 @@ async def create_draft_task(request: DraftTaskCreateRequest):
             raise HTTPException(
                 status_code=400,
                 detail="Chapters list cannot be empty"
+            )
+
+        if total_count != expected_count:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Chapter count mismatch: expected {expected_count}, "
+                    f"got {total_count}. Please regenerate chapters with AI."
+                )
             )
 
         if total_count > 100:
@@ -922,7 +932,7 @@ async def create_draft_task(request: DraftTaskCreateRequest):
                 request.template_id,
                 request.total_hours,
                 request.hours_per_lesson,
-                json.dumps([c.model_dump() for c in normalized_chapters], ensure_ascii=False),
+                json.dumps([c.model_dump() for c in request.chapters], ensure_ascii=False),
                 request.textbook_name or "",
                 request.location or "",
                 request.online_resources or "",
