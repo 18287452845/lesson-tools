@@ -165,6 +165,9 @@ class Database:
         await self._add_column_if_not_exists(
             db, "lesson_plans", "lesson_number", "INTEGER"
         )
+        await self._add_column_if_not_exists(
+            db, "lesson_plans", "status", "TEXT DEFAULT 'draft'"
+        )
 
         # Add hours-based columns to batch_tasks if upgrading from week-based
         await self._add_column_if_not_exists(
@@ -172,6 +175,27 @@ class Database:
         )
         await self._add_column_if_not_exists(
             db, "batch_tasks", "hours_per_lesson", "INTEGER DEFAULT 2"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "status", "TEXT DEFAULT 'pending'"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "total_count", "INTEGER DEFAULT 0"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "completed_count", "INTEGER DEFAULT 0"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "failed_count", "INTEGER DEFAULT 0"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "zip_file_path", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "error_message", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "completed_at", "TEXT"
         )
 
         # Add hours-based columns to course_chapter_templates if upgrading
@@ -185,6 +209,12 @@ class Database:
         # Add lesson_number column to batch_lesson_plans if upgrading
         await self._add_column_if_not_exists(
             db, "batch_lesson_plans", "lesson_number", "INTEGER"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_lesson_plans", "status", "TEXT DEFAULT 'pending'"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_lesson_plans", "error_message", "TEXT"
         )
 
         # Classes table

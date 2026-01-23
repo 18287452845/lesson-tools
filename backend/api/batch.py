@@ -132,6 +132,12 @@ async def split_chapters(request: ChapterSplitRequest):
                 "Cached template count mismatch; ignoring cache "
                 f"(expected={num_lessons}, actual={len(chapters)}, id={existing['id']})"
             )
+            await db.execute(
+                "DELETE FROM course_chapter_templates WHERE id = ?",
+                (existing["id"],),
+                commit=True,
+            )
+            logger.info(f"Purged mismatched cached template: {existing['id']}")
 
         # Step 2: No cached template, call AI to generate
         logger.info("No cached template found, calling AI...")
@@ -236,6 +242,12 @@ async def split_chapters_stream(request: ChapterSplitRequest):
                             "Cached template count mismatch; ignoring cache "
                             f"(expected={num_lessons}, actual={total_lessons}, id={existing['id']})"
                         )
+                        await db.execute(
+                            "DELETE FROM course_chapter_templates WHERE id = ?",
+                            (existing["id"],),
+                            commit=True,
+                        )
+                        logger.info(f"Purged mismatched cached template: {existing['id']}")
                     else:
                         # 发送初始进度
                         yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': total_lessons, 'message': f'准备加载 {total_lessons} 个章节...'}, ensure_ascii=False)}\n\n"

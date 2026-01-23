@@ -18,7 +18,7 @@ import logging
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from uuid import uuid4
 
 from ..config import settings
@@ -151,21 +151,21 @@ class BatchTaskProcessor:
             async def process_single_document(doc_number, doc_chapters):
                 """
                 Process a single document with parallel lesson generation.
-                Returns (file_info, failed_count) tuple.
+                Returns (file_info, success_count, failed_count) tuple.
                 """
                 nonlocal completed_lesson_plans
 
                 # Check if task was cancelled
                 if await self._is_task_cancelled(batch_task_id):
                     logger.info(f"Batch task {batch_task_id} was cancelled by user")
-                    return None, 0
+                    return None, 0, 0
 
                 try:
                     logger.info(
                         f"Processing document {doc_number} with {len(doc_chapters)} lessons"
                     )
 
-                    file_path = await self._generate_document_parallel(
+                    file_path, success_count, failed_count, _ = await self._generate_document_parallel(
                         batch_task_id=batch_task_id,
                         document_number=doc_number,
                         chapters_data=doc_chapters,
@@ -182,22 +182,24 @@ class BatchTaskProcessor:
                         is_draft_mode=is_draft_mode,
                     )
 
-                    file_info = {
-                        "doc_number": doc_number,
-                        "topics": [c["topic"] for c in doc_chapters],
-                        "file_path": file_path,
-                    }
+                    file_info = None
+                    if file_path:
+                        file_info = {
+                            "doc_number": doc_number,
+                            "topics": [c["topic"] for c in doc_chapters],
+                            "file_path": file_path,
+                        }
 
                     # Thread-safe progress update
                     async with progress_lock:
-                        completed_lesson_plans += len(doc_chapters)
+                        completed_lesson_plans += success_count
                         await self._update_task_progress(
                             batch_task_id,
                             completed=completed_lesson_plans,
                             total=total_lesson_plans,
                         )
 
-                    return file_info, 0
+                    return file_info, success_count, failed_count
 
                 except Exception as e:
                     logger.error(
@@ -205,7 +207,7 @@ class BatchTaskProcessor:
                         exc_info=True
                     )
                     # Return failed count for each lesson in this document
-                    return None, len(doc_chapters)
+                    return None, 0, len(doc_chapters)
 
             # Create semaphore for document-level concurrency
             doc_semaphore = asyncio.Semaphore(self.max_concurrent_documents)
@@ -231,7 +233,7 @@ class BatchTaskProcessor:
                     logger.error(f"Unexpected error in document task: {result}")
                     failed_lessons += 1
                 elif result is not None:
-                    file_info, failed_count = result
+                    file_info, _, failed_count = result
                     if file_info:
                         generated_files.append(file_info)
                     failed_lessons += failed_count
@@ -334,7 +336,7 @@ class BatchTaskProcessor:
         online_resources: Optional[str] = None,
         class_names: Optional[str] = None,
         is_draft_mode: bool = False,
-    ) -> str:
+    ) -> Tuple[str, int, int, List[int]]:
         """
         Generate a document containing lesson plans with parallel lesson generation.
 
@@ -358,7 +360,7 @@ class BatchTaskProcessor:
             is_draft_mode: If True, only save content without rendering document (default False)
 
         Returns:
-            Path to the generated .docx file (or empty string in draft mode)
+            Tuple of (file_path, success_count, failed_count, successful_lesson_numbers)
         """
         # Calculate week number (each document = 1 week)
         week_number = start_week + (document_number - 1)
@@ -397,41 +399,53 @@ class BatchTaskProcessor:
                     class_name=class_names,
                 )
 
-                # Generate content using AI
-                logger.debug(f"Generating AI content for: {chapter.topic}")
-                generated_content = await self.ai_generator.generate_lesson_plan(
-                    lesson_input,
-                    generate_reflection=generate_reflection
-                )
+                try:
+                    # Generate content using AI
+                    logger.debug(f"Generating AI content for: {chapter.topic}")
+                    generated_content = await self.ai_generator.generate_lesson_plan(
+                        lesson_input,
+                        generate_reflection=generate_reflection
+                    )
 
-                # Prepare lesson plan data for rendering
-                # Build references from textbook_name and online_resources
-                # Ensure online_resources is a string (AI might return a list)
-                online_res_raw = online_resources or generated_content.online_resources or ""
-                if isinstance(online_res_raw, list):
-                    online_res = "\n".join(str(item) for item in online_res_raw)
-                else:
-                    online_res = str(online_res_raw) if online_res_raw else ""
+                    # Prepare lesson plan data for rendering
+                    # Build references from textbook_name and online_resources
+                    # Ensure online_resources is a string (AI might return a list)
+                    online_res_raw = online_resources or generated_content.online_resources or ""
+                    if isinstance(online_res_raw, list):
+                        online_res = "\n".join(str(item) for item in online_res_raw)
+                    else:
+                        online_res = str(online_res_raw) if online_res_raw else ""
 
-                references_parts = []
-                if textbook_name:
-                    # Add book title marks around textbook name
-                    references_parts.append(f"《{textbook_name}》")
-                if online_res:
-                    references_parts.append(online_res)
-                references = "\n".join(references_parts) if references_parts else ""
+                    references_parts = []
+                    if textbook_name:
+                        # Add book title marks around textbook name
+                        references_parts.append(f"《{textbook_name}》")
+                    if online_res:
+                        references_parts.append(online_res)
+                    references = "\n".join(references_parts) if references_parts else ""
 
-                lesson_plan_data = {
-                    **lesson_input.model_dump(),
-                    **generated_content.model_dump(),
-                    "lesson_number": chapter.lesson_number,
-                    "week_number": week_number,
-                    "week_display": f"第{week_number}周",
-                    "references": references,  # Add built references
-                    "online_resources": online_res,  # Use final online_resources
-                }
+                    lesson_plan_data = {
+                        **lesson_input.model_dump(),
+                        **generated_content.model_dump(),
+                        "lesson_number": chapter.lesson_number,
+                        "week_number": week_number,
+                        "week_display": f"第{week_number}周",
+                        "references": references,  # Add built references
+                        "online_resources": online_res,  # Use final online_resources
+                    }
 
-                return chapter, lesson_plan_data, generated_content
+                    return {
+                        "chapter": chapter,
+                        "lesson_input": lesson_input,
+                        "generated_content": generated_content,
+                        "lesson_plan_data": lesson_plan_data,
+                    }
+                except Exception as exc:
+                    return {
+                        "chapter": chapter,
+                        "lesson_input": lesson_input,
+                        "error": str(exc),
+                    }
 
         # Generate all lesson plans concurrently
         lesson_tasks = [
@@ -439,25 +453,51 @@ class BatchTaskProcessor:
             for chapter_data in chapters_data
         ]
 
-        lesson_results = await asyncio.gather(*lesson_tasks, return_exceptions=True)
+        lesson_results = await asyncio.gather(*lesson_tasks)
 
         # Process results and create database records
         lesson_plans_data = []
+        successful_lesson_numbers: List[int] = []
+        failed_count = 0
 
         for result in lesson_results:
-            if isinstance(result, Exception):
-                logger.error(f"Lesson generation failed: {result}", exc_info=True)
-                # Increment failed count for this lesson
-                await self._increment_failed_count(batch_task_id)
-                # Continue with next lesson (don't fail entire document)
-                continue
-
-            chapter, lesson_plan_data, generated_content = result
+            chapter = result["chapter"]
+            lesson_input = result["lesson_input"]
+            generated_content = result.get("generated_content")
+            lesson_plan_data = result.get("lesson_plan_data")
+            error_message = result.get("error")
 
             # Create lesson plan record in database
             lesson_plan_id = str(uuid4())
             # Set status based on draft mode
             lesson_plan_status = "draft_cached" if is_draft_mode else "generated"
+            batch_status = "completed"
+
+            if error_message:
+                failed_count += 1
+                lesson_plan_status = "failed"
+                batch_status = "failed"
+                logger.error(
+                    f"Lesson generation failed for {chapter.lesson_number} ({chapter.topic}): "
+                    f"{error_message}"
+                )
+            else:
+                # Validate lesson plan data completeness before appending
+                required_fields = ["teaching_goals", "key_points", "teaching_steps"]
+                missing_fields = [
+                    f for f in required_fields
+                    if f not in lesson_plan_data or not lesson_plan_data[f]
+                ]
+                if missing_fields:
+                    failed_count += 1
+                    lesson_plan_status = "failed"
+                    batch_status = "failed"
+                    error_message = f"Missing required fields: {', '.join(missing_fields)}"
+                    logger.error(
+                        f"Lesson plan {chapter.lesson_number} ({chapter.topic}) "
+                        f"is missing required fields: {missing_fields}. "
+                        f"Marking as failed."
+                    )
 
             await db.execute(
                 """
@@ -474,16 +514,10 @@ class BatchTaskProcessor:
                     subject,
                     grade,
                     chapter.topic,
-                    json.dumps(LessonPlanInput(
-                        template_id=template_id,
-                        subject=subject,
-                        grade=grade,
-                        topic=chapter.topic,
-                        duration=self.default_duration,
-                        prior_knowledge=chapter.content_summary,
-                        focus_areas=", ".join(_flatten_key_concepts(chapter.key_concepts)),
-                    ).model_dump(), ensure_ascii=False),
-                    json.dumps(generated_content.model_dump(), ensure_ascii=False),
+                    json.dumps(lesson_input.model_dump(), ensure_ascii=False),
+                    json.dumps(generated_content.model_dump(), ensure_ascii=False)
+                    if generated_content
+                    else None,
                     lesson_plan_status,
                     batch_task_id,
                     chapter.lesson_number,
@@ -498,8 +532,8 @@ class BatchTaskProcessor:
                 """
                 INSERT INTO batch_lesson_plans (
                     id, batch_task_id, lesson_plan_id, lesson_number,
-                    topic, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    topic, status, error_message, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     batch_lesson_plan_id,
@@ -507,32 +541,21 @@ class BatchTaskProcessor:
                     lesson_plan_id,
                     chapter.lesson_number,
                     chapter.topic,
-                    "completed",
+                    batch_status,
+                    error_message,
                     datetime.now().isoformat(),
                 ),
                 commit=True,
             )
 
-            # Validate lesson plan data completeness before appending
-            required_fields = ["teaching_goals", "key_points", "teaching_steps"]
-            missing_fields = [
-                f for f in required_fields
-                if f not in lesson_plan_data or not lesson_plan_data[f]
-            ]
-            if missing_fields:
-                logger.error(
-                    f"Lesson plan {chapter.lesson_number} ({chapter.topic}) "
-                    f"is missing required fields: {missing_fields}. "
-                    f"Skipping this lesson plan."
-                )
-                await self._increment_failed_count(batch_task_id)
-                continue
-
-            lesson_plans_data.append(lesson_plan_data)
+            if batch_status == "completed":
+                lesson_plans_data.append(lesson_plan_data)
+                successful_lesson_numbers.append(chapter.lesson_number)
 
         # Check if we have any successful lesson plans
         if not lesson_plans_data:
-            raise ValueError(f"All lesson plans failed for document {document_number}")
+            logger.error(f"All lesson plans failed for document {document_number}")
+            return "", 0, failed_count, []
 
         # In draft mode, skip document rendering and return empty string
         if is_draft_mode:
@@ -540,7 +563,7 @@ class BatchTaskProcessor:
                 f"Draft mode: Skipping document rendering for document {document_number}. "
                 f"Generated {len(lesson_plans_data)} lesson plans."
             )
-            return ""
+            return "", len(lesson_plans_data), failed_count, successful_lesson_numbers
 
         # Render combined document with successful lesson plans
         logger.debug(f"Rendering document {document_number} (week {week_number}) with {len(lesson_plans_data)} lesson plans")
@@ -553,23 +576,20 @@ class BatchTaskProcessor:
         )
 
         # Update file path in batch_lesson_plans records for successful lessons
-        lesson_numbers = [
-            chapter_data["lesson_number"]
-            for chapter_data in chapters_data
-        ]
-        placeholders = ",".join(["?"] * len(lesson_numbers))
-        await db.execute(
-            f"""
-            UPDATE batch_lesson_plans
-            SET file_path = ?
-            WHERE batch_task_id = ? AND lesson_number IN ({placeholders})
-            """,
-            (output_path, batch_task_id, *lesson_numbers),
-            commit=True,
-        )
+        if successful_lesson_numbers:
+            placeholders = ",".join(["?"] * len(successful_lesson_numbers))
+            await db.execute(
+                f"""
+                UPDATE batch_lesson_plans
+                SET file_path = ?
+                WHERE batch_task_id = ? AND lesson_number IN ({placeholders})
+                """,
+                (output_path, batch_task_id, *successful_lesson_numbers),
+                commit=True,
+            )
 
         logger.info(f"Successfully generated document {document_number}: {output_path}")
-        return output_path
+        return output_path, len(lesson_plans_data), failed_count, successful_lesson_numbers
 
     async def _generate_document_sequential(
         self,
