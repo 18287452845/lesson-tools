@@ -44,6 +44,98 @@ def _flatten_key_concepts(key_concepts):
     return result
 
 
+def _dedupe_preserve_order(items: List[str]) -> List[str]:
+    seen = set()
+    result = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _normalize_chapters_to_count(
+    chapters: List[ChapterInfo],
+    target_count: int,
+) -> List[ChapterInfo]:
+    if target_count <= 0:
+        return []
+
+    if not chapters:
+        return []
+
+    def build_chapter(lesson_number: int, topic: str, summary: str, concepts: List[str]) -> ChapterInfo:
+        normalized_topic = topic.strip() if topic else ""
+        if not normalized_topic:
+            normalized_topic = f"第{lesson_number}课"
+        return ChapterInfo(
+            lesson_number=lesson_number,
+            topic=normalized_topic,
+            content_summary=summary or "",
+            key_concepts=list(concepts or []),
+        )
+
+    if len(chapters) == target_count:
+        return [
+            build_chapter(
+                idx + 1,
+                chapter.topic,
+                chapter.content_summary,
+                chapter.key_concepts,
+            )
+            for idx, chapter in enumerate(chapters)
+        ]
+
+    if len(chapters) < target_count:
+        expanded: List[ChapterInfo] = []
+        base = target_count // len(chapters)
+        remainder = target_count % len(chapters)
+        for idx, chapter in enumerate(chapters):
+            repeats = base + (1 if idx < remainder else 0)
+            for part in range(repeats):
+                suffix = f" ({part + 1}/{repeats})" if repeats > 1 else ""
+                topic = f"{chapter.topic}{suffix}" if chapter.topic else ""
+                expanded.append(build_chapter(
+                    len(expanded) + 1,
+                    topic,
+                    chapter.content_summary,
+                    chapter.key_concepts,
+                ))
+        return expanded
+
+    # Merge when there are more chapters than needed
+    merged: List[ChapterInfo] = []
+    base = len(chapters) // target_count
+    remainder = len(chapters) % target_count
+    start = 0
+    for idx in range(target_count):
+        size = base + (1 if idx < remainder else 0)
+        group = chapters[start:start + size]
+        start += size
+        topics = [ch.topic.strip() for ch in group if ch.topic and ch.topic.strip()]
+        summary_parts = [ch.content_summary.strip() for ch in group if ch.content_summary and ch.content_summary.strip()]
+        concepts = []
+        for ch in group:
+            concepts.extend(ch.key_concepts or [])
+        merged.append(build_chapter(
+            idx + 1,
+            " / ".join(topics),
+            " ".join(summary_parts),
+            _dedupe_preserve_order(concepts),
+        ))
+    return merged
+
+
+def normalize_chapters_for_hours(
+    chapters: List[ChapterInfo],
+    total_hours: int,
+    hours_per_lesson: int,
+) -> List[ChapterInfo]:
+    target_count = max(1, total_hours // hours_per_lesson)
+    return _normalize_chapters_to_count(chapters, target_count)
+
+
 class ChapterSplitter:
     """
     AI-powered course chapter splitting service.
@@ -232,17 +324,20 @@ class ChapterSplitter:
         Raises:
             ValueError: If the response cannot be parsed
         """
+        num_lessons = max(1, total_hours // hours_per_lesson)
+
         if chapters_input and chapters_input.strip():
             # Mode 1: Parse user-provided chapters
-            return self._parse_manual_chapters(chapters_input)
-        else:
-            # Mode 2: AI-generated chapters
-            num_lessons = total_hours // hours_per_lesson
-            return await self._generate_ai_chapters(
-                course_name, subject, grade,
-                total_hours, hours_per_lesson, num_lessons,
-                additional_info
-            )
+            chapters = self._parse_manual_chapters(chapters_input)
+            return _normalize_chapters_to_count(chapters, num_lessons)
+
+        # Mode 2: AI-generated chapters
+        chapters = await self._generate_ai_chapters(
+            course_name, subject, grade,
+            total_hours, hours_per_lesson, num_lessons,
+            additional_info
+        )
+        return _normalize_chapters_to_count(chapters, num_lessons)
 
     def _parse_manual_chapters(
         self,

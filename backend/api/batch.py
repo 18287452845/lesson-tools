@@ -33,7 +33,7 @@ from ..models.schemas import (
     BatchLessonPlanListResponse,
     LessonPlan,
 )
-from ..services.chapter_splitter import ChapterSplitter
+from ..services.chapter_splitter import ChapterSplitter, normalize_chapters_for_hours
 from ..services.batch_processor import BatchTaskProcessor
 from ..services.background_runner import run_in_background
 
@@ -475,7 +475,12 @@ async def create_batch_task(request: BatchTaskCreateRequest):
     """
     try:
         task_id = str(uuid4())
-        total_count = len(request.chapters)
+        normalized_chapters = normalize_chapters_for_hours(
+            request.chapters,
+            request.total_hours,
+            request.hours_per_lesson,
+        )
+        total_count = len(normalized_chapters)
 
         logger.info(
             f"Creating batch task {task_id}: "
@@ -525,7 +530,7 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 request.template_id,
                 request.total_hours,
                 request.hours_per_lesson,
-                json.dumps([c.model_dump() for c in request.chapters], ensure_ascii=False),
+                json.dumps([c.model_dump() for c in normalized_chapters], ensure_ascii=False),
                 request.start_week,
                 json.dumps(request.class_ids, ensure_ascii=False),
                 request.location or "",
@@ -873,7 +878,12 @@ async def create_draft_task(request: DraftTaskCreateRequest):
     """
     try:
         task_id = str(uuid4())
-        total_count = len(request.chapters)
+        normalized_chapters = normalize_chapters_for_hours(
+            request.chapters,
+            request.total_hours,
+            request.hours_per_lesson,
+        )
+        total_count = len(normalized_chapters)
 
         logger.info(
             f"Creating draft task {task_id}: "
@@ -912,7 +922,7 @@ async def create_draft_task(request: DraftTaskCreateRequest):
                 request.template_id,
                 request.total_hours,
                 request.hours_per_lesson,
-                json.dumps([c.model_dump() for c in request.chapters], ensure_ascii=False),
+                json.dumps([c.model_dump() for c in normalized_chapters], ensure_ascii=False),
                 request.textbook_name or "",
                 request.location or "",
                 request.online_resources or "",

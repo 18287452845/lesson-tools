@@ -157,6 +157,129 @@ const outlineToChapters = (outline: OutlineNode[]): { chapters: ChapterInfo[]; o
   return { chapters, outlines };
 };
 
+const dedupePreserveOrder = (items: string[]) => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  items.forEach((item) => {
+    if (seen.has(item)) {
+      return;
+    }
+    seen.add(item);
+    result.push(item);
+  });
+  return result;
+};
+
+const normalizeChaptersToCount = (
+  chapters: ChapterInfo[],
+  outlines: string[][],
+  targetCount: number,
+): { chapters: ChapterInfo[]; outlines: string[][] } => {
+  if (targetCount <= 0) {
+    return { chapters: [], outlines: [] };
+  }
+
+  if (chapters.length === 0) {
+    return { chapters: [], outlines: [] };
+  }
+
+  const sourceOutlines = chapters.map((_, idx) => outlines[idx] ?? []);
+
+  const buildChapter = (
+    lessonNumber: number,
+    topic: string,
+    summary: string,
+    concepts: string[],
+  ): ChapterInfo => ({
+    lesson_number: lessonNumber,
+    topic: topic?.trim() ? topic : `第${lessonNumber}课`,
+    content_summary: summary ?? '',
+    key_concepts: concepts ?? [],
+  });
+
+  if (chapters.length === targetCount) {
+    return {
+      chapters: chapters.map((chapter, idx) =>
+        buildChapter(
+          idx + 1,
+          chapter.topic,
+          chapter.content_summary,
+          chapter.key_concepts,
+        )
+      ),
+      outlines: sourceOutlines,
+    };
+  }
+
+  if (chapters.length < targetCount) {
+    const expanded: ChapterInfo[] = [];
+    const expandedOutlines: string[][] = [];
+    const base = Math.floor(targetCount / chapters.length);
+    const remainder = targetCount % chapters.length;
+
+    chapters.forEach((chapter, idx) => {
+      const repeats = base + (idx < remainder ? 1 : 0);
+      for (let part = 0; part < repeats; part += 1) {
+        const suffix = repeats > 1 ? ` (${part + 1}/${repeats})` : '';
+        const topic = chapter.topic ? `${chapter.topic}${suffix}` : '';
+        expanded.push(buildChapter(
+          expanded.length + 1,
+          topic,
+          chapter.content_summary,
+          chapter.key_concepts,
+        ));
+        expandedOutlines.push(sourceOutlines[idx] ?? []);
+      }
+    });
+
+    return { chapters: expanded, outlines: expandedOutlines };
+  }
+
+  const merged: ChapterInfo[] = [];
+  const mergedOutlines: string[][] = [];
+  const base = Math.floor(chapters.length / targetCount);
+  const remainder = chapters.length % targetCount;
+  let start = 0;
+
+  for (let idx = 0; idx < targetCount; idx += 1) {
+    const size = base + (idx < remainder ? 1 : 0);
+    const group = chapters.slice(start, start + size);
+    const groupOutlines = sourceOutlines.slice(start, start + size);
+    start += size;
+
+    const topics = group
+      .map((chapter) => chapter.topic?.trim())
+      .filter(Boolean) as string[];
+    const summaryParts = group
+      .map((chapter) => chapter.content_summary?.trim())
+      .filter(Boolean) as string[];
+    const concepts = dedupePreserveOrder(
+      group.flatMap((chapter) => chapter.key_concepts ?? [])
+    );
+    const outlineLines = dedupePreserveOrder(groupOutlines.flat());
+
+    merged.push(buildChapter(
+      idx + 1,
+      topics.join(' / '),
+      summaryParts.join(' '),
+      concepts,
+    ));
+    mergedOutlines.push(outlineLines);
+  }
+
+  return { chapters: merged, outlines: mergedOutlines };
+};
+
+const normalizeChaptersForHours = (
+  chapters: ChapterInfo[],
+  outlines: string[][],
+  totalHours: number,
+  hoursPerLesson: number,
+): { chapters: ChapterInfo[]; outlines: string[][] } => {
+  const targetCount = Math.max(1, Math.floor(totalHours / hoursPerLesson));
+  return normalizeChaptersToCount(chapters, outlines, targetCount);
+};
+
 const buildOutlineFromTextbook = (chapters: TextbookInfo['chapters']): OutlineNode[] => {
   const map = new Map<string, OutlineNode>();
   const sorted = [...chapters].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
@@ -403,9 +526,14 @@ const BatchGenerate: React.FC = () => {
   // Step 1: Submit basic info and split chapters
   const handleSplitChapters = async (values: any) => {
     const chapterMode = getChapterMode();
+    const totalHours = Number(values.total_hours ?? form.getFieldValue('total_hours') ?? 0);
+    const hoursPerLesson = Number(values.hours_per_lesson ?? form.getFieldValue('hours_per_lesson') ?? 2);
 
     // If chapters already loaded from textbook or cache
     if (chapterMode === 'textbook' || chapterMode === 'cached') {
+      let nextChapters = chapters;
+      let nextOutlines = chapterOutline;
+
       // Check if user edited chapters_input
       if (values.chapters_input && values.chapters_input.trim()) {
         const outline = parseOutlineInput(values.chapters_input);
@@ -414,8 +542,17 @@ const BatchGenerate: React.FC = () => {
           message.error('请输入章节标题');
           return;
         }
-        applyChapters(updatedChapters, outlines);
+        nextChapters = updatedChapters;
+        nextOutlines = outlines;
       }
+
+      const normalized = normalizeChaptersForHours(
+        nextChapters,
+        nextOutlines,
+        totalHours,
+        hoursPerLesson,
+      );
+      applyChapters(normalized.chapters, normalized.outlines);
 
       setSavedFormValues(values);
       setCurrentStep(1);
@@ -437,10 +574,16 @@ const BatchGenerate: React.FC = () => {
         return;
       }
 
-      applyChapters(parsedChapters, outlines);
+      const normalized = normalizeChaptersForHours(
+        parsedChapters,
+        outlines,
+        totalHours,
+        hoursPerLesson,
+      );
+      applyChapters(normalized.chapters, normalized.outlines);
       setSavedFormValues(values);
       setCurrentStep(1);
-      message.success(`成功解析 ${parsedChapters.length} 个章节`);
+      message.success(`成功解析 ${normalized.chapters.length} 个章节`);
       return;
     }
 
@@ -475,10 +618,16 @@ const BatchGenerate: React.FC = () => {
         },
         // onComplete callback
         (response: ChapterSplitResponse) => {
-          applyChapters(response.chapters);
+          const normalized = normalizeChaptersForHours(
+            response.chapters,
+            [],
+            totalHours,
+            hoursPerLesson,
+          );
+          applyChapters(normalized.chapters, normalized.outlines);
           setCurrentStep(1);
-          const numDocs = Math.ceil(response.chapters.length / 2);
-          message.success(`成功生成 ${response.chapters.length} 份教案（${numDocs} 个文档）`);
+          const numDocs = Math.ceil(normalized.chapters.length / 2);
+          message.success(`成功生成 ${normalized.chapters.length} 份教案（${numDocs} 个文档）`);
           setSplittingChapters(false);
         },
         // onError callback
@@ -519,6 +668,17 @@ const BatchGenerate: React.FC = () => {
       return;
     }
 
+    const normalized = normalizeChaptersForHours(
+      chapters,
+      chapterOutline,
+      Number(values.total_hours),
+      Number(values.hours_per_lesson ?? 2),
+    );
+
+    if (normalized.chapters.length !== chapters.length) {
+      applyChapters(normalized.chapters, normalized.outlines);
+    }
+
     setLoading(true);
     try {
       if (taskType === 'draft') {
@@ -530,7 +690,7 @@ const BatchGenerate: React.FC = () => {
           template_id: values.template_id,
           total_hours: values.total_hours,
           hours_per_lesson: values.hours_per_lesson ?? 2,
-          chapters: chapters,
+          chapters: normalized.chapters,
           textbook_name: values.textbook_name,
           location: values.location,
           online_resources: values.online_resources,
@@ -550,7 +710,7 @@ const BatchGenerate: React.FC = () => {
           template_id: values.template_id,
           total_hours: values.total_hours,
           hours_per_lesson: values.hours_per_lesson ?? 2,
-          chapters: chapters,
+          chapters: normalized.chapters,
           start_week: values.start_week ?? 1,
           class_ids: values.class_ids ?? [],
           location: values.location,
@@ -1038,8 +1198,7 @@ const BatchGenerate: React.FC = () => {
                 message={(() => {
                   const totalHours = form.getFieldValue('total_hours') || 64;
                   const hoursPerLesson = form.getFieldValue('hours_per_lesson') || 2;
-                  const chapterCount = chapters.length;
-                  const numLessons = chapterCount > 0 ? chapterCount : Math.floor(totalHours / hoursPerLesson);
+                  const numLessons = Math.max(1, Math.floor(totalHours / hoursPerLesson));
                   const numDocs = Math.ceil(numLessons / 2);
                   return `预计生成 ${numLessons} 份教案，共 ${numDocs} 个文档`;
                 })()}
