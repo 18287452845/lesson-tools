@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from urllib.parse import urlparse
 import logging
 
 from .config import settings
@@ -47,18 +48,30 @@ app = FastAPI(
 )
 
 # Configure CORS
+cors_origins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:5176",
+    "http://localhost:5177",
+    "http://localhost:5178",
+    "https://ls.linnera.link",
+    "http://ls.linnera.link",
+]
+
+if settings.onlyoffice_docs_url:
+    parsed = urlparse(settings.onlyoffice_docs_url)
+    if parsed.scheme and parsed.netloc:
+        onlyoffice_origin = f"{parsed.scheme}://{parsed.netloc}"
+    else:
+        onlyoffice_origin = settings.onlyoffice_docs_url.rstrip("/")
+
+    if onlyoffice_origin and onlyoffice_origin not in cors_origins:
+        cors_origins.append(onlyoffice_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-        "http://localhost:5176",
-        "http://localhost:5177",
-        "http://localhost:5178",
-        "https://ls.linnera.link",
-        "http://ls.linnera.link",
-    ],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

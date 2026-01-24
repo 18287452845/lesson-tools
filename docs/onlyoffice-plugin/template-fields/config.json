@@ -1,0 +1,21 @@
+{
+  "name": "Template Fields",
+  "guid": "asc.{F6C9D643-1F6B-4C1F-9B0C-9AD04E4B596E}",
+  "version": "1.0.0",
+  "baseUrl": "",
+  "events": ["onDocumentStateChange"],
+  "variations": [
+    {
+      "description": "Template fields helper",
+      "url": "index.html",
+      "icons": ["icon.svg"],
+      "isViewer": false,
+      "EditorsSupport": ["word"],
+      "isVisual": true,
+      "isModal": false,
+      "isInsideMode": true,
+      "initOnSelectionChanged": false,
+      "initOnFocus": false
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Template Fields</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="plugin">
+      <header class="plugin__header">
+        <div class="plugin__title">Template Fields</div>
+        <div class="plugin__subtitle">Replace or insert placeholders</div>
+      </header>
+
+      <section class="plugin__section">
+        <label class="plugin__label" for="fieldSelect">Field</label>
+        <select id="fieldSelect" class="plugin__select"></select>
+      </section>
+
+      <section class="plugin__section plugin__actions">
+        <button id="replaceBtn" class="plugin__button">Replace selection</button>
+        <button id="insertBtn" class="plugin__button">Insert field</button>
+      </section>
+
+      <section class="plugin__section">
+        <label class="plugin__toggle">
+          <input id="highlightToggle" type="checkbox" checked />
+          <span>Highlight placeholders while editing</span>
+        </label>
+        <div class="plugin__actions">
+          <button id="refreshBtn" class="plugin__button plugin__button--ghost">Rescan highlights</button>
+          <button id="clearBtn" class="plugin__button plugin__button--ghost">Clear highlights</button>
+        </div>
+      </section>
+
+      <div id="status" class="plugin__status"></div>
+    </div>
+
+    <script src="code.js"></script>
+  </body>
+</html>

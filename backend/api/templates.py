@@ -416,6 +416,7 @@ async def update_template(
 # ============================================================================
 
 ONLYOFFICE_ASSET_VERSION = "20260121-fix8"
+ONLYOFFICE_TEMPLATE_PLUGIN_GUID = "asc.{F6C9D643-1F6B-4C1F-9B0C-9AD04E4B596E}"
 
 class OnlyOfficeCallbackRequest(BaseModel):
     status: int
@@ -482,6 +483,15 @@ async def get_onlyoffice_config(template_id: str, request: Request):
             "user": {
                 "id": "template-editor",
                 "name": "模板编辑器",
+            },
+            "plugins": {
+                "autostart": [ONLYOFFICE_TEMPLATE_PLUGIN_GUID],
+                "options": {
+                    ONLYOFFICE_TEMPLATE_PLUGIN_GUID: {
+                        "templateId": template_id,
+                        "apiBaseUrl": f"{base_url}{settings.api_prefix}",
+                    },
+                },
             },
         },
     }
