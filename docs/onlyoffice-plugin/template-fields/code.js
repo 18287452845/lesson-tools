@@ -4,8 +4,6 @@
     apiBaseUrl: "",
     templateId: "",
     fields: [],
-    placeholders: [],
-    highlightEnabled: true,
   };
 
   function byId(id) {
@@ -54,29 +52,6 @@
     });
   }
 
-  function buildPlaceholderVariants(fieldName) {
-    return [
-      "{{" + fieldName + "}}",
-      "{{ " + fieldName + "}}",
-      "{{" + fieldName + " }}",
-      "{{ " + fieldName + " }}",
-    ];
-  }
-
-  function buildPlaceholders(fields) {
-    var set = {};
-    fields.forEach(function (field) {
-      if (!field || !field.name) {
-        return;
-      }
-      var variants = buildPlaceholderVariants(field.name);
-      variants.forEach(function (variant) {
-        set[variant] = true;
-      });
-    });
-    return Object.keys(set);
-  }
-
   function renderSelect(fields) {
     var select = byId("fieldSelect");
     if (!select) {
@@ -105,46 +80,6 @@
 
   function isPlaceholder(text) {
     return /^\{\{\s*[^{}]+\s*\}\}$/.test(text || "");
-  }
-
-  function applyHighlights() {
-    if (!state.highlightEnabled || !state.placeholders.length) {
-      return;
-    }
-    window.Asc.plugin.callCommand(
-      function () {
-        var doc = Api.GetDocument();
-        var placeholders = window.Asc.plugin.info.data || [];
-        for (var i = 0; i < placeholders.length; i += 1) {
-          var ranges = doc.Search(placeholders[i], false);
-          for (var j = 0; j < ranges.length; j += 1) {
-            ranges[j].SetHighlight("yellow");
-          }
-        }
-      },
-      false,
-      state.placeholders
-    );
-  }
-
-  function clearHighlights() {
-    if (!state.placeholders.length) {
-      return;
-    }
-    window.Asc.plugin.callCommand(
-      function () {
-        var doc = Api.GetDocument();
-        var placeholders = window.Asc.plugin.info.data || [];
-        for (var i = 0; i < placeholders.length; i += 1) {
-          var ranges = doc.Search(placeholders[i], false);
-          for (var j = 0; j < ranges.length; j += 1) {
-            ranges[j].SetHighlight("none");
-          }
-        }
-      },
-      false,
-      state.placeholders
-    );
   }
 
   function loadFields() {
@@ -192,7 +127,6 @@
         });
 
         state.fields = merged;
-        state.placeholders = buildPlaceholders(merged);
         renderSelect(merged);
 
         setStatus("Fields loaded: " + merged.length, "ok");
@@ -238,9 +172,6 @@
         }
         window.Asc.plugin.executeMethod("PasteText", [placeholder], function () {
           setStatus("Placeholder replaced.", "ok");
-          if (state.highlightEnabled) {
-            applyHighlights();
-          }
         });
       }
     );
@@ -256,18 +187,12 @@
 
     window.Asc.plugin.executeMethod("PasteText", [placeholder], function () {
       setStatus("Field inserted.", "ok");
-      if (state.highlightEnabled) {
-        applyHighlights();
-      }
     });
   }
 
   function bindUi() {
     var replaceBtn = byId("replaceBtn");
     var insertBtn = byId("insertBtn");
-    var refreshBtn = byId("refreshBtn");
-    var clearBtn = byId("clearBtn");
-    var highlightToggle = byId("highlightToggle");
 
     if (replaceBtn) {
       replaceBtn.addEventListener("click", replaceSelected);
@@ -275,70 +200,13 @@
     if (insertBtn) {
       insertBtn.addEventListener("click", insertField);
     }
-    if (refreshBtn) {
-      refreshBtn.addEventListener("click", function () {
-        if (state.highlightEnabled) {
-          applyHighlights();
-          setStatus("Highlights refreshed.", "ok");
-        }
-      });
-    }
-    if (clearBtn) {
-      clearBtn.addEventListener("click", function () {
-        clearHighlights();
-        setStatus("Highlights cleared.", "ok");
-      });
-    }
-    if (highlightToggle) {
-      highlightToggle.addEventListener("change", function (event) {
-        state.highlightEnabled = event.target.checked;
-        if (state.highlightEnabled) {
-          applyHighlights();
-          setStatus("Highlight enabled.", "ok");
-        } else {
-          clearHighlights();
-          setStatus("Highlight disabled.", "warn");
-        }
-      });
-    }
-  }
-
-  function attachEditorEvents() {
-    if (window.Asc && window.Asc.plugin && window.Asc.plugin.attachEditorEvent) {
-      window.Asc.plugin.attachEditorEvent("onDocumentStateChange", function () {
-        if (!state.highlightEnabled) {
-          return;
-        }
-        applyHighlights();
-      });
-    } else if (window.Asc && window.Asc.plugin && window.Asc.plugin.attachEvent) {
-      window.Asc.plugin.attachEvent("onDocumentStateChange", function () {
-        if (!state.highlightEnabled) {
-          return;
-        }
-        applyHighlights();
-      });
-    }
   }
 
   window.Asc.plugin.init = function () {
     bindUi();
-    attachEditorEvents();
 
-    loadFields()
-      .then(function () {
-        if (state.highlightEnabled) {
-          applyHighlights();
-        }
-      })
-      .catch(function () {
-        // status already set
-      });
-  };
-
-  window.Asc.plugin.onClose = function () {
-    if (state.highlightEnabled) {
-      clearHighlights();
-    }
+    loadFields().catch(function () {
+      // status already set
+    });
   };
 })();

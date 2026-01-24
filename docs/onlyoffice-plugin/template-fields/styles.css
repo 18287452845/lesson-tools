@@ -71,20 +71,6 @@ body {
   cursor: not-allowed;
 }
 
-.plugin__button--ghost {
-  background: #e5e7eb;
-  color: #111827;
-}
-
-.plugin__toggle {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font-size: 13px;
-  color: #374151;
-  margin-bottom: 8px;
-}
-
 .plugin__status {
   min-height: 18px;
   font-size: 12px;
