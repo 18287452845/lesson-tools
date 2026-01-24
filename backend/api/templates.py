@@ -486,6 +486,9 @@ async def get_onlyoffice_config(template_id: str, request: Request):
             },
             "plugins": {
                 "autostart": [ONLYOFFICE_TEMPLATE_PLUGIN_GUID],
+                "pluginsData": [
+                    f"{document_server}/sdkjs-plugins/template-fields/config.json"
+                ],
                 "options": {
                     ONLYOFFICE_TEMPLATE_PLUGIN_GUID: {
                         "templateId": template_id,
