@@ -190,7 +190,7 @@ function LessonPlanDetail() {
           </Descriptions>
 
           {/* Generated Content */}
-          <div>
+          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             <Title level={4}>教案内容</Title>
 
             {/* Teaching Objectives */}

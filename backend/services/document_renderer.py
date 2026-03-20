@@ -26,6 +26,17 @@ class DocumentRenderer:
     This approach properly renders Jinja2 templates while preserving
     the original document structure, including tables and formatting.
     """
+    _MARKDOWN_TOKENS = ("[", "](", "![", "**", "__", "`", "~~", "*", "_", "#")
+    _LINK_PATTERN = re.compile(r'\[([^\]]+)\]\([^)]+\)')
+    _IMAGE_PATTERN = re.compile(r'!\[([^\]]*)\]\([^)]+\)')
+    _BOLD_ASTERISK_PATTERN = re.compile(r'\*\*([^*]+)\*\*')
+    _BOLD_UNDERSCORE_PATTERN = re.compile(r'__([^_]+)__')
+    _ITALIC_ASTERISK_PATTERN = re.compile(r'(?<!\*)\*([^*]+)\*(?!\*)')
+    _ITALIC_UNDERSCORE_PATTERN = re.compile(r'(?<!_)_([^_]+)_(?!_)')
+    _HEADER_PATTERN = re.compile(r'^#+\s+', flags=re.MULTILINE)
+    _STRIKE_PATTERN = re.compile(r'~~([^~]+)~~')
+    _INLINE_CODE_PATTERN = re.compile(r'`([^`]+)`')
+    _WHITESPACE_CLEANUP_PATTERN = re.compile(r'[ \t]{2,}')
 
     def __init__(self):
         """Initialize the document renderer."""
@@ -99,6 +110,36 @@ class DocumentRenderer:
         text = re.sub(r'`([^`]+)`', r'\1', text)
 
         return text
+
+    def _clean_text_for_output(self, text: str) -> str:
+        """
+        Fast-path clean for plain text and markdown clean for rich text.
+        """
+        if not text or not isinstance(text, str):
+            return text or ""
+
+        if any(token in text for token in self._MARKDOWN_TOKENS):
+            text = self._strip_markdown(text)
+
+        return self._normalize_subheading_line_breaks(text)
+
+    def _normalize_subheading_line_breaks(self, text: str) -> str:
+        """
+        Ensure inline subheadings are moved to a new line for readability.
+        """
+        if not text or not isinstance(text, str):
+            return text or ""
+
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+
+        normalized = re.sub(r'([。！？；:：])\s*(#{1,6}\s+)', r'\1\n\2', normalized)
+        normalized = re.sub(r'([。！？；:：])\s*([一二三四五六七八九十]+、)', r'\1\n\2', normalized)
+        normalized = re.sub(r'([。！？；:：])\s*([（(][一二三四五六七八九十]+[)）])', r'\1\n\2', normalized)
+        normalized = re.sub(r'([。！？；:：])\s*((?:\d{1,2}[\.、]))', r'\1\n\2', normalized)
+        normalized = self._WHITESPACE_CLEANUP_PATTERN.sub(' ', normalized)
+        normalized = re.sub(r'\n{3,}', '\n\n', normalized).strip()
+
+        return normalized
 
     def render_lesson_plan(
         self,
@@ -297,7 +338,7 @@ class DocumentRenderer:
         # Copy all simple fields with markdown cleaning
         for key, value in data.items():
             if isinstance(value, str):
-                processed[key] = self._strip_markdown(value)
+                processed[key] = self._clean_text_for_output(value)
             elif isinstance(value, (int, float, bool)) or value is None:
                 processed[key] = value if value is not None else ""
 
@@ -334,7 +375,7 @@ class DocumentRenderer:
                         cleaned_step = {}
                         for key, value in step.items():
                             if isinstance(value, str):
-                                cleaned_step[key] = self._strip_markdown(value)
+                                cleaned_step[key] = self._clean_text_for_output(value)
                             else:
                                 cleaned_step[key] = value
                         cleaned_steps.append(cleaned_step)
@@ -371,8 +412,8 @@ class DocumentRenderer:
 
                 processed["teaching_steps_text"] = "\n\n".join(step_texts)
             elif isinstance(steps, str):
-                processed["teaching_steps"] = self._strip_markdown(steps)
-                processed["teaching_steps_text"] = self._strip_markdown(steps)
+                processed["teaching_steps"] = self._clean_text_for_output(steps)
+                processed["teaching_steps_text"] = self._clean_text_for_output(steps)
             else:
                 processed["teaching_steps"] = []
                 processed["teaching_steps_text"] = ""
