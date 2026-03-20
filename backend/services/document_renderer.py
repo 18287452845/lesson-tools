@@ -137,9 +137,48 @@ class DocumentRenderer:
         normalized = re.sub(r'([。！？；:：])\s*([（(][一二三四五六七八九十]+[)）])', r'\1\n\2', normalized)
         normalized = re.sub(r'([。！？；:：])\s*((?:\d{1,2}[\.、]))', r'\1\n\2', normalized)
         normalized = self._WHITESPACE_CLEANUP_PATTERN.sub(' ', normalized)
-        normalized = re.sub(r'\n{3,}', '\n\n', normalized).strip()
 
-        return normalized
+        lines = [line.strip() for line in normalized.split("\n")]
+        cleaned_lines = []
+
+        for index, line in enumerate(lines):
+            if line:
+                cleaned_lines.append(line)
+                continue
+
+            previous_line = cleaned_lines[-1] if cleaned_lines else ""
+            next_line = ""
+            for candidate in lines[index + 1:]:
+                if candidate:
+                    next_line = candidate.strip()
+                    break
+
+            # Drop empty lines around short heading-like labels and subheadings.
+            if self._is_heading_like_line(previous_line) or self._is_heading_like_line(next_line):
+                continue
+
+            if cleaned_lines and cleaned_lines[-1] != "":
+                cleaned_lines.append("")
+
+        return "\n".join(cleaned_lines).strip()
+
+    @staticmethod
+    def _is_heading_like_line(line: str) -> bool:
+        if not line:
+            return False
+
+        stripped = line.strip()
+
+        if re.match(r'^(#{1,6}\s+)', stripped):
+            return True
+
+        if re.match(r'^([一二三四五六七八九十]+、|[（(][一二三四五六七八九十]+[)）]|\d{1,2}[\.、])', stripped):
+            return True
+
+        if len(stripped) <= 20 and re.match(r'^[^。！？]{1,20}[：:]$', stripped):
+            return True
+
+        return False
 
     def render_lesson_plan(
         self,
