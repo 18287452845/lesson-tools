@@ -139,7 +139,19 @@ def _add_steps_table(doc, list_path: str, include_political: bool = False) -> No
 # Template 1: 参赛教案_模板.docx
 # ============================================================================
 
-def build_lesson_plan_template() -> None:
+# ============================================================================
+# Template 1A: 参赛教案_主模板.docx (cover + overall design)
+# Template 1B: 参赛教案_单课模板.docx (one 【教案 X】, uses lesson.* directly)
+# Rendering strategy:
+#   - Render main once
+#   - Render single-lesson template N times (one per lesson)
+#   - Merge them all into final output
+# This sidesteps docxtpl's `{%p for%}` limitation: it can't loop over content
+# that contains tables.
+# ============================================================================
+
+def build_lesson_plan_main_template() -> None:
+    """Cover + overall design only (no lessons). Lessons appended via merge."""
     doc = Document()
 
     # ----- Cover -----
@@ -187,7 +199,6 @@ def build_lesson_plan_template() -> None:
     add_paragraph(doc, "{{ overall_design.teaching_method }}")
     doc.add_paragraph()
 
-    # 学情调查问卷
     add_section_title(doc, "附件 1 学情调查问卷", level=3)
     p = doc.add_paragraph()
     p.add_run("{%p for q in overall_design.survey_questions %}")
@@ -196,12 +207,18 @@ def build_lesson_plan_template() -> None:
     p.add_run("{%p endfor %}")
     doc.add_page_break()
 
-    # ----- 二、任务详细设计 (loop over lessons) -----
+    # Section title for the lessons that follow (appended via merge)
     add_section_title(doc, "二、任务详细设计", level=1)
+    doc.add_paragraph()
 
-    # Loop opener at paragraph level
-    p = doc.add_paragraph()
-    p.add_run("{%p for lesson in lessons %}")
+    output = OUTPUT_DIR / "参赛教案_主模板.docx"
+    doc.save(str(output))
+    print(f"[OK] Saved: {output}")
+
+
+def build_single_lesson_template() -> None:
+    """One 【教案 X】 only. Uses lesson.* directly (no outer loop)."""
+    doc = Document()
 
     # Per-lesson title
     add_section_title(doc, "【教案{{ lesson.lesson_number }}】{{ lesson.title }}", level=2)
@@ -282,17 +299,14 @@ def build_lesson_plan_template() -> None:
     # 三、教学实施过程
     add_section_title(doc, "三、教学实施过程", level=3)
 
-    # 课前 - 4-row pattern: header + {%tr for%} + data + {%tr endfor%}
     add_paragraph(doc, "教学过程:课前", bold=True, indent_first=False)
     _add_steps_table(doc, "lesson.pre_class_steps", include_political=False)
     doc.add_paragraph()
 
-    # 课中 (含思政点)
     add_paragraph(doc, "教学过程:课中", bold=True, indent_first=False)
     _add_steps_table(doc, "lesson.in_class_steps", include_political=True)
     doc.add_paragraph()
 
-    # 课后
     add_paragraph(doc, "教学过程:课后", bold=True, indent_first=False)
     _add_steps_table(doc, "lesson.after_class_steps", include_political=False)
     doc.add_paragraph()
@@ -302,13 +316,15 @@ def build_lesson_plan_template() -> None:
     add_paragraph(doc, "{{ lesson.reflection }}")
     doc.add_paragraph()
 
-    # End loop and page break between lessons
-    p = doc.add_paragraph()
-    p.add_run("{%p endfor %}")
-
-    output = OUTPUT_DIR / "参赛教案_模板.docx"
+    output = OUTPUT_DIR / "参赛教案_单课模板.docx"
     doc.save(str(output))
     print(f"[OK] Saved: {output}")
+
+
+def build_lesson_plan_template() -> None:
+    """Build both main + single-lesson templates."""
+    build_lesson_plan_main_template()
+    build_single_lesson_template()
 
 
 # ============================================================================
