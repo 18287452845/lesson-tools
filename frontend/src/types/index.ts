@@ -706,3 +706,99 @@ export interface TextbookChapterEnrichResponse {
   message: string;
 }
 
+
+// ============================================================================
+// Competition Module Types (教学能力比赛)
+// ============================================================================
+
+export interface CompetitionProjectCreate {
+  name: string;
+  competition_year?: string;
+  competition_region?: string;
+  competition_level?: string;
+  work_name?: string;
+  course_name?: string;
+  major_category?: string;
+  major_name?: string;
+  group_name?: string;
+  total_hours: number;
+  hours_per_lesson: number;
+  class_name?: string;
+  location?: string;
+  textbook_info?: Record<string, any>;
+  context_data?: Record<string, any>;
+}
+
+export interface CompetitionProjectUpdate extends Partial<CompetitionProjectCreate> {}
+
+export interface CompetitionProject {
+  id: string;
+  name: string;
+  competition_year?: string;
+  competition_region?: string;
+  competition_level?: string;
+  work_name?: string;
+  course_name?: string;
+  major_category?: string;
+  major_name?: string;
+  group_name?: string;
+  total_hours: number;
+  hours_per_lesson: number;
+  class_name?: string;
+  location?: string;
+  textbook_info?: Record<string, any> | null;
+  context_data?: Record<string, any> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompetitionProjectListResponse {
+  projects: CompetitionProject[];
+  total: number;
+}
+
+export interface CompetitionLessonPlanGenerateRequest {
+  topics_input?: string;
+  additional_requirements?: string;
+}
+
+export interface CompetitionReportGenerateRequest {
+  related_output_id?: string;
+  additional_requirements?: string;
+}
+
+export interface CompetitionGenerateResponse {
+  output_id: string;
+  status: string;
+}
+
+export type CompetitionOutputType = 'lesson_plan' | 'report';
+export type CompetitionOutputStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface CompetitionOutput {
+  id: string;
+  project_id: string;
+  output_type: CompetitionOutputType;
+  status: CompetitionOutputStatus;
+  generated_data?: any;
+  output_file_path?: string;
+  progress_current: number;
+  progress_total: number;
+  error_message?: string;
+  related_lesson_plan_id?: string;
+  topics_input?: string;
+  additional_requirements?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+export interface CompetitionOutputListResponse {
+  outputs: CompetitionOutput[];
+  total: number;
+}

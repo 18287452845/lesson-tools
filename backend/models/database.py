@@ -456,6 +456,71 @@ class Database:
             ON batch_tasks(task_type, status)
         """)
 
+        # ====================================================================
+        # Competition module tables (教学能力比赛模块)
+        # ====================================================================
+
+        # Competition projects table - shared cover info between lesson plan & report
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS competition_projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                competition_year TEXT,
+                competition_region TEXT,
+                competition_level TEXT,
+                work_name TEXT,
+                course_name TEXT,
+                major_category TEXT,
+                major_name TEXT,
+                group_name TEXT,
+                total_hours INTEGER DEFAULT 16,
+                hours_per_lesson INTEGER DEFAULT 2,
+                class_name TEXT,
+                location TEXT,
+                textbook_info TEXT,
+                context_data TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Competition outputs table - each project may produce multiple lesson plans/reports
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS competition_outputs (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                output_type TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                generated_data TEXT,
+                output_file_path TEXT,
+                progress_current INTEGER DEFAULT 0,
+                progress_total INTEGER DEFAULT 0,
+                error_message TEXT,
+                related_lesson_plan_id TEXT,
+                topics_input TEXT,
+                additional_requirements TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                completed_at TEXT,
+                FOREIGN KEY (project_id) REFERENCES competition_projects(id)
+            )
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_comp_outputs_project
+            ON competition_outputs(project_id, output_type)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_comp_outputs_status
+            ON competition_outputs(status)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_comp_projects_created
+            ON competition_projects(created_at)
+        """)
+
     async def _add_column_if_not_exists(
         self,
         db: aiosqlite.Connection,

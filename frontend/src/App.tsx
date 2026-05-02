@@ -19,6 +19,9 @@ import ClassManager from './pages/ClassManager';
 import TextbookManager from './pages/TextbookManager';
 import SubjectManager from './pages/SubjectManager';
 import GradeManager from './pages/GradeManager';
+import CompetitionHome from './pages/Competition/CompetitionHome';
+import CompetitionNew from './pages/Competition/CompetitionNew';
+import CompetitionDetail from './pages/Competition/CompetitionDetail';
 
 const { Content } = Layout;
 
@@ -43,6 +46,9 @@ function App() {
           <Route path="/textbooks" element={<TextbookManager />} />
           <Route path="/subjects" element={<SubjectManager />} />
           <Route path="/grades" element={<GradeManager />} />
+          <Route path="/competition" element={<CompetitionHome />} />
+          <Route path="/competition/new" element={<CompetitionNew />} />
+          <Route path="/competition/:projectId" element={<CompetitionDetail />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Content>

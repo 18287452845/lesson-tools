@@ -10,7 +10,7 @@ import logging
 
 from .config import settings
 from .models.database import init_db, db
-from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans, textbooks, subjects, grades
+from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans, textbooks, subjects, grades, competition
 from .services.template_sync import sync_templates_on_startup
 from .services.metadata_sync import init_metadata
 
@@ -92,6 +92,7 @@ app.include_router(lesson_plans.router, prefix=settings.api_prefix, tags=["lesso
 app.include_router(textbooks.router, prefix=settings.api_prefix, tags=["textbooks"])
 app.include_router(subjects.router, prefix=settings.api_prefix, tags=["subjects"])
 app.include_router(grades.router, prefix=settings.api_prefix, tags=["grades"])
+app.include_router(competition.router, prefix=settings.api_prefix, tags=["competition"])
 
 
 @app.get("/")

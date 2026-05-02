@@ -48,6 +48,12 @@ npm-debug.log*
 *.docx
 !backend/templates/*.docx
 !storage/templates/*.docx
+!storage/competition_templates/*.docx
+
+# Local reference documents (project root only, not for repo)
+/参赛教案.pdf
+/参赛教案*.docx
+/教学实施报告*.docx
 
 # OS files
 .DS_Store

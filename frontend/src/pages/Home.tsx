@@ -23,6 +23,7 @@ import {
   AppstoreOutlined,
   ApartmentOutlined,
   CloudDownloadOutlined,
+  TrophyOutlined,
 } from '@ant-design/icons';
 
 const { Title, Text, Paragraph } = Typography;
@@ -48,6 +49,13 @@ function Home() {
       description: '选择模板，AI自动生成完整教案内容',
       gradient: gradients.teal,
       route: '/new',
+    },
+    {
+      icon: <TrophyOutlined />,
+      title: '比赛专区',
+      description: '生成参赛教案与教学实施报告,符合国赛/省赛规范',
+      gradient: gradients.orange,
+      route: '/competition',
     },
     {
       icon: <AppstoreAddOutlined />,

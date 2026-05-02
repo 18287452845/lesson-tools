@@ -727,3 +727,256 @@ class DraftTaskCreateResponse(BaseModel):
     """Response from draft task creation."""
     task_id: str
     status: str
+
+
+# ============================================================================
+# Competition Module Schemas (教学能力比赛模块)
+# ============================================================================
+
+
+class CompetitionProjectCreate(BaseModel):
+    """Request to create a competition project."""
+    name: str = Field(..., min_length=1, max_length=200, description="项目名称")
+    competition_year: Optional[str] = Field(None, description="参赛年份,如 '2024年'")
+    competition_region: Optional[str] = Field(None, description="参赛地区/级别,如 '云南省' '全国'")
+    competition_level: Optional[str] = Field(None, description="赛事级别,如 '省赛' '国赛'")
+    work_name: Optional[str] = Field(None, description="作品名称")
+    course_name: Optional[str] = Field(None, description="课程名称,如 《JavaScript编程技术》")
+    major_category: Optional[str] = Field(None, description="专业大类,如 电子与信息大类-计算机类")
+    major_name: Optional[str] = Field(None, description="专业名称")
+    group_name: Optional[str] = Field(None, description="参赛组别,如 专业二组")
+    total_hours: int = Field(default=16, ge=2, le=128, description="总学时")
+    hours_per_lesson: int = Field(default=2, ge=1, le=8, description="单个教案学时")
+    class_name: Optional[str] = Field(None, description="授课班级")
+    location: Optional[str] = Field(None, description="授课地点")
+    textbook_info: Optional[Dict[str, Any]] = Field(None, description="教材信息")
+    context_data: Optional[Dict[str, Any]] = Field(None, description="附加上下文(学情/资源等)")
+
+
+class CompetitionProjectUpdate(BaseModel):
+    """Request to update a competition project."""
+    name: Optional[str] = None
+    competition_year: Optional[str] = None
+    competition_region: Optional[str] = None
+    competition_level: Optional[str] = None
+    work_name: Optional[str] = None
+    course_name: Optional[str] = None
+    major_category: Optional[str] = None
+    major_name: Optional[str] = None
+    group_name: Optional[str] = None
+    total_hours: Optional[int] = Field(None, ge=2, le=128)
+    hours_per_lesson: Optional[int] = Field(None, ge=1, le=8)
+    class_name: Optional[str] = None
+    location: Optional[str] = None
+    textbook_info: Optional[Dict[str, Any]] = None
+    context_data: Optional[Dict[str, Any]] = None
+
+
+class CompetitionProject(BaseModel):
+    """Full competition project info."""
+    id: str
+    name: str
+    competition_year: Optional[str] = None
+    competition_region: Optional[str] = None
+    competition_level: Optional[str] = None
+    work_name: Optional[str] = None
+    course_name: Optional[str] = None
+    major_category: Optional[str] = None
+    major_name: Optional[str] = None
+    group_name: Optional[str] = None
+    total_hours: int = 16
+    hours_per_lesson: int = 2
+    class_name: Optional[str] = None
+    location: Optional[str] = None
+    textbook_info: Optional[Dict[str, Any]] = None
+    context_data: Optional[Dict[str, Any]] = None
+    created_at: str
+    updated_at: str
+
+
+class CompetitionProjectListResponse(BaseModel):
+    """Response for listing competition projects."""
+    projects: List[CompetitionProject]
+    total: int
+
+
+# ----- Generation Request Models -----
+
+
+class CompetitionLessonPlanGenerateRequest(BaseModel):
+    """Request to generate a competition lesson plan."""
+    topics_input: Optional[str] = Field(
+        None,
+        description="可选的任务清单(每行一个,如 '识读施工图\\n深化施工图');不提供则由 AI 自动拆分"
+    )
+    additional_requirements: Optional[str] = Field(None, description="特殊要求")
+
+
+class CompetitionReportGenerateRequest(BaseModel):
+    """Request to generate a teaching implementation report."""
+    related_output_id: Optional[str] = Field(
+        None,
+        description="可选关联的参赛教案 output_id,作为生成上下文(实现弱关联)"
+    )
+    additional_requirements: Optional[str] = Field(None, description="特殊要求")
+
+
+class CompetitionGenerateResponse(BaseModel):
+    """Response from triggering generation."""
+    output_id: str
+    status: str
+
+
+# ----- Output / Status Models -----
+
+
+class CompetitionOutput(BaseModel):
+    """Competition generation output (lesson plan or report)."""
+    id: str
+    project_id: str
+    output_type: str  # 'lesson_plan' | 'report'
+    status: str
+    generated_data: Optional[Dict[str, Any]] = None
+    output_file_path: Optional[str] = None
+    progress_current: int = 0
+    progress_total: int = 0
+    error_message: Optional[str] = None
+    related_lesson_plan_id: Optional[str] = None
+    topics_input: Optional[str] = None
+    additional_requirements: Optional[str] = None
+    created_at: str
+    updated_at: str
+    completed_at: Optional[str] = None
+
+
+class CompetitionOutputListResponse(BaseModel):
+    """Response for listing outputs of a project."""
+    outputs: List[CompetitionOutput]
+    total: int
+
+
+# ----- Generated Content Structure -----
+
+
+class CompetitionTeachingStep(BaseModel):
+    """Single teaching step in a competition lesson plan (课前/课中/课后 内的环节)."""
+    stage: str = Field(..., description="环节名称,如 '明确任务' '创设情境'")
+    duration: Optional[str] = Field(None, description="时长,如 '5min'")
+    content: Optional[str] = Field(None, description="教学内容")
+    teacher_activity: Optional[str] = Field(None, description="教师活动")
+    student_activity: Optional[str] = Field(None, description="学生活动")
+    design_intent: Optional[str] = Field(None, description="设计意图")
+    ideological_political: Optional[str] = Field(None, description="思政点")
+
+
+class CompetitionLessonObjectives(BaseModel):
+    """Three-dimensional teaching objectives."""
+    knowledge: List[str] = Field(default_factory=list, description="知识目标")
+    ability: List[str] = Field(default_factory=list, description="能力目标")
+    quality: List[str] = Field(default_factory=list, description="素质目标")
+
+
+class CompetitionLessonStudentAnalysis(BaseModel):
+    """Student situation analysis for a single lesson."""
+    knowledge_basis: Optional[str] = Field(None, description="知识与技能基础")
+    cognition_practice: Optional[str] = Field(None, description="认知和实践能力")
+    learning_features: Optional[str] = Field(None, description="学习特点")
+    assessment: Optional[str] = Field(None, description="评估结果")
+
+
+class CompetitionSingleLesson(BaseModel):
+    """Single 【教案 X】 within a competition lesson plan."""
+    lesson_number: int = Field(..., description="教案序号 1,2,3...")
+    title: str = Field(..., description="任务名称,如 '识读施工图'")
+    module_name: Optional[str] = Field(None, description="模块名称")
+    project_name: Optional[str] = Field(None, description="项目名称")
+    hours: Optional[str] = Field(None, description="授课学时,如 '2 学时'")
+    location: Optional[str] = Field(None, description="授课地点")
+    class_name: Optional[str] = Field(None, description="授课班级")
+
+    # 教学设计
+    position_competition_certificate: Optional[str] = Field(None, description="岗课赛证融合设计")
+    student_analysis: Optional[CompetitionLessonStudentAnalysis] = None
+    objectives: CompetitionLessonObjectives = Field(default_factory=CompetitionLessonObjectives)
+    key_points: Optional[str] = Field(None, description="教学重点")
+    difficult_points: Optional[str] = Field(None, description="教学难点")
+    key_difficult_solutions: Optional[str] = Field(None, description="重难点解决措施")
+    teaching_methods: Optional[str] = Field(None, description="教学方法")
+    information_resources: Optional[str] = Field(None, description="信息化平台及资源")
+
+    # 教学实施过程
+    pre_class_steps: List[CompetitionTeachingStep] = Field(default_factory=list, description="课前环节")
+    in_class_steps: List[CompetitionTeachingStep] = Field(default_factory=list, description="课中环节")
+    after_class_steps: List[CompetitionTeachingStep] = Field(default_factory=list, description="课后环节")
+
+    # 反思
+    reflection: Optional[str] = Field(None, description="教学反思与改进")
+
+
+class CompetitionOverallDesign(BaseModel):
+    """Overall design section for a competition lesson plan."""
+    content_analysis: Optional[str] = Field(None, description="内容分析")
+    student_analysis: Optional[str] = Field(None, description="学情分析")
+    goal_analysis: Optional[str] = Field(None, description="目标分析")
+    process_design: Optional[str] = Field(None, description="过程设计")
+    teaching_method: Optional[str] = Field(None, description="教学方法")
+    survey_questions: List[str] = Field(default_factory=list, description="学情调查问卷")
+
+
+class CompetitionLessonContent(BaseModel):
+    """Complete competition lesson plan content."""
+    overall_design: CompetitionOverallDesign = Field(default_factory=CompetitionOverallDesign)
+    lessons: List[CompetitionSingleLesson] = Field(default_factory=list, description="多个教案")
+
+
+# ----- Report Content Structure -----
+
+
+class CompetitionReportEvaluation(BaseModel):
+    """Multi-source evaluation in implementation report."""
+    student_evaluation: Optional[str] = Field(None, description="学生评价")
+    teacher_evaluation: Optional[str] = Field(None, description="教师评价")
+    enterprise_evaluation: Optional[str] = Field(None, description="企业评价")
+
+
+class CompetitionReportEffect(BaseModel):
+    """Student learning effect section."""
+    pre_class_improvement: Optional[str] = Field(None, description="课前学习提升")
+    in_class_improvement: Optional[str] = Field(None, description="课中教学质量提升")
+    certification_competition: Optional[str] = Field(None, description="取证及竞赛成绩")
+
+
+class CompetitionReportReflection(BaseModel):
+    """Teaching reflection section."""
+    feature_innovations: List[str] = Field(default_factory=list, description="特色创新点")
+    shortcomings: List[str] = Field(default_factory=list, description="不足之处")
+    improvement_measures: List[str] = Field(default_factory=list, description="改进措施")
+
+
+class CompetitionImplementationStage(BaseModel):
+    """Single implementation stage row in the report."""
+    stage: str = Field(..., description="阶段,如 '课前' '课中(线上)'")
+    task: str = Field(..., description="任务描述")
+    effect: str = Field(..., description="效果/图说")
+
+
+class CompetitionReportContent(BaseModel):
+    """Complete teaching implementation report content."""
+    intro_summary: Optional[str] = Field(None, description="开篇总述")
+
+    # 一、整体教学设计
+    content_analysis: Optional[str] = Field(None, description="教学内容分析")
+    student_analysis: Optional[str] = Field(None, description="学情分析")
+    teaching_objectives: Optional[str] = Field(None, description="教学目标与重难点")
+    teaching_strategy: Optional[str] = Field(None, description="教学策略")
+
+    # 二、教学实施过程
+    implementation_stages: List[CompetitionImplementationStage] = Field(default_factory=list)
+    blended_teaching_improvement: Optional[str] = Field(None, description="混合式教学实施改进")
+    evaluation: CompetitionReportEvaluation = Field(default_factory=CompetitionReportEvaluation)
+
+    # 三、学生学习效果
+    learning_effect: CompetitionReportEffect = Field(default_factory=CompetitionReportEffect)
+
+    # 四、教学反思与改进
+    reflection: CompetitionReportReflection = Field(default_factory=CompetitionReportReflection)
