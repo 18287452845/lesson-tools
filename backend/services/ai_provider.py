@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 
 import httpx
 
-from ..config import settings
+from ..config import DEEPSEEK_DEFAULT_MODEL, normalize_deepseek_model, settings
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +103,15 @@ class AIProvider(ABC):
 class DeepSeekProvider(AIProvider):
     """DeepSeek AI提供商"""
 
-    def __init__(self, api_key: str, model: str = "deepseek-chat", max_tokens: Optional[int] = None):
-        super().__init__(api_key, model, max_tokens)
-        self.base_url = settings.deepseek_base_url
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEEPSEEK_DEFAULT_MODEL,
+        max_tokens: Optional[int] = None,
+    ):
+        super().__init__(api_key, normalize_deepseek_model(model), max_tokens)
+        self.base_url = settings.deepseek_base_url.rstrip("/")
+        self.chat_completions_url = f"{self.base_url}/chat/completions"
 
     async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """使用DeepSeek API生成内容（带重试）"""
@@ -129,13 +135,8 @@ class DeepSeekProvider(AIProvider):
                 "stream": False,  # Explicitly disable streaming
             }
 
-            # Add max_tokens if set (DeepSeek max is 8192 for output)
-            # If max_tokens > 8192, we don't send it to avoid API errors
-            if self.max_tokens and self.max_tokens <= 8192:
+            if self.max_tokens:
                 payload["max_tokens"] = self.max_tokens
-            elif self.max_tokens and self.max_tokens > 8192:
-                # For larger values, cap at DeepSeek's max of 8192
-                payload["max_tokens"] = 8192
 
             # Use connection pooling for batch processing
             async with httpx.AsyncClient(
@@ -147,7 +148,7 @@ class DeepSeekProvider(AIProvider):
                 ),
             ) as client:
                 response = await client.post(
-                    f"{self.base_url}/v1/chat/completions",
+                    self.chat_completions_url,
                     headers=headers,
                     json=payload,
                 )
@@ -208,7 +209,7 @@ class DeepSeekProvider(AIProvider):
                 "stream": True,  # 启用流式
             }
 
-            if self.max_tokens and self.max_tokens <= 8192:
+            if self.max_tokens:
                 payload["max_tokens"] = self.max_tokens
 
             logger.info(f"Starting DeepSeek stream generation with model: {self.model}")
@@ -217,7 +218,7 @@ class DeepSeekProvider(AIProvider):
                 try:
                     async with client.stream(
                         "POST",
-                        f"{self.base_url}/v1/chat/completions",
+                        self.chat_completions_url,
                         headers=headers,
                         json=payload,
                     ) as response:

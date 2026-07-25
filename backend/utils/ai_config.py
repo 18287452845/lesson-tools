@@ -3,7 +3,7 @@ Utility functions for getting user-configured AI settings from database
 """
 from typing import Optional
 from ..models.database import db
-from ..config import settings
+from ..config import normalize_deepseek_model, settings
 
 
 async def get_user_ai_config() -> tuple[Optional[str], Optional[str], Optional[str]]:
@@ -26,6 +26,8 @@ async def get_user_ai_config() -> tuple[Optional[str], Optional[str], Optional[s
         model = config.get("model")
 
         if provider and api_key:
+            if provider == "deepseek" and model:
+                model = normalize_deepseek_model(model)
             return provider, api_key, model
 
     # Fallback to environment settings

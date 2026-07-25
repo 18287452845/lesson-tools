@@ -407,9 +407,8 @@ class ChapterSplitter:
         """
         Generate chapters using AI.
 
-        Uses batch generation to stay within API token limits.
-        DeepSeek has a max output of 8192 tokens, so we generate
-        in batches of ~12 lessons at a time.
+        Uses batches of ~12 lessons to keep responses manageable and
+        improve structured-output parsing reliability.
 
         Args:
             course_name: Name of the course

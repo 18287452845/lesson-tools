@@ -11,13 +11,14 @@ services:
     environment:
       # AI Provider Configuration
       - AI_PROVIDER=${AI_PROVIDER:-deepseek}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 
       # Optional API Configuration
       - API_HOST=0.0.0.0
       - API_PORT=8000
-      - AI_MODEL=${AI_MODEL:-deepseek-chat}
+      - AI_MODEL=${AI_MODEL:-deepseek-v4-flash}
       - AI_MAX_TOKENS=${AI_MAX_TOKENS:-4096}
       - AI_TEMPERATURE=${AI_TEMPERATURE:-0.7}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}

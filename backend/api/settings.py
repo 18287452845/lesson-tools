@@ -6,7 +6,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..models.database import db
-from ..config import settings
+from ..config import (
+    DEEPSEEK_DEFAULT_MODEL,
+    DEEPSEEK_MODELS,
+    normalize_deepseek_model,
+    settings,
+)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -69,10 +74,14 @@ async def set_ai_provider_config(config: AIProviderConfig):
     # 保存到数据库（user_settings表）
     import json
 
+    selected_model = config.model
+    if config.provider == "deepseek" and selected_model:
+        selected_model = normalize_deepseek_model(selected_model)
+
     config_value = json.dumps({
         "provider": config.provider,
         "api_key": config.api_key,
-        "model": config.model,
+        "model": selected_model,
     })
 
     await db.execute(
@@ -88,20 +97,20 @@ async def set_ai_provider_config(config: AIProviderConfig):
     settings.ai_provider = config.provider
     if config.provider == "deepseek":
         settings.deepseek_api_key = config.api_key
-        if config.model:
-            settings.deepseek_model = config.model
+        if selected_model:
+            settings.deepseek_model = selected_model
     else:
         settings.anthropic_api_key = config.api_key
-        if config.model:
-            settings.anthropic_model = config.model
+        if selected_model:
+            settings.anthropic_model = selected_model
 
-    if config.model:
-        settings.ai_model = config.model
+    if selected_model:
+        settings.ai_model = selected_model
 
     return {
         "message": "AI提供商配置已更新",
         "provider": config.provider,
-        "model": config.model or settings.get_active_model(),
+        "model": selected_model or settings.get_active_model(),
     }
 
 
@@ -117,10 +126,16 @@ async def list_ai_providers():
                 "name": "DeepSeek",
                 "description": "DeepSeek AI - 高性能中文AI模型",
                 "models": [
-                    {"id": "deepseek-chat", "name": "DeepSeek Chat"},
-                    {"id": "deepseek-coder", "name": "DeepSeek Coder"},
+                    {
+                        "id": DEEPSEEK_MODELS[0],
+                        "name": "DeepSeek V4 Flash",
+                    },
+                    {
+                        "id": DEEPSEEK_MODELS[1],
+                        "name": "DeepSeek V4 Pro",
+                    },
                 ],
-                "default_model": "deepseek-chat",
+                "default_model": DEEPSEEK_DEFAULT_MODEL,
                 "website": "https://www.deepseek.com/",
             },
             {

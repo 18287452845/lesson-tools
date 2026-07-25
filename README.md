@@ -258,11 +258,15 @@ docker-compose down
 - **优势**: 性价比高，中文理解优秀，API 稳定
 - **价格**: 相对便宜
 - **获取 API Key**: https://platform.deepseek.com/
-- **默认模型**: `deepseek-chat`
+- **接口地址**: `https://api.deepseek.com`
+- **默认模型**: `deepseek-v4-flash`
+- **可选模型**: `deepseek-v4-flash`、`deepseek-v4-pro`
 
 ```env
 AI_PROVIDER=deepseek
+DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_API_KEY=sk-your-deepseek-key
+AI_MODEL=deepseek-v4-flash
 ```
 
 ### Anthropic Claude

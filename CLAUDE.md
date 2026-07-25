@@ -307,7 +307,8 @@ ANTHROPIC_API_KEY=sk-ant-xxx
 # Optional overrides
 API_HOST=0.0.0.0
 API_PORT=8000
-AI_MODEL=deepseek-chat              # Override default model
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+AI_MODEL=deepseek-v4-flash          # Override default model
 AI_MAX_TOKENS=4096
 AI_TEMPERATURE=0.7
 ```

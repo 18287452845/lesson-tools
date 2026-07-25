@@ -103,7 +103,8 @@ curl http://localhost
 | `AI_PROVIDER` | AI提供商 (`deepseek` 或 `anthropic`) | `deepseek` | ✅ |
 | `DEEPSEEK_API_KEY` | DeepSeek API密钥 | - | ✅ (使用DeepSeek时) |
 | `ANTHROPIC_API_KEY` | Anthropic API密钥 | - | ❌ (使用Claude时必填) |
-| `AI_MODEL` | AI模型名称 | `deepseek-chat` | ❌ |
+| `DEEPSEEK_BASE_URL` | DeepSeek OpenAI兼容接口地址 | `https://api.deepseek.com` | ❌ |
+| `AI_MODEL` | AI模型名称 | `deepseek-v4-flash` | ❌ |
 | `AI_MAX_TOKENS` | 最大token数 | `4096` | ❌ |
 | `AI_TEMPERATURE` | 生成温度 (0.0-1.0) | `0.7` | ❌ |
 | `API_HOST` | API服务主机 | `0.0.0.0` | ❌ |

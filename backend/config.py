@@ -10,6 +10,20 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash"
+DEEPSEEK_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
+DEEPSEEK_LEGACY_MODELS = {
+    "deepseek-chat": DEEPSEEK_DEFAULT_MODEL,
+    "deepseek-reasoner": DEEPSEEK_DEFAULT_MODEL,
+    "deepseek-coder": DEEPSEEK_DEFAULT_MODEL,
+}
+
+
+def normalize_deepseek_model(model: str) -> str:
+    """Map retired DeepSeek model names to the current default model."""
+    return DEEPSEEK_LEGACY_MODELS.get(model, model)
+
 
 class Settings(BaseSettings):
     """Application settings."""
@@ -23,8 +37,8 @@ class Settings(BaseSettings):
     ai_model: Optional[str] = os.getenv("AI_MODEL")  # 如果不设置则使用默认值
 
     # DeepSeek Configuration
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"  # 默认模型
+    deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL)
+    deepseek_model: str = DEEPSEEK_DEFAULT_MODEL
 
     # Anthropic Configuration
     anthropic_model: str = "claude-sonnet-4-20250514"
@@ -62,9 +76,11 @@ class Settings(BaseSettings):
     def get_active_model(self) -> str:
         """获取当前激活的AI模型"""
         if self.ai_model:
+            if self.ai_provider == "deepseek":
+                return normalize_deepseek_model(self.ai_model)
             return self.ai_model
         if self.ai_provider == "deepseek":
-            return self.deepseek_model
+            return normalize_deepseek_model(self.deepseek_model)
         return self.anthropic_model
 
     def get_active_api_key(self) -> Optional[str]:

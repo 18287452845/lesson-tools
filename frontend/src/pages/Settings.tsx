@@ -49,7 +49,7 @@ function SettingsPage() {
 
   const [form] = Form.useForm();
   const [selectedProvider, setSelectedProvider] = useState<ProviderId>('deepseek');
-  const [selectedModel, setSelectedModel] = useState<string>('deepseek-chat');
+  const [selectedModel, setSelectedModel] = useState<string>('deepseek-v4-flash');
 
   useEffect(() => {
     fetchCurrentConfig();
