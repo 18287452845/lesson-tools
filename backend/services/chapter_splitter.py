@@ -18,6 +18,28 @@ from .ai_provider import generate_with_ai, AIProviderFactory
 logger = logging.getLogger(__name__)
 
 
+def _extract_stream_content(chunk_data: object) -> str:
+    """Return text from OpenAI/DeepSeek or Anthropic stream chunks."""
+    if not isinstance(chunk_data, dict):
+        return ""
+
+    choices = chunk_data.get("choices")
+    if isinstance(choices, list) and choices:
+        choice = choices[0]
+        if isinstance(choice, dict):
+            delta = choice.get("delta")
+            if isinstance(delta, dict):
+                content = delta.get("content")
+                return content if isinstance(content, str) else ""
+
+    delta = chunk_data.get("delta")
+    if isinstance(delta, dict):
+        text = delta.get("text")
+        return text if isinstance(text, str) else ""
+
+    return ""
+
+
 def _flatten_key_concepts(key_concepts):
     """
     Flatten nested lists in key_concepts to ensure all elements are strings.
@@ -574,10 +596,8 @@ class ChapterSplitter:
                         try:
                             chunk_data = json.loads(data_str)
 
-                            # Handle DeepSeek/OpenAI format
-                            if "choices" in chunk_data and len(chunk_data["choices"]) > 0:
-                                delta = chunk_data["choices"][0].get("delta", {})
-                                content = delta.get("content", "")
+                            content = _extract_stream_content(chunk_data)
+                            if content:
                                 full_response += content
 
                                 # Try to parse partial JSON and yield any complete chapters
@@ -590,20 +610,6 @@ class ChapterSplitter:
                                     if lesson_num not in yielded_chapters:
                                         yielded_chapters.add(lesson_num)
                                         yield chapter
-
-                            # Handle Anthropic format
-                            elif "delta" in chunk_data:
-                                if "text" in chunk_data["delta"]:
-                                    full_response += chunk_data["delta"]["text"]
-                                    partial_chapters = self._try_parse_partial_chapters(full_response)
-                                    for chapter in partial_chapters:
-                                        lesson_num = normalize_lesson_number(chapter.lesson_number)
-                                        if lesson_num is None:
-                                            continue
-                                        chapter.lesson_number = lesson_num
-                                        if lesson_num not in yielded_chapters:
-                                            yielded_chapters.add(lesson_num)
-                                            yield chapter
 
                         except json.JSONDecodeError:
                             # Ignore unparseable chunks during streaming
@@ -895,9 +901,8 @@ class ChapterSplitter:
                         chunk_data = json.loads(data_str)
 
                         # 处理DeepSeek/OpenAI格式
-                        if "choices" in chunk_data and len(chunk_data["choices"]) > 0:
-                            delta = chunk_data["choices"][0].get("delta", {})
-                            content = delta.get("content", "")
+                        content = _extract_stream_content(chunk_data)
+                        if content:
                             full_response += content
 
                             # 尝试解析部分完成的周次
