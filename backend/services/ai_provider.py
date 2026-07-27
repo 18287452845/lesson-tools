@@ -85,7 +85,12 @@ class AIProvider(ABC):
         self.timeout = settings.ai_timeout
 
     @abstractmethod
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    async def generate(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
+    ) -> str:
         """生成内容"""
         pass
 
@@ -113,7 +118,12 @@ class DeepSeekProvider(AIProvider):
         self.base_url = settings.deepseek_base_url.rstrip("/")
         self.chat_completions_url = f"{self.base_url}/chat/completions"
 
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    async def generate(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
+    ) -> str:
         """使用DeepSeek API生成内容（带重试）"""
 
         async def _do_generate():
@@ -137,6 +147,8 @@ class DeepSeekProvider(AIProvider):
 
             if self.max_tokens:
                 payload["max_tokens"] = self.max_tokens
+            if response_format:
+                payload["response_format"] = response_format
 
             # Use connection pooling for batch processing
             async with httpx.AsyncClient(
@@ -261,7 +273,12 @@ class AnthropicProvider(AIProvider):
         super().__init__(api_key, model, anthropic_max_tokens)
         self.base_url = "https://api.anthropic.com/v1/messages"
 
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    async def generate(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
+    ) -> str:
         """使用Anthropic API生成内容（带重试）"""
 
         async def _do_generate():
@@ -431,6 +448,7 @@ async def generate_with_ai(
     api_key: Optional[str] = None,
     model: Optional[str] = None,
     max_tokens: Optional[int] = None,
+    response_format: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     使用AI生成内容的便捷函数
@@ -447,4 +465,8 @@ async def generate_with_ai(
         AI生成的内容
     """
     ai_provider = AIProviderFactory.create_provider(provider, api_key, model, max_tokens)
-    return await ai_provider.generate(prompt, system_prompt)
+    return await ai_provider.generate(
+        prompt,
+        system_prompt,
+        response_format=response_format,
+    )

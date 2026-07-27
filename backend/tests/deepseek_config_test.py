@@ -70,9 +70,15 @@ async def test_deepseek_provider_uses_latest_chat_endpoint_and_token_limit(monke
         model="deepseek-v4-flash",
         max_tokens=0,
     )
-    await unlimited_provider.generate("hello")
+    await unlimited_provider.generate(
+        "return json",
+        response_format={"type": "json_object"},
+    )
 
     assert "max_tokens" not in request["post_kwargs"]["json"]
+    assert request["post_kwargs"]["json"]["response_format"] == {
+        "type": "json_object"
+    }
 
     anthropic_provider = ai_provider.AnthropicProvider(
         api_key="test-key",

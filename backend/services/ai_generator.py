@@ -178,6 +178,7 @@ class AIGenerator:
                 provider=self.provider,
                 api_key=self.api_key,
                 model=self.model,
+                response_format={"type": "json_object"},
             )
 
             try:
