@@ -19,7 +19,9 @@ services:
       - API_HOST=0.0.0.0
       - API_PORT=8000
       - AI_MODEL=${AI_MODEL:-deepseek-v4-flash}
-      - AI_MAX_TOKENS=${AI_MAX_TOKENS:-4096}
+      # 0 omits max_tokens from AI requests (provider/model limit applies).
+      - AI_MAX_TOKENS=${AI_MAX_TOKENS:-0}
+      - AI_MAX_TOKENS_BATCH=${AI_MAX_TOKENS_BATCH:-0}
       - AI_TEMPERATURE=${AI_TEMPERATURE:-0.7}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
       - ONLYOFFICE_DOCS_URL=${ONLYOFFICE_DOCS_URL:-}

@@ -105,7 +105,8 @@ curl http://localhost
 | `ANTHROPIC_API_KEY` | Anthropic API密钥 | - | ❌ (使用Claude时必填) |
 | `DEEPSEEK_BASE_URL` | DeepSeek OpenAI兼容接口地址 | `https://api.deepseek.com` | ❌ |
 | `AI_MODEL` | AI模型名称 | `deepseek-v4-flash` | ❌ |
-| `AI_MAX_TOKENS` | 最大token数 | `4096` | ❌ |
+| `AI_MAX_TOKENS` | 最大 token 数；`0` 表示不设置应用层限制 | `0` | ❌ |
+| `AI_MAX_TOKENS_BATCH` | 批量章节最大 token 数；`0` 表示不设置应用层限制 | `0` | ❌ |
 | `AI_TEMPERATURE` | 生成温度 (0.0-1.0) | `0.7` | ❌ |
 | `API_HOST` | API服务主机 | `0.0.0.0` | ❌ |
 | `API_PORT` | API服务端口 | `8000` | ❌ |

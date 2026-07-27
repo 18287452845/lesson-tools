@@ -65,6 +65,21 @@ async def test_deepseek_provider_uses_latest_chat_endpoint_and_token_limit(monke
     assert request["url"] == "https://api.deepseek.com/chat/completions"
     assert request["post_kwargs"]["json"]["max_tokens"] == 16384
 
+    unlimited_provider = ai_provider.DeepSeekProvider(
+        api_key="test-key",
+        model="deepseek-v4-flash",
+        max_tokens=0,
+    )
+    await unlimited_provider.generate("hello")
+
+    assert "max_tokens" not in request["post_kwargs"]["json"]
+
+    anthropic_provider = ai_provider.AnthropicProvider(
+        api_key="test-key",
+        max_tokens=0,
+    )
+    assert anthropic_provider.max_tokens == 4096
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio

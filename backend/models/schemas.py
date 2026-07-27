@@ -4,7 +4,7 @@ Pydantic models for request/response validation.
 import json
 from datetime import datetime
 from typing import Optional, Dict, List, Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from uuid import uuid4
 
 
@@ -377,6 +377,36 @@ class GeneratedContent(BaseModel):
     homework: Optional[Homework] = None
     blackboard_design: Optional[str] = None
     reflection: Optional[str] = None
+    online_resources: Optional[str] = None
+
+    @field_validator(
+        "key_points",
+        "difficult_points",
+        "teaching_tools",
+        "teaching_methods",
+        "student_analysis",
+        "textbook_analysis",
+        "blackboard_design",
+        "reflection",
+        "online_resources",
+        mode="before",
+    )
+    @classmethod
+    def normalize_ai_text_fields(cls, value: Any) -> Optional[str]:
+        """Normalize common AI list/object responses into displayable text."""
+        if value is None or isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "\n".join(
+                json.dumps(item, ensure_ascii=False)
+                if isinstance(item, (dict, list))
+                else str(item)
+                for item in value
+                if item is not None
+            )
+        if isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
 
     # Allow extra fields for custom template fields
     class Config:

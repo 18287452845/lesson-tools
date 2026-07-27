@@ -255,7 +255,10 @@ class AnthropicProvider(AIProvider):
     """Anthropic Claude提供商"""
 
     def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", max_tokens: Optional[int] = None):
-        super().__init__(api_key, model, max_tokens)
+        # Anthropic requires a positive max_tokens value and does not support
+        # DeepSeek's "omit the limit" behavior.
+        anthropic_max_tokens = max_tokens if max_tokens and max_tokens > 0 else 4096
+        super().__init__(api_key, model, anthropic_max_tokens)
         self.base_url = "https://api.anthropic.com/v1/messages"
 
     async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:

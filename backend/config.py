@@ -57,8 +57,9 @@ class Settings(BaseSettings):
     onlyoffice_jwt_secret: Optional[str] = os.getenv("ONLYOFFICE_JWT_SECRET")
 
     # AI Settings
-    ai_max_tokens: int = 4096
-    ai_max_tokens_batch: int = int(os.getenv("AI_MAX_TOKENS_BATCH", "16384"))  # 批量生成章节时使用更大的token限制
+    # 0 means "do not send max_tokens"; DeepSeek then applies the model/API limit.
+    ai_max_tokens: int = int(os.getenv("AI_MAX_TOKENS", "0"))
+    ai_max_tokens_batch: int = int(os.getenv("AI_MAX_TOKENS_BATCH", "0"))
     ai_temperature: float = 0.7
     ai_timeout: float = float(os.getenv("AI_TIMEOUT", "180.0"))  # AI 请求超时（秒）
 

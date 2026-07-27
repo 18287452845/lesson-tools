@@ -410,7 +410,11 @@ class BatchTaskProcessor:
                     # Prepare lesson plan data for rendering
                     # Build references from textbook_name and online_resources
                     # Ensure online_resources is a string (AI might return a list)
-                    online_res_raw = online_resources or generated_content.online_resources or ""
+                    online_res_raw = (
+                        online_resources
+                        or getattr(generated_content, "online_resources", None)
+                        or ""
+                    )
                     if isinstance(online_res_raw, list):
                         online_res = "\n".join(str(item) for item in online_res_raw)
                     else:
