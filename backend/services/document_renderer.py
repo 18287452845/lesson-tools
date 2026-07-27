@@ -6,13 +6,12 @@ See WORD_EXPORT_FIX.md for details.
 """
 import logging
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from docxtpl import DocxTemplate
 from docx import Document
-from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
 
 from ..config import settings
 
@@ -121,64 +120,23 @@ class DocumentRenderer:
         if any(token in text for token in self._MARKDOWN_TOKENS):
             text = self._strip_markdown(text)
 
-        return self._normalize_subheading_line_breaks(text)
+        return self._normalize_line_breaks(text)
 
-    def _normalize_subheading_line_breaks(self, text: str) -> str:
+    def _normalize_line_breaks(self, text: str) -> str:
         """
-        Ensure inline subheadings are moved to a new line for readability.
+        Normalize authored line breaks without inventing new ones.
+
+        AI output can contain blank or whitespace-only lines that make table
+        cells unnecessarily tall. Keep meaningful line boundaries, but remove
+        empty lines and surrounding whitespace.
         """
         if not text or not isinstance(text, str):
             return text or ""
 
         normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-
-        normalized = re.sub(r'([。！？；:：])\s*(#{1,6}\s+)', r'\1\n\2', normalized)
-        normalized = re.sub(r'([。！？；:：])\s*([一二三四五六七八九十]+、)', r'\1\n\2', normalized)
-        normalized = re.sub(r'([。！？；:：])\s*([（(][一二三四五六七八九十]+[)）])', r'\1\n\2', normalized)
-        normalized = re.sub(r'([。！？；:：])\s*((?:\d{1,2}[\.、]))', r'\1\n\2', normalized)
         normalized = self._WHITESPACE_CLEANUP_PATTERN.sub(' ', normalized)
-
-        lines = [line.strip() for line in normalized.split("\n")]
-        cleaned_lines = []
-
-        for index, line in enumerate(lines):
-            if line:
-                cleaned_lines.append(line)
-                continue
-
-            previous_line = cleaned_lines[-1] if cleaned_lines else ""
-            next_line = ""
-            for candidate in lines[index + 1:]:
-                if candidate:
-                    next_line = candidate.strip()
-                    break
-
-            # Drop empty lines around short heading-like labels and subheadings.
-            if self._is_heading_like_line(previous_line) or self._is_heading_like_line(next_line):
-                continue
-
-            if cleaned_lines and cleaned_lines[-1] != "":
-                cleaned_lines.append("")
-
-        return "\n".join(cleaned_lines).strip()
-
-    @staticmethod
-    def _is_heading_like_line(line: str) -> bool:
-        if not line:
-            return False
-
-        stripped = line.strip()
-
-        if re.match(r'^(#{1,6}\s+)', stripped):
-            return True
-
-        if re.match(r'^([一二三四五六七八九十]+、|[（(][一二三四五六七八九十]+[)）]|\d{1,2}[\.、])', stripped):
-            return True
-
-        if len(stripped) <= 20 and re.match(r'^[^。！？]{1,20}[：:]$', stripped):
-            return True
-
-        return False
+        lines = (line.strip() for line in normalized.split("\n"))
+        return "\n".join(line for line in lines if line)
 
     def render_lesson_plan(
         self,
@@ -237,7 +195,7 @@ class DocumentRenderer:
         week_number: int = 1,
     ) -> str:
         """
-        Render multiple lesson plans into a single document with continuous layout.
+        Render multiple lesson plans into a single paginated document.
 
         This is used for batch generation where each document contains
         multiple lesson plans (default 2).
@@ -293,8 +251,8 @@ class DocumentRenderer:
             template.save(temp_path)
             temp_docs.append(temp_path)
 
-        # Combine documents (continuous layout, no page breaks)
-        output_path = self._combine_documents_continuous(
+        # Combine documents with each lesson plan starting on a new page.
+        output_path = self._combine_documents_with_page_breaks(
             temp_docs, course_name, document_number, week_number
         )
 
@@ -307,7 +265,7 @@ class DocumentRenderer:
 
         return output_path
 
-    def _combine_documents_continuous(
+    def _combine_documents_with_page_breaks(
         self,
         doc_paths: List[str],
         course_name: str,
@@ -315,10 +273,7 @@ class DocumentRenderer:
         week_number: int = 1,
     ) -> str:
         """
-        Combine multiple documents into one (continuous layout, no page breaks).
-
-        This follows the reference template format where multiple lesson plans
-        are placed continuously in the same document.
+        Combine multiple documents with a page break between lesson plans.
 
         Args:
             doc_paths: List of paths to documents to combine
@@ -346,22 +301,27 @@ class DocumentRenderer:
         # Load the first document as base
         combined_doc = Document(doc_paths[0])
 
-        # Append remaining documents WITHOUT page breaks (continuous layout)
+        body = combined_doc.element.body
+        section_properties = body.sectPr
+
+        # Append remaining documents after a page break. Insert copied elements
+        # before sectPr so the resulting WordprocessingML remains valid.
         for doc_path in doc_paths[1:]:
-            # Load the document to append
+            combined_doc.add_page_break()
             sub_doc = Document(doc_path)
 
-            # Copy all body elements directly (no page break)
             for element in sub_doc.element.body:
-                # Skip sectPr (section properties) as we don't want multiple sections
                 if element.tag.endswith('sectPr'):
                     continue
-                combined_doc.element.body.append(element)
+                insert_at = body.index(section_properties) if section_properties is not None else len(body)
+                body.insert(insert_at, deepcopy(element))
 
         # Save combined document
         combined_doc.save(output_path)
 
-        logger.info(f"Combined {len(doc_paths)} lesson plans into: {output_path}")
+        logger.info(
+            f"Combined {len(doc_paths)} lesson plans with page breaks into: {output_path}"
+        )
 
         return output_path
 
