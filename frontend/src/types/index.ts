@@ -413,6 +413,14 @@ export interface MajorClassSelection {
   class_numbers: number[];
 }
 
+export interface ExperimentClassSchedule {
+  class_name: string;
+  weekday: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  class_periods: string;
+  first_class_date: string;
+  classroom: string;
+}
+
 export interface BatchTaskCreateRequest {
   course_name: string;
   subject: string;
@@ -439,6 +447,7 @@ export interface BatchTaskCreateRequest {
   plan_date?: string;
   first_class_date?: string;
   class_periods?: string;
+  experiment_schedules?: ExperimentClassSchedule[];
 }
 
 export interface BatchTaskCreateResponse {
@@ -473,6 +482,7 @@ export interface BatchTask {
   plan_date?: string;
   first_class_date?: string;
   class_periods?: string;
+  experiment_schedules?: ExperimentClassSchedule[];
   status: BatchTaskStatus;
   total_count: number;
   completed_count: number;

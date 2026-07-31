@@ -90,7 +90,23 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
             hours_per_lesson=2,
             start_week=2,
             chapters=chapters,
-            location="慧心楼3516",
+            location="",
+            class_schedules=[
+                {
+                    "class_name": "24级信息安全技术应用1班",
+                    "weekday": 4,
+                    "class_periods": "3-4",
+                    "first_class_date": "2026-03-05",
+                    "classroom": "慧心楼3516",
+                },
+                {
+                    "class_name": "24级信息安全技术应用2班",
+                    "weekday": 5,
+                    "class_periods": "5-6",
+                    "first_class_date": "2026-03-06",
+                    "classroom": "实训楼204",
+                },
+            ],
         )
     ]
 
@@ -106,37 +122,45 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     assert "慧心楼3516，实训楼204" in teaching_text
     assert "任务32 Windows服务器安全配置" in teaching_text
 
-    for path, class_name in zip(
+    expectations = (
+        ("24级信息安全技术应用1班", "四", "3-4", "05", "12", "慧心楼3516"),
+        ("24级信息安全技术应用2班", "五", "5-6", "06", "13", "实训楼204"),
+    )
+    for output_index, (path, expectation) in enumerate(zip(
         experiment_paths,
-        ("24级信息安全技术应用1班", "24级信息安全技术应用2班"),
-    ):
+        expectations,
+    )):
+        class_name, weekday, periods, first_day, second_day, classroom = expectation
         metadata_runs = Document(path).paragraphs[1].runs
         text = _all_text(path)
         assert class_name in text
-        assert "第 02 周  星期 四   第 3-4 节     3 月  05 日" in text
-        assert "第 03 周  星期 四   第 3-4 节     3 月  12 日" in text
+        assert f"第 02 周  星期 {weekday}   第 {periods} 节     3 月  {first_day} 日" in text
+        assert f"第 03 周  星期 {weekday}   第 {periods} 节     3 月  {second_day} 日" in text
+        assert classroom in text
         assert "32    学时" in text
         assert all(metadata_runs[index].underline is True for index in (1, 3, 5, 7, 14, 16, 19, 21))
         experiment_table = Document(path).tables[0]
         assert len(experiment_table.rows) == 18
+        assert experiment_table.rows[1].cells[3].text == classroom
         assert all(
             any(cell.text.strip() for cell in row.cells)
             for row in experiment_table.rows[1:-1]
         )
-        schedule_runs = experiment_table.rows[1].cells[2].paragraphs[0].runs
-        assert [(run.text, run.underline) for run in schedule_runs] == [
-            ("第", False),
-            (" 02 ", True),
-            ("周  星期", False),
-            (" 四 ", True),
-            ("  第", False),
-            (" 3-4 ", True),
-            ("节    ", False),
-            (" 3 ", True),
-            ("月 ", False),
-            (" 05 ", True),
-            ("日", False),
-        ]
+        if output_index == 0:
+            schedule_runs = experiment_table.rows[1].cells[2].paragraphs[0].runs
+            assert [(run.text, run.underline) for run in schedule_runs] == [
+                ("第", False),
+                (" 02 ", True),
+                ("周  星期", False),
+                (" 四 ", True),
+                ("  第", False),
+                (" 3-4 ", True),
+                ("节    ", False),
+                (" 3 ", True),
+                ("月 ", False),
+                (" 05 ", True),
+                ("日", False),
+            ]
 
     _assert_preserved_parts(settings.teaching_plan_template_path, teaching_path)
     _assert_preserved_parts(settings.experiment_plan_template_path, experiment_paths[0])

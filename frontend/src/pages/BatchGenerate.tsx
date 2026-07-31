@@ -34,6 +34,7 @@ import {
   Checkbox,
   Row,
   Col,
+  AutoComplete,
 } from 'antd';
 import {
   FileTextOutlined,
@@ -76,7 +77,11 @@ const currentDate = new Date();
 const academicYearStart = currentDate.getMonth() >= 7
   ? currentDate.getFullYear()
   : currentDate.getFullYear() - 1;
-const defaultAcademicYear = `${academicYearStart}-${academicYearStart + 1}`;
+const ACADEMIC_YEAR_OPTIONS = Array.from({ length: 10 }, (_, index) => {
+  const startYear = academicYearStart - 4 + index;
+  const value = `${startYear}-${startYear + 1}`;
+  return { label: value, value };
+});
 const BATCH_MAJOR_OPTIONS = [
   '信息安全技术应用',
   '计算机网络技术',
@@ -89,6 +94,14 @@ const BATCH_MAJOR_OPTIONS = [
 ];
 const BATCH_GRADE_OPTIONS = Array.from({ length: 14 }, (_, index) => `${2022 + index}级`);
 const CLASS_NUMBER_OPTIONS = Array.from({ length: 5 }, (_, index) => index + 1);
+const WEEKDAY_OPTIONS = '一二三四五六日'.split('').map((name, index) => ({
+  label: `星期${name}`,
+  value: index + 1,
+}));
+const CLASS_PERIOD_OPTIONS = ['1-2', '3-4', '5-6', '7-8', '9-10'].map((value) => ({
+  value,
+  label: `第${value}节`,
+}));
 
 const cleanMultiValues = (values: unknown): string[] => {
   if (!Array.isArray(values)) {
@@ -153,6 +166,17 @@ const BatchGenerate: React.FC = () => {
     Form.useWatch('supplemental_artifacts', form) || []
   ) as CoursePlanArtifactType[];
   const selectedMajors = cleanMultiValues(Form.useWatch('majors', form) || []);
+  const selectedGrade = String(Form.useWatch('grade', form) || '').trim();
+  const classNumbersByMajor = (
+    Form.useWatch('class_numbers_by_major', form) || {}
+  ) as Record<string, Array<number | string>>;
+  const selectedClassNames = selectedGrade
+    ? selectedMajors.flatMap((major) => (
+        Array.from(new Set((classNumbersByMajor[major] || []).map(Number)))
+          .filter((number) => number >= 1 && number <= 5)
+          .map((number) => `${selectedGrade}${major}${number}班`)
+      ))
+    : [];
 
   // Step state
   const [currentStep, setCurrentStep] = useState(0);
@@ -372,6 +396,21 @@ const BatchGenerate: React.FC = () => {
         (values.class_numbers_by_major?.[major] || []).map(Number),
       )),
     }));
+    const concreteClassNames = majorClasses.flatMap(({ major, class_numbers }) => (
+      class_numbers.map((number) => `${values.grade}${major}${number}班`)
+    ));
+    const experimentSchedules = (values.supplemental_artifacts || []).includes('experiment_plan')
+      ? concreteClassNames.map((className) => {
+          const schedule = values.experiment_schedules_by_class?.[className] || {};
+          return {
+            class_name: className,
+            weekday: Number(schedule.weekday),
+            class_periods: String(schedule.class_periods || '').trim(),
+            first_class_date: String(schedule.first_class_date || '').trim(),
+            classroom: String(schedule.classroom || '').trim(),
+          };
+        })
+      : [];
 
     // Save normalized form values before switching step.
     setSavedFormValues({
@@ -381,6 +420,7 @@ const BatchGenerate: React.FC = () => {
       subject,
       location,
       major_classes: majorClasses,
+      experiment_schedules: experimentSchedules,
     });
 
     const request: ChapterSplitRequest = {
@@ -532,6 +572,7 @@ const BatchGenerate: React.FC = () => {
           plan_date: values.plan_date,
           first_class_date: values.first_class_date,
           class_periods: values.class_periods,
+          experiment_schedules: values.experiment_schedules,
         };
 
         const response = await batchApi.createBatchTask(request);
@@ -802,8 +843,6 @@ const BatchGenerate: React.FC = () => {
               total_hours: 64,
               hours_per_lesson: 2,
               supplemental_artifacts: [],
-              academic_year: defaultAcademicYear,
-              semester: 2,
               plan_date: formatLocalDate(currentDate),
             }}
             preserve={true}
@@ -1087,12 +1126,6 @@ const BatchGenerate: React.FC = () => {
                     name="locations"
                     label="授课地点"
                     tooltip="可输入多个地点，生成时使用逗号分隔"
-                    rules={[
-                      {
-                        required: selectedSupplementalArtifacts.includes('experiment_plan'),
-                        message: '生成实验计划时请填写实验室/授课地点',
-                      },
-                    ]}
                   >
                     <Select
                       mode="tags"
@@ -1193,12 +1226,13 @@ const BatchGenerate: React.FC = () => {
                       <Form.Item
                         name="academic_year"
                         label="学年"
-                        rules={[
-                          { required: true, message: '请输入学年' },
-                          { pattern: /^\d{4}-\d{4}$/, message: '格式示例：2025-2026' },
-                        ]}
+                        rules={[{ required: true, message: '请选择学年' }]}
                       >
-                        <Input placeholder="2025-2026" />
+                        <Select
+                          placeholder="从近10个学年中选择"
+                          options={ACADEMIC_YEAR_OPTIONS}
+                          showSearch
+                        />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={12} lg={6}>
@@ -1218,28 +1252,94 @@ const BatchGenerate: React.FC = () => {
                             <Input type="date" />
                           </Form.Item>
                         </Col>
-                        <Col xs={24} sm={12}>
-                          <Form.Item
-                            name="first_class_date"
-                            label="首课日期"
-                            tooltip="系统按每周一次自动推算后续实验日期"
-                            rules={[{ required: true, message: '请选择首课日期' }]}
-                          >
-                            <Input type="date" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} sm={12}>
-                          <Form.Item
-                            name="class_periods"
-                            label="上课节次"
-                            rules={[{ required: true, message: '请输入上课节次' }]}
-                          >
-                            <Input placeholder="例如：3-4" />
-                          </Form.Item>
-                        </Col>
                       </>
                     )}
                   </Row>
+                  {selectedSupplementalArtifacts.includes('experiment_plan') && (
+                    <>
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="请为每个班级分别设置实验课时间和教室"
+                        description="第一周日期必须与所选星期一致；后续实验日期按每7天自动推算。每个实际班级生成1份实验计划。"
+                        style={{ marginBottom: 16 }}
+                      />
+                      {selectedClassNames.map((className) => (
+                        <Card
+                          key={className}
+                          size="small"
+                          title={className}
+                          style={{ marginBottom: 12 }}
+                        >
+                          <Row gutter={16}>
+                            <Col xs={24} sm={12} lg={6}>
+                              <Form.Item
+                                name={['experiment_schedules_by_class', className, 'weekday']}
+                                label="每周星期"
+                                rules={[{ required: true, message: '请选择星期' }]}
+                              >
+                                <Select placeholder="选择星期" options={WEEKDAY_OPTIONS} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={12} lg={6}>
+                              <Form.Item
+                                name={['experiment_schedules_by_class', className, 'class_periods']}
+                                label="上课节次"
+                                rules={[{ required: true, message: '请选择或输入节次' }]}
+                              >
+                                <AutoComplete
+                                  placeholder="例如：3-4"
+                                  options={CLASS_PERIOD_OPTIONS}
+                                  filterOption={(input, option) => (
+                                    String(option?.value || '').includes(input)
+                                  )}
+                                />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={12} lg={6}>
+                              <Form.Item
+                                name={['experiment_schedules_by_class', className, 'first_class_date']}
+                                label="第一周日期"
+                                dependencies={[
+                                  ['experiment_schedules_by_class', className, 'weekday'],
+                                ]}
+                                rules={[
+                                  { required: true, message: '请选择第一周日期' },
+                                  ({ getFieldValue }) => ({
+                                    validator(_, value) {
+                                      if (!value) return Promise.resolve();
+                                      const weekday = getFieldValue([
+                                        'experiment_schedules_by_class',
+                                        className,
+                                        'weekday',
+                                      ]);
+                                      const date = new Date(`${value}T00:00:00`);
+                                      const actualWeekday = date.getDay() === 0 ? 7 : date.getDay();
+                                      if (!weekday || actualWeekday === weekday) {
+                                        return Promise.resolve();
+                                      }
+                                      return Promise.reject(new Error('日期与所选星期不一致'));
+                                    },
+                                  }),
+                                ]}
+                              >
+                                <Input type="date" />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={12} lg={6}>
+                              <Form.Item
+                                name={['experiment_schedules_by_class', className, 'classroom']}
+                                label="实验教室"
+                                rules={[{ required: true, message: '请输入该班实验教室' }]}
+                              >
+                                <Input placeholder="例如：慧心楼3516" />
+                              </Form.Item>
+                            </Col>
+                          </Row>
+                        </Card>
+                      ))}
+                    </>
+                  )}
                 </>
               )}
             </Card>

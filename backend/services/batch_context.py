@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 
 def clean_text_values(values: Iterable[str]) -> list[str]:
@@ -81,3 +81,26 @@ def format_class_names(class_names: Sequence[str]) -> str:
     compact = [f"{prefix}{'、'.join(numbers)}班" for prefix, numbers in groups.items()]
     compact.extend(standalone)
     return "，".join(compact)
+
+
+def validate_experiment_schedule_coverage(
+    class_names: Sequence[str],
+    schedules: Sequence[Mapping[str, object]],
+) -> None:
+    """Ensure every concrete class has exactly one experiment schedule."""
+    expected = clean_text_values(class_names)
+    scheduled = clean_text_values(
+        str(schedule.get("class_name") or "") for schedule in schedules
+    )
+    if len(scheduled) != len(schedules):
+        raise ValueError("每个班级只能配置一条实验课安排")
+
+    missing = [class_name for class_name in expected if class_name not in scheduled]
+    extra = [class_name for class_name in scheduled if class_name not in expected]
+    if missing or extra:
+        details: list[str] = []
+        if missing:
+            details.append("缺少：" + "、".join(missing))
+        if extra:
+            details.append("多余：" + "、".join(extra))
+        raise ValueError("实验课安排必须与授课班级一一对应（" + "；".join(details) + "）")

@@ -642,6 +642,42 @@ class MajorClassSelection(BaseModel):
         return numbers
 
 
+class ExperimentClassSchedule(BaseModel):
+    """Recurring weekly experiment schedule for one concrete class."""
+    class_name: str = Field(..., min_length=1, max_length=150, description="完整班级名称")
+    weekday: Literal[1, 2, 3, 4, 5, 6, 7] = Field(..., description="星期一至星期日")
+    class_periods: str = Field(
+        ...,
+        min_length=1,
+        max_length=30,
+        pattern=r"^\d{1,2}(?:-\d{1,2})?$",
+        description="上课节次，如 3-4",
+    )
+    first_class_date: str = Field(..., description="第一周实验日期，YYYY-MM-DD")
+    classroom: str = Field(..., min_length=1, max_length=100, description="该班实验教室")
+
+    @field_validator(
+        "class_name", "class_periods", "first_class_date", "classroom", mode="before"
+    )
+    @classmethod
+    def clean_schedule_text(cls, value: Any) -> str:
+        cleaned = str(value).strip()
+        if not cleaned:
+            raise ValueError("实验课安排字段不能为空")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_first_date_weekday(self):
+        try:
+            first_date = datetime.strptime(self.first_class_date, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise ValueError("第一周日期必须是 YYYY-MM-DD 格式") from exc
+        if first_date.isoweekday() != self.weekday:
+            weekday_name = "一二三四五六日"[self.weekday - 1]
+            raise ValueError(f"{self.class_name}第一周日期必须是星期{weekday_name}")
+        return self
+
+
 class BatchTaskCreateRequest(BaseModel):
     """Request to create a batch task."""
     course_name: str
@@ -679,6 +715,10 @@ class BatchTaskCreateRequest(BaseModel):
     plan_date: Optional[str] = Field(None, description="制表日期，YYYY-MM-DD")
     first_class_date: Optional[str] = Field(None, description="首课日期，YYYY-MM-DD")
     class_periods: Optional[str] = Field(None, max_length=30, description="上课节次，如 3-4")
+    experiment_schedules: List[ExperimentClassSchedule] = Field(
+        default_factory=list,
+        description="各班独立的每周实验课安排",
+    )
 
     @field_validator("supplemental_artifacts")
     @classmethod
@@ -737,12 +777,13 @@ class BatchTaskCreateRequest(BaseModel):
         ):
             missing.append("授课班级")
         if "experiment_plan" in self.supplemental_artifacts:
-            if not self.first_class_date:
-                missing.append("首课日期")
-            if not self.class_periods:
-                missing.append("上课节次")
-            if not self.location and not self.locations:
-                missing.append("实验室/授课地点")
+            if not self.experiment_schedules:
+                if not self.first_class_date:
+                    missing.append("首课日期")
+                if not self.class_periods:
+                    missing.append("上课节次")
+                if not self.location and not self.locations:
+                    missing.append("实验室/授课地点")
             if not self.plan_date:
                 missing.append("制表日期")
         if missing:
@@ -810,6 +851,7 @@ class BatchTask(BaseModel):
     plan_date: Optional[str] = None
     first_class_date: Optional[str] = None
     class_periods: Optional[str] = None
+    experiment_schedules: List[ExperimentClassSchedule] = Field(default_factory=list)
     status: Literal["pending", "processing", "completed", "failed", "cancelled"]
     total_count: int
     completed_count: int

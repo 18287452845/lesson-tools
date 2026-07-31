@@ -42,6 +42,7 @@ from ..services.batch_context import (
     build_class_names,
     build_class_names_from_selections,
     join_display_values,
+    validate_experiment_schedule_coverage,
 )
 
 logger = logging.getLogger(__name__)
@@ -566,6 +567,12 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 raise HTTPException(status_code=400, detail="选择的授课班级不存在或已被删除")
             class_names = [class_name_by_id[class_id] for class_id in request.class_ids]
 
+        if "experiment_plan" in request.supplemental_artifacts and request.experiment_schedules:
+            validate_experiment_schedule_coverage(
+                class_names,
+                [schedule.model_dump() for schedule in request.experiment_schedules],
+            )
+
         # Create task record in database
         await db.execute(
             """
@@ -574,9 +581,9 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 total_hours, hours_per_lesson, chapters, start_week, class_ids,
                 location, textbook_name, online_resources, generate_reflection, class_names,
                 supplemental_artifacts, academic_year, semester, teacher_name,
-                plan_date, first_class_date, class_periods,
+                plan_date, first_class_date, class_periods, experiment_schedules,
                 status, total_count, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -601,6 +608,10 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 request.plan_date or "",
                 request.first_class_date or "",
                 request.class_periods or "",
+                json.dumps(
+                    [schedule.model_dump() for schedule in request.experiment_schedules],
+                    ensure_ascii=False,
+                ),
                 "pending",
                 total_count,
                 datetime.now().isoformat(),
@@ -671,6 +682,9 @@ async def get_batch_task(task_id: str):
         task_dict["supplemental_artifacts"] = json.loads(
             task_dict.get("supplemental_artifacts") or "[]"
         )
+        task_dict["experiment_schedules"] = json.loads(
+            task_dict.get("experiment_schedules") or "[]"
+        )
 
         return BatchTask(**task_dict)
 
@@ -735,6 +749,9 @@ async def list_batch_tasks(
             task_dict["generate_reflection"] = bool(task_dict.get("generate_reflection", 0))
             task_dict["supplemental_artifacts"] = json.loads(
                 task_dict.get("supplemental_artifacts") or "[]"
+            )
+            task_dict["experiment_schedules"] = json.loads(
+                task_dict.get("experiment_schedules") or "[]"
             )
 
             tasks.append(BatchTask(**task_dict))

@@ -433,6 +433,9 @@ class Database:
         await self._add_column_if_not_exists(
             db, "batch_tasks", "class_periods", "TEXT"
         )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "experiment_schedules", "TEXT"
+        )
 
         # Add class_ids to lesson_plans
         await self._add_column_if_not_exists(

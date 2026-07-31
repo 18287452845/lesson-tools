@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, Sequence
+from typing import Any, Callable, Iterable, Literal, Mapping, Sequence
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
@@ -537,6 +537,7 @@ class CoursePlanRenderer:
         start_week: int,
         chapters: Iterable[Any],
         location: str,
+        class_schedules: Sequence[Mapping[str, Any]] | None = None,
     ) -> list[str]:
         require_valid_course_plan_template("experiment_plan")
         names = [str(name).strip() for name in class_names if str(name).strip()]
@@ -557,13 +558,34 @@ class CoursePlanRenderer:
         if len(schedule) > spec.capacity:
             raise ValueError(f"实验计划最多容纳 {spec.capacity} 条，当前为 {len(schedule)} 条")
 
-        first_date = _parse_date(first_class_date)
         signed_date = _parse_date(plan_date)
-        periods = str(class_periods).strip().replace("第", "").replace("节", "")
         weekday_names = "一二三四五六日"
+        schedule_by_class = {
+            str(item.get("class_name") or "").strip(): item
+            for item in (class_schedules or [])
+            if str(item.get("class_name") or "").strip()
+        }
         outputs: list[str] = []
 
         for class_name in names:
+            class_schedule = schedule_by_class.get(class_name)
+            if class_schedule:
+                first_date = _parse_date(str(class_schedule.get("first_class_date") or ""))
+                periods = str(class_schedule.get("class_periods") or "").strip()
+                periods = periods.replace("第", "").replace("节", "")
+                classroom = str(class_schedule.get("classroom") or "").strip()
+                weekday_number = int(class_schedule.get("weekday") or 0)
+                if weekday_number < 1 or weekday_number > 7:
+                    raise ValueError(f"{class_name}的星期设置无效")
+                if first_date.isoweekday() != weekday_number:
+                    raise ValueError(f"{class_name}的第一周日期与星期设置不一致")
+                weekday = weekday_names[weekday_number - 1]
+            else:
+                first_date = _parse_date(first_class_date)
+                periods = str(class_periods).strip().replace("第", "").replace("节", "")
+                classroom = location
+                weekday = weekday_names[first_date.weekday()]
+
             output_name = _safe_filename(
                 f"{teacher_name}-{class_name}《{course_name}》课程实验计划表.docx"
             )
@@ -607,7 +629,7 @@ class CoursePlanRenderer:
                     values = (
                         f"实验{row_index}",
                         _fit_text(project, 58),
-                        _fit_text(location, 18),
+                        _fit_text(classroom, 18),
                         "",
                     )
                     for cell, value in zip((cells[0], cells[1], cells[3], cells[4]), values):
@@ -615,7 +637,7 @@ class CoursePlanRenderer:
                     _set_experiment_schedule_cell(
                         cells[2],
                         week=week,
-                        weekday=weekday_names[lesson_date.weekday()],
+                        weekday=weekday,
                         periods=periods,
                         lesson_date=lesson_date,
                     )

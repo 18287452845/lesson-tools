@@ -361,11 +361,13 @@ class BatchTaskProcessor:
             )
 
         if "experiment_plan" in selected:
+            experiment_schedules = json.loads(task.get("experiment_schedules") or "[]")
             paths = self.course_plan_renderer.render_experiment_plans(
                 **common,
                 plan_date=task.get("plan_date") or "",
                 first_class_date=task.get("first_class_date") or "",
                 class_periods=task.get("class_periods") or "",
+                class_schedules=experiment_schedules,
             )
             files.extend(
                 {

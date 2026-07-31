@@ -1,3 +1,5 @@
+import json
+
 import pydantic
 import pytest
 
@@ -8,6 +10,7 @@ from backend.services.batch_context import (
     build_class_names_from_selections,
     format_class_names,
     join_display_values,
+    validate_experiment_schedule_coverage,
 )
 
 
@@ -82,6 +85,75 @@ def test_structured_batch_request_accepts_new_selection_fields():
     assert request.major_classes[0].class_numbers == [1, 2, 3]
     assert request.major_classes[1].class_numbers == [2, 3]
     assert request.locations == ["慧心楼3516", "实训楼204"]
+
+
+def test_experiment_plan_accepts_one_schedule_per_class_without_legacy_fields():
+    request = schemas.BatchTaskCreateRequest(
+        course_name="Windows服务器安全配置",
+        subject="信息安全技术应用",
+        grade="2024级",
+        template_id="yunlin-standard",
+        total_hours=4,
+        chapters=_chapters(),
+        major_classes=[
+            {"major": "信息安全技术应用", "class_numbers": [1, 2]},
+        ],
+        supplemental_artifacts=["experiment_plan"],
+        academic_year="2025-2026",
+        semester=2,
+        teacher_name="李阳",
+        plan_date="2026-02-25",
+        experiment_schedules=[
+            {
+                "class_name": "2024级信息安全技术应用1班",
+                "weekday": 4,
+                "class_periods": "3-4",
+                "first_class_date": "2026-03-05",
+                "classroom": "慧心楼3516",
+            },
+            {
+                "class_name": "2024级信息安全技术应用2班",
+                "weekday": 5,
+                "class_periods": "5-6",
+                "first_class_date": "2026-03-06",
+                "classroom": "实训楼204",
+            },
+        ],
+    )
+
+    assert request.location is None
+    assert request.first_class_date is None
+    assert request.class_periods is None
+    assert [item.classroom for item in request.experiment_schedules] == [
+        "慧心楼3516",
+        "实训楼204",
+    ]
+
+
+def test_experiment_schedule_rejects_date_that_does_not_match_weekday():
+    with pytest.raises(pydantic.ValidationError, match="第一周日期必须是星期四"):
+        schemas.ExperimentClassSchedule(
+            class_name="2024级信息安全技术应用1班",
+            weekday=4,
+            class_periods="3-4",
+            first_class_date="2026-03-06",
+            classroom="慧心楼3516",
+        )
+
+
+def test_experiment_schedule_coverage_requires_exactly_one_entry_per_class():
+    classes = ["2024级信息安全技术应用1班", "2024级信息安全技术应用2班"]
+    exact = [
+        {"class_name": classes[0]},
+        {"class_name": classes[1]},
+    ]
+
+    validate_experiment_schedule_coverage(classes, exact)
+
+    with pytest.raises(ValueError, match="缺少"):
+        validate_experiment_schedule_coverage(classes, exact[:1])
+    with pytest.raises(ValueError, match="每个班级只能配置一条实验课安排"):
+        validate_experiment_schedule_coverage(classes, [exact[0], exact[0]])
 
 
 def test_per_major_selection_rejects_out_of_range_class_number():
@@ -159,6 +231,30 @@ async def test_create_batch_task_persists_per_major_class_numbers(monkeypatch):
             {"major": "云计算技术应用", "class_numbers": [2, 3]},
         ],
         locations=["慧心楼3516", "实训楼204"],
+        supplemental_artifacts=["experiment_plan"],
+        academic_year="2025-2026",
+        semester=2,
+        teacher_name="李阳",
+        plan_date="2026-02-25",
+        experiment_schedules=[
+            {
+                "class_name": class_name,
+                "weekday": 4,
+                "class_periods": "3-4",
+                "first_class_date": "2026-03-05",
+                "classroom": f"实验室{index}",
+            }
+            for index, class_name in enumerate(
+                [
+                    "2024级大数据技术1班",
+                    "2024级大数据技术2班",
+                    "2024级大数据技术3班",
+                    "2024级云计算技术应用2班",
+                    "2024级云计算技术应用3班",
+                ],
+                start=1,
+            )
+        ],
     )
 
     response = await batch.create_batch_task(request)
@@ -172,3 +268,27 @@ async def test_create_batch_task_persists_per_major_class_numbers(monkeypatch):
         "2024级云计算技术应用2班,2024级云计算技术应用3班"
     )
     assert "2024级云计算技术应用1班" not in params[14]
+    persisted_schedules = json.loads(params[22])
+    assert [item["class_name"] for item in persisted_schedules] == [
+        "2024级大数据技术1班",
+        "2024级大数据技术2班",
+        "2024级大数据技术3班",
+        "2024级云计算技术应用2班",
+        "2024级云计算技术应用3班",
+    ]
+    assert [item["classroom"] for item in persisted_schedules] == [
+        "实验室1",
+        "实验室2",
+        "实验室3",
+        "实验室4",
+        "实验室5",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_batch_task_table_contains_experiment_schedules_column(test_db):
+    async with test_db.get_connection() as connection:
+        cursor = await connection.execute("PRAGMA table_info(batch_tasks)")
+        columns = [row[1] for row in await cursor.fetchall()]
+
+    assert "experiment_schedules" in columns
