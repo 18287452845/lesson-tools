@@ -4,6 +4,7 @@ import pytest
 from docx import Document
 from docx.oxml.ns import qn
 from pptx import Presentation
+from pptx.enum import text as pptx_text_enum
 
 from backend.main import app
 from backend.services.builtin_template import (
@@ -119,6 +120,30 @@ def test_handout_and_presentation_render(tmp_path: pathlib.Path, preparation_dat
         for slide in presentation.slides
         for shape in slide.shapes
         if hasattr(shape, "text")
+    )
+
+
+def test_presentation_dense_slide_uses_text_autofit():
+    renderer = preparation_renderer.PreparationRenderer()
+    presentation = Presentation()
+    bullets = [
+        "教师引导：" + "讲解配置、验证和故障排查步骤。" * 20,
+        "学习活动：" + "完成配置、记录证据并相互检查。" * 20,
+        "学习提示：" + "对照验收标准复核学习产出。" * 20,
+    ]
+
+    renderer._add_bullet_slide(presentation, "课堂实践", bullets, eyebrow="30分钟")
+
+    body = next(
+        shape.text_frame
+        for shape in presentation.slides[0].shapes
+        if hasattr(shape, "text_frame") and "教师引导：" in shape.text
+    )
+    assert body.auto_size == pptx_text_enum.MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    assert all(
+        paragraph.font.size.pt <= 13
+        for paragraph in body.paragraphs
+        if paragraph.text
     )
 
 

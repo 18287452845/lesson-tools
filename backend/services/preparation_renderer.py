@@ -12,7 +12,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 from pptx import Presentation
 from pptx.dml.color import RGBColor as PptColor
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from pptx.util import Inches, Pt as PptPt
 
 from ..config import settings
@@ -302,12 +302,23 @@ class PreparationRenderer:
         body_box = slide.shapes.add_textbox(Inches(1.0), Inches(1.95), Inches(11.1), Inches(4.7))
         frame = body_box.text_frame
         frame.word_wrap = True
-        for index, bullet in enumerate(bullets[:7]):
+        frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        rendered_bullets = [str(bullet)[:360] for bullet in bullets[:7]]
+        character_count = sum(len(bullet) for bullet in rendered_bullets)
+        if character_count > 760:
+            font_size = 13
+        elif character_count > 560:
+            font_size = 15
+        elif character_count > 420:
+            font_size = 17
+        else:
+            font_size = 19 if len(rendered_bullets) <= 4 else 16
+        for index, bullet in enumerate(rendered_bullets):
             paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
-            paragraph.text = str(bullet)[:360]
+            paragraph.text = bullet
             paragraph.level = 0
             paragraph.font.name = "Microsoft YaHei"
-            paragraph.font.size = PptPt(19 if len(bullets) <= 4 else 16)
+            paragraph.font.size = PptPt(font_size)
             paragraph.font.color.rgb = PptColor(44, 62, 55)
             paragraph.space_after = PptPt(13)
             paragraph.alignment = PP_ALIGN.LEFT
