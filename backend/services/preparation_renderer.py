@@ -272,6 +272,36 @@ class PreparationRenderer:
         bullets: list[str],
         eyebrow: str = "",
     ) -> None:
+        rendered_bullets = [str(bullet)[:360] for bullet in bullets[:7]]
+        pages: list[list[str]] = []
+        current_page: list[str] = []
+        current_characters = 0
+        for bullet in rendered_bullets:
+            if current_page and current_characters + len(bullet) > 520:
+                pages.append(current_page)
+                current_page = []
+                current_characters = 0
+            current_page.append(bullet)
+            current_characters += len(bullet)
+        if current_page or not pages:
+            pages.append(current_page or ["围绕本环节任务开展学习活动"])
+
+        for page_index, page_bullets in enumerate(pages):
+            page_title = title if page_index == 0 else f"{title}（续）"
+            self._add_bullet_slide_page(
+                presentation,
+                page_title,
+                page_bullets,
+                eyebrow,
+            )
+
+    def _add_bullet_slide_page(
+        self,
+        presentation: Presentation,
+        title: str,
+        bullets: list[str],
+        eyebrow: str = "",
+    ) -> None:
         slide = presentation.slides.add_slide(presentation.slide_layouts[6])
         background = slide.background.fill
         background.solid()
@@ -303,8 +333,7 @@ class PreparationRenderer:
         frame = body_box.text_frame
         frame.word_wrap = True
         frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-        rendered_bullets = [str(bullet)[:360] for bullet in bullets[:7]]
-        character_count = sum(len(bullet) for bullet in rendered_bullets)
+        character_count = sum(len(bullet) for bullet in bullets)
         if character_count > 760:
             font_size = 13
         elif character_count > 560:
@@ -312,8 +341,8 @@ class PreparationRenderer:
         elif character_count > 420:
             font_size = 17
         else:
-            font_size = 19 if len(rendered_bullets) <= 4 else 16
-        for index, bullet in enumerate(rendered_bullets):
+            font_size = 19 if len(bullets) <= 4 else 16
+        for index, bullet in enumerate(bullets):
             paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
             paragraph.text = bullet
             paragraph.level = 0

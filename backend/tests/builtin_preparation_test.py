@@ -134,17 +134,16 @@ def test_presentation_dense_slide_uses_text_autofit():
 
     renderer._add_bullet_slide(presentation, "课堂实践", bullets, eyebrow="30分钟")
 
-    body = next(
-        shape.text_frame
-        for shape in presentation.slides[0].shapes
-        if hasattr(shape, "text_frame") and "教师引导：" in shape.text
-    )
-    assert body.auto_size == pptx_text_enum.MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-    assert all(
-        paragraph.font.size.pt <= 13
-        for paragraph in body.paragraphs
-        if paragraph.text
-    )
+    assert len(presentation.slides) == 3
+    for slide in presentation.slides:
+        body = next(
+            shape.text_frame
+            for shape in slide.shapes
+            if hasattr(shape, "text_frame")
+            and any(label in shape.text for label in ("教师引导：", "学习活动：", "学习提示："))
+        )
+        assert body.auto_size == pptx_text_enum.MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        assert sum(len(paragraph.text) for paragraph in body.paragraphs) <= 520
 
 
 def test_yunlin_lesson_plan_renders(tmp_path: pathlib.Path, preparation_data):
