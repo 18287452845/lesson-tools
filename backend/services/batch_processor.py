@@ -33,6 +33,7 @@ from .document_renderer import DocumentRenderer
 from .builtin_template import get_builtin_template_path, require_valid_builtin_template
 from .course_plan_renderer import CoursePlanRenderer
 from .batch_context import format_class_names
+from .experiment_names import ensure_experiment_names
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +271,7 @@ class BatchTaskProcessor:
                     f"All lesson plans saved as drafts (no documents rendered)."
                 )
             elif generated_files:
-                supplemental_files = self._generate_course_plan_files(
+                supplemental_files = await self._generate_course_plan_files(
                     batch_task_id=batch_task_id,
                     task=task,
                     chapters=chapters,
@@ -315,7 +316,7 @@ class BatchTaskProcessor:
                 error_message=str(e),
             )
 
-    def _generate_course_plan_files(
+    async def _generate_course_plan_files(
         self,
         *,
         batch_task_id: str,
@@ -332,6 +333,29 @@ class BatchTaskProcessor:
             for value in str(task.get("class_names") or "").split(",")
             if value.strip()
         ]
+        if "experiment_plan" in selected:
+            chapters, regenerated = await ensure_experiment_names(
+                chapters,
+                provider=self.provider,
+                api_key=self.api_key,
+                model=self.model,
+                require_every_group=False,
+            )
+            if regenerated:
+                db = await get_db()
+                await db.execute(
+                    "UPDATE batch_tasks SET chapters = ?, updated_at = ? WHERE id = ?",
+                    (
+                        json.dumps(chapters, ensure_ascii=False),
+                        datetime.now().isoformat(),
+                        batch_task_id,
+                    ),
+                    commit=True,
+                )
+                logger.info(
+                    "Revalidated and regenerated experiment names before merging task %s",
+                    batch_task_id,
+                )
         common = {
             "batch_task_id": batch_task_id,
             "course_name": task["course_name"],

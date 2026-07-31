@@ -14,6 +14,7 @@ from typing import List, Optional
 from ..config import settings
 from ..models.schemas import ChapterInfo
 from .ai_provider import generate_with_ai, AIProviderFactory
+from .experiment_names import ensure_experiment_names
 
 logger = logging.getLogger(__name__)
 
@@ -208,12 +209,14 @@ class ChapterSplitter:
   {{
     "lesson_number": 1,
     "topic": "本教案课题（简明扼要，10-20字）",
+    "experiment_name": "本周实验项目名称（最多18字）",
     "content_summary": "本教案教学内容概述，说明要讲授的主要内容和学习目标（100-200字）",
     "key_concepts": ["核心概念1", "核心概念2", "核心概念3"]
   }},
   {{
     "lesson_number": 2,
     "topic": "第二份教案课题",
+    "experiment_name": "",
     "content_summary": "第二份教案教学内容概述...",
     "key_concepts": ["概念1", "概念2", "概念3"]
   }}
@@ -250,6 +253,12 @@ class ChapterSplitter:
    - lesson_number字段必须从1开始，到{num_lessons}结束
    - 每个key_concepts数组包含3-5个核心概念
 
+7. **实验名称硬性要求**：
+   - 每两份教案合并为一周：奇数序号填写1个experiment_name，紧随其后的偶数序号必须填空字符串
+   - experiment_name最多18个字符，必须简洁、具体、可操作，并能概括该周两份教案内容
+   - 不要添加“上机实验：”“实验项目：”等前缀
+   - experiment_name不得包含换行、中文省略号或三个连续英文句点
+
 请直接输出JSON数组，不要添加任何其他文字。
 """
 
@@ -284,18 +293,21 @@ class ChapterSplitter:
   {{
     "lesson_number": 1,
     "topic": "第1周：第1章 课程导论（上）",
+    "experiment_name": "课程环境准备",
     "content_summary": "本周教学内容概述...",
     "key_concepts": ["概念1", "概念2", "概念3"]
   }},
   {{
     "lesson_number": 2,
     "topic": "第2周：第1章 课程导论（下）",
+    "experiment_name": "",
     "content_summary": "延续上周内容...",
     "key_concepts": ["概念4", "概念5"]
   }},
   {{
     "lesson_number": 3,
     "topic": "第3周：第2章 基础知识 + 第3章 基本操作",
+    "experiment_name": "基础操作训练",
     "content_summary": "本周合并讲解两个基础章节...",
     "key_concepts": ["概念1", "概念2", "概念3"]
   }}
@@ -316,6 +328,7 @@ class ChapterSplitter:
 5. key_concepts 包含 3-5 个核心概念
 6. 合理分配难度，前期基础后期深化
 7. 输出纯 JSON 数组，不要任何其他文字
+8. 每两个连续对象合并为一个实验项目：第一个对象的experiment_name最多18字，第二个对象必须为空字符串；名称不得换行或使用省略号
 
 请直接输出JSON数组。
 """
@@ -382,7 +395,14 @@ class ChapterSplitter:
             raise ValueError(
                 f"AI章节数量不匹配：期望 {num_lessons}，实际 {len(chapters)}。请重新生成。"
             )
-        return chapters
+        normalized, _ = await ensure_experiment_names(
+            chapters,
+            provider=self.provider,
+            api_key=self.api_key,
+            model=self.model,
+            require_every_group=True,
+        )
+        return [ChapterInfo(**chapter) for chapter in normalized]
 
     def _parse_manual_chapters(
         self,

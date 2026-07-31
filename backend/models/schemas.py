@@ -587,7 +587,7 @@ class ChapterInfo(BaseModel):
     experiment_name: Optional[str] = Field(
         None,
         max_length=100,
-        description="实验项目名称；全部留空时按每周课题自动生成",
+        description="实验项目名称；最终限制18字，不合规时在实验计划合并前重新生成",
     )
 
 

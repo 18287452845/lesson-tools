@@ -23,6 +23,7 @@ from lxml import etree
 
 from ..config import settings
 from .batch_context import format_class_names
+from .experiment_names import validate_experiment_chapters
 
 
 CoursePlanType = Literal["teaching_plan", "experiment_plan"]
@@ -287,6 +288,16 @@ def _set_cell_text(cell: etree._Element, value: str) -> None:
         text.text = line
 
 
+def _set_cell_no_wrap(cell: etree._Element) -> None:
+    """Keep validated short experiment names on one physical line."""
+    cell_properties = cell.find(W + "tcPr")
+    if cell_properties is None:
+        cell_properties = etree.Element(W + "tcPr")
+        cell.insert(0, cell_properties)
+    if cell_properties.find(W + "noWrap") is None:
+        etree.SubElement(cell_properties, W + "noWrap")
+
+
 def _set_cell_runs(
     cell: etree._Element,
     segments: Sequence[tuple[str, bool]],
@@ -545,14 +556,18 @@ class CoursePlanRenderer:
             raise ValueError("同步生成实验计划时必须选择至少一个班级")
 
         groups = _group_chapters(chapters)
-        explicit_experiments = any(
-            item.get("experiment_name") for group in groups for item in group
+        projects_by_group = dict(
+            validate_experiment_chapters(
+                [item for group in groups for item in group],
+                require_every_group=False,
+            )
         )
-        schedule: list[tuple[int, list[dict[str, Any]]]] = []
+        schedule: list[tuple[int, list[dict[str, Any]], str]] = []
         for group_index, group in enumerate(groups):
-            if explicit_experiments and not any(item.get("experiment_name") for item in group):
+            project = projects_by_group.get(group_index + 1)
+            if not project:
                 continue
-            schedule.append((group_index, group))
+            schedule.append((group_index, group, project))
 
         spec = TEMPLATE_SPECS["experiment_plan"]
         if len(schedule) > spec.capacity:
@@ -616,24 +631,18 @@ class CoursePlanRenderer:
                         continue
 
                     cells = _table_cells(rows[row_index])
-                    group_index, group = schedule[row_index - 1]
-                    explicit = [
-                        item["experiment_name"] for item in group if item.get("experiment_name")
-                    ]
-                    topics = [item["topic"] for item in group if item.get("topic")]
-                    project = "、".join(explicit)
-                    if not project:
-                        project = "上机实验：" + "、".join(topics)
+                    group_index, _group, project = schedule[row_index - 1]
                     lesson_date = first_date + timedelta(days=7 * group_index)
                     week = start_week + group_index
                     values = (
                         f"实验{row_index}",
-                        _fit_text(project, 58),
+                        project,
                         _fit_text(classroom, 18),
                         "",
                     )
                     for cell, value in zip((cells[0], cells[1], cells[3], cells[4]), values):
                         _set_cell_text(cell, value)
+                    _set_cell_no_wrap(cells[1])
                     _set_experiment_schedule_cell(
                         cells[2],
                         week=week,

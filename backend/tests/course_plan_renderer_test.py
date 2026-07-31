@@ -4,19 +4,25 @@ import pathlib
 import pytest
 import pydantic
 from docx import Document
+from docx.oxml.ns import qn
 
 from backend.config import settings
 from backend.models import schemas
 from backend.services import course_plan_renderer
 
 
-def _chapters(count: int = 32):
+def _chapters(count: int = 32, *, with_experiment_names: bool = True):
     return [
         schemas.ChapterInfo(
             lesson_number=index,
             topic=f"任务{index} Windows服务器安全配置",
             content_summary=f"掌握第{index}项服务器配置与安全验证方法",
             key_concepts=[f"配置{index}", "安全验证"],
+            experiment_name=(
+                f"安全配置实验{(index + 1) // 2}"
+                if with_experiment_names and index % 2 == 1
+                else ""
+            ),
         )
         for index in range(1, count + 1)
     ]
@@ -142,6 +148,10 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
         experiment_table = Document(path).tables[0]
         assert len(experiment_table.rows) == 18
         assert experiment_table.rows[1].cells[3].text == classroom
+        assert experiment_table.rows[1].cells[1].text == "安全配置实验1"
+        assert "\n" not in experiment_table.rows[1].cells[1].text
+        assert "…" not in experiment_table.rows[1].cells[1].text
+        assert experiment_table.rows[1].cells[1]._tc.tcPr.find(qn("w:noWrap")) is not None
         assert all(
             any(cell.text.strip() for cell in row.cells)
             for row in experiment_table.rows[1:-1]
@@ -167,7 +177,7 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
 
 
 def test_explicit_experiment_names_filter_non_experiment_weeks(tmp_path: pathlib.Path):
-    chapters = _chapters(8)
+    chapters = _chapters(8, with_experiment_names=False)
     chapters[0].experiment_name = "认识Windows服务"
     chapters[4].experiment_name = "配置IIS安全功能"
     renderer = course_plan_renderer.CoursePlanRenderer(tmp_path)
@@ -197,6 +207,30 @@ def test_explicit_experiment_names_filter_non_experiment_weeks(tmp_path: pathlib
     assert document.tables[0].rows[2].cells[1].text == "配置IIS安全功能"
     assert "第 04 周" in document.tables[0].rows[2].cells[2].text
     assert "4    学时" in document.tables[0].rows[-1].cells[2].text
+
+
+def test_experiment_plan_rejects_names_that_would_wrap(tmp_path: pathlib.Path):
+    chapters = _chapters(2, with_experiment_names=False)
+    chapters[0].experiment_name = "这是一个明显超过固定模板单行容量的实验项目名称"
+    renderer = course_plan_renderer.CoursePlanRenderer(tmp_path)
+
+    with pytest.raises(ValueError, match="不能超过 18 个字符"):
+        renderer.render_experiment_plans(
+            batch_task_id="batch-invalid-name",
+            course_name="Windows服务器安全配置",
+            grade="24级",
+            class_names=["24级信息安全技术应用1班"],
+            academic_year="2025-2026",
+            semester=2,
+            teacher_name="李阳",
+            plan_date="2026-02-25",
+            first_class_date="2026-03-05",
+            class_periods="3-4",
+            hours_per_lesson=2,
+            start_week=2,
+            chapters=chapters,
+            location="慧心楼3516",
+        )
 
 
 def test_batch_plan_request_requires_fixed_schedule_fields():

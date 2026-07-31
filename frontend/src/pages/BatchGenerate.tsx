@@ -94,6 +94,7 @@ const BATCH_MAJOR_OPTIONS = [
 ];
 const BATCH_GRADE_OPTIONS = Array.from({ length: 14 }, (_, index) => `${2022 + index}级`);
 const CLASS_NUMBER_OPTIONS = Array.from({ length: 5 }, (_, index) => index + 1);
+const EXPERIMENT_NAME_MAX_LENGTH = 18;
 const WEEKDAY_OPTIONS = '一二三四五六日'.split('').map((name, index) => ({
   label: `星期${name}`,
   value: index + 1,
@@ -732,10 +733,14 @@ const BatchGenerate: React.FC = () => {
       render: (text: string | undefined, _record: ChapterInfo, index: number) => (
         <Input
           value={text}
-          placeholder="留空则按每周课题自动生成"
+          maxLength={EXPERIMENT_NAME_MAX_LENGTH}
+          showCount
+          placeholder="最多18字，留空则自动生成"
           onChange={(e) => {
             const newChapters = [...chapters];
-            newChapters[index].experiment_name = e.target.value;
+            newChapters[index].experiment_name = e.target.value
+              .replace(/…/g, '')
+              .replace(/\.{3,}/g, '');
             setChapters(newChapters);
           }}
         />
@@ -1207,7 +1212,7 @@ const BatchGenerate: React.FC = () => {
                     type="info"
                     showIcon
                     message="计划将与批量教案一起打包"
-                    description="系统以每两份教案作为一周课表：授课计划最多 16 周，实验计划最多 18 条。实验项目可在下一步逐项填写；全部留空时按课题自动生成。"
+                    description="系统以每两份教案作为一周课表：授课计划最多 16 周，实验计划最多 18 条。实验名称最多18字且不得换行或使用省略号；不合规时会在合并前自动重新生成。"
                     style={{ marginBottom: 16 }}
                   />
                   <Space wrap style={{ marginBottom: 16 }}>
@@ -1537,7 +1542,7 @@ const BatchGenerate: React.FC = () => {
             >
               <Alert
                 message="编辑提示"
-                description="可直接修改课题、内容概述、核心概念和实验项目。实验项目全部留空时会按每周课题自动生成；只填写部分时，仅填写过的周次进入实验计划。"
+                description="可直接修改课题、内容概述、核心概念和实验项目。实验名称最多18字；全部留空时会按每周课题重新生成，只填写部分时仅填写过的周次进入实验计划。"
                 type="info"
                 showIcon
                 closable

@@ -38,6 +38,7 @@ from ..services.batch_processor import BatchTaskProcessor
 from ..services.background_runner import run_in_background
 from ..services.builtin_template import require_valid_builtin_template
 from ..services.course_plan_renderer import require_valid_course_plan_template
+from ..services.experiment_names import ensure_experiment_names
 from ..services.batch_context import (
     build_class_names,
     build_class_names_from_selections,
@@ -118,6 +119,24 @@ async def split_chapters(request: ChapterSplitRequest):
             chapters_json = json.loads(existing["chapters"])
             chapters = [ChapterInfo(**c) for c in chapters_json]
             if len(chapters) == num_lessons:
+                normalized, regenerated = await ensure_experiment_names(
+                    chapters,
+                    provider=settings.ai_provider,
+                    api_key=settings.get_active_api_key(),
+                    model=settings.get_active_model(),
+                    require_every_group=True,
+                )
+                chapters = [ChapterInfo(**chapter) for chapter in normalized]
+                if regenerated:
+                    await db.execute(
+                        "UPDATE course_chapter_templates SET chapters = ?, updated_at = ? WHERE id = ?",
+                        (
+                            json.dumps(normalized, ensure_ascii=False),
+                            datetime.now().isoformat(),
+                            existing["id"],
+                        ),
+                        commit=True,
+                    )
                 # Increment use count
                 await db.execute(
                     """
@@ -257,6 +276,24 @@ async def split_chapters_stream(request: ChapterSplitRequest):
                         )
                         logger.info(f"Purged mismatched cached template: {existing['id']}")
                     else:
+                        normalized, regenerated = await ensure_experiment_names(
+                            chapters,
+                            provider=settings.ai_provider,
+                            api_key=settings.get_active_api_key(),
+                            model=settings.get_active_model(),
+                            require_every_group=True,
+                        )
+                        chapters = [ChapterInfo(**chapter) for chapter in normalized]
+                        if regenerated:
+                            await db.execute(
+                                "UPDATE course_chapter_templates SET chapters = ?, updated_at = ? WHERE id = ?",
+                                (
+                                    json.dumps(normalized, ensure_ascii=False),
+                                    datetime.now().isoformat(),
+                                    existing["id"],
+                                ),
+                                commit=True,
+                            )
                         # 发送初始进度
                         yield f"event: progress\ndata: {json.dumps({'current': 0, 'total': total_lessons, 'message': f'准备加载 {total_lessons} 个章节...'}, ensure_ascii=False)}\n\n"
 
@@ -314,6 +351,15 @@ async def split_chapters_stream(request: ChapterSplitRequest):
                 logger.error(error_msg)
                 yield f"event: error\ndata: {json.dumps({'message': error_msg}, ensure_ascii=False)}\n\n"
                 return
+
+            normalized, _ = await ensure_experiment_names(
+                chapters,
+                provider=settings.ai_provider,
+                api_key=settings.get_active_api_key(),
+                model=settings.get_active_model(),
+                require_every_group=True,
+            )
+            chapters = [ChapterInfo(**chapter) for chapter in normalized]
 
             if use_cache:
                 # 保存到数据库
@@ -405,6 +451,15 @@ async def split_chapters_smart_allocation_stream(request: SmartAllocationRequest
 
                 # 发送章节数据
                 yield f"event: chapter\ndata: {json.dumps(week.model_dump(), ensure_ascii=False)}\n\n"
+
+            normalized, _ = await ensure_experiment_names(
+                weeks,
+                provider=settings.ai_provider,
+                api_key=settings.get_active_api_key(),
+                model=settings.get_active_model(),
+                require_every_group=True,
+            )
+            weeks = [ChapterInfo(**chapter) for chapter in normalized]
 
             # 保存到缓存（复用 course_chapter_templates 表）
             db = await get_db()
