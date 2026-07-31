@@ -377,6 +377,7 @@ class DocumentRenderer:
             temp_filename = f"_temp_{course_name}_{document_number}_{idx}_{timestamp}.docx"
             temp_path = str(self.output_dir / temp_filename)
             template.save(temp_path)
+            self._compact_rendered_homepage(temp_path)
             temp_docs.append(temp_path)
 
         # Combine documents with each lesson plan starting on a new page.

@@ -157,3 +157,35 @@ def test_yunlin_lesson_plan_renders(tmp_path: pathlib.Path, preparation_data):
     assert document.tables[1].rows[4]._tr.trPr.find(qn("w:cantSplit")) is not None
     assert document.tables[1].rows[5]._tr.trPr.find(qn("w:trHeight")) is None
     assert document.tables[1].rows[6]._tr.trPr.find(qn("w:trHeight")) is None
+
+
+def test_batch_lesson_plan_compacts_each_homepage(tmp_path: pathlib.Path, preparation_data):
+    input_data, content = preparation_data
+    renderer = document_renderer.DocumentRenderer()
+    renderer.output_dir = tmp_path
+    render_data = {
+        **input_data,
+        **content,
+        "class_name": "Class 1",
+        "week_number": "1",
+        "lesson_number": "1",
+        "references": "Python Basics",
+        "ideological_political": "Work carefully and verify results",
+    }
+
+    output_path = pathlib.Path(
+        renderer.render_lesson_plans_document(
+            str(get_builtin_template_path()),
+            [dict(render_data), {**render_data, "lesson_number": "2"}],
+            course_name="Python",
+            document_number=1,
+            week_number=1,
+        )
+    )
+
+    document = Document(output_path)
+    assert len(document.tables) == 4
+    for table_index in (0, 2):
+        objective_cell = document.tables[table_index].rows[7].cells[0]
+        assert len(objective_cell.paragraphs) == 1
+        assert "\n\n" not in objective_cell.text
