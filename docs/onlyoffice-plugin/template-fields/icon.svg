@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-  <rect x="8" y="8" width="48" height="48" rx="10" fill="#2B6CB0" />
-  <rect x="16" y="18" width="32" height="28" rx="4" fill="#F6E05E" />
-  <path d="M24 24c-2 0-4 2-4 4v8c0 2 2 4 4 4" stroke="#2B6CB0" stroke-width="3" fill="none" stroke-linecap="round" />
-  <path d="M40 24c2 0 4 2 4 4v8c0 2-2 4-4 4" stroke="#2B6CB0" stroke-width="3" fill="none" stroke-linecap="round" />
-</svg>

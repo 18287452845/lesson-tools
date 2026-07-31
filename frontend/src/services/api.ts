@@ -9,12 +9,6 @@ import type {
   DocumentUploadResponse,
   SectionEditRequest,
   AIEnhanceRequest,
-  TemplateHtmlResponse,
-  JinjaValidationResult,
-  VersionListResponse,
-  VersionCompareResult,
-  HtmlExportResponse,
-  FieldConfig,
   ClassInfo,
   ClassCreateRequest,
   ClassUpdateRequest,
@@ -29,7 +23,10 @@ import type {
   GradeCreateRequest,
   GradeUpdateRequest,
   GradeListResponse,
-  OnlyOfficeEditorConfig,
+  TemplateValidation,
+  FixedTemplateValidation,
+  PreparationGenerateRequest,
+  PreparationResponse,
 } from '@/types';
 
 const api = axios.create({
@@ -62,28 +59,6 @@ api.interceptors.response.use(
 
 export const templateApi = {
   /**
-   * Upload a new template
-   */
-  uploadTemplate: async (file: File, metadata: {
-    name: string;
-    description?: string;
-    subject?: string;
-    grade?: string;
-  }) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('name', metadata.name);
-    if (metadata.description) formData.append('description', metadata.description);
-    if (metadata.subject) formData.append('subject', metadata.subject);
-    if (metadata.grade) formData.append('grade', metadata.grade);
-
-    const response = await api.post('/templates/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return response.data;
-  },
-
-  /**
    * List all templates
    */
   listTemplates: async (params?: {
@@ -105,13 +80,6 @@ export const templateApi = {
   },
 
   /**
-   * Delete a template
-   */
-  deleteTemplate: async (id: string): Promise<void> => {
-    await api.delete(`/templates/${id}`);
-  },
-
-  /**
    * Download a template file
    */
   downloadTemplate: async (id: string): Promise<Blob> => {
@@ -119,6 +87,37 @@ export const templateApi = {
       responseType: 'blob',
     });
     return response.data;
+  },
+
+  validateTemplate: async (): Promise<TemplateValidation> => {
+    const response = await api.get('/templates/validation');
+    return response.data;
+  },
+
+  validateAllTemplates: async (): Promise<FixedTemplateValidation[]> => {
+    const response = await api.get('/templates/validation/all');
+    return response.data;
+  },
+};
+
+export const preparationApi = {
+  generate: async (input: PreparationGenerateRequest): Promise<PreparationResponse> => {
+    const response = await api.post('/preparation', input);
+    return response.data;
+  },
+
+  capabilities: async (): Promise<{
+    template: { id: string; name: string; is_valid: boolean; sha256: string };
+    artifacts: { type: string; label: string }[];
+  }> => {
+    const response = await api.get('/preparation/capabilities');
+    return response.data;
+  },
+
+  resolveDownloadUrl: (downloadUrl: string): string => {
+    const configuredBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+    const backendOrigin = new URL(configuredBase, window.location.origin).origin;
+    return new URL(downloadUrl, backendOrigin).toString();
   },
 };
 
@@ -441,151 +440,6 @@ export const gradeApi = {
    */
   deleteGrade: async (id: string): Promise<void> => {
     await api.delete(`/grades/${id}`);
-  },
-};
-
-// ============================================================================
-// Template Editor API
-// ============================================================================
-
-export const templateEditorApi = {
-  /**
-   * Get template HTML content for editing
-   */
-  getTemplateHtml: async (templateId: string): Promise<TemplateHtmlResponse> => {
-    const response = await api.get(`/templates/${templateId}/html`);
-    return response.data;
-  },
-
-  /**
-   * Validate Jinja2 syntax
-   */
-  validateJinja: async (templateId: string, html: string): Promise<JinjaValidationResult> => {
-    const response = await api.post(`/templates/${templateId}/validate-jinja`, { html });
-    return response.data;
-  },
-
-  /**
-   * Save HTML content back to template
-   */
-  saveHtml: async (
-    templateId: string,
-    html: string,
-    metadata?: Record<string, any>
-  ): Promise<{ success: boolean; message: string }> => {
-    const response = await api.post(`/templates/${templateId}/save-html`, { html, metadata });
-    return response.data;
-  },
-
-  /**
-   * Preview HTML with sample data
-   */
-  previewHtml: async (
-    templateId: string,
-    html: string,
-    sampleData: Record<string, any>
-  ): Promise<{ preview_html: string }> => {
-    const response = await api.post(`/templates/${templateId}/preview-html`, {
-      html,
-      sample_data: sampleData,
-    });
-    return response.data;
-  },
-
-  /**
-   * Export HTML as file
-   */
-  exportHtml: async (templateId: string, html: string): Promise<HtmlExportResponse> => {
-    const response = await api.post(`/templates/${templateId}/export/html`, { html });
-    return response.data;
-  },
-
-  /**
-   * Get version history
-   */
-  getVersions: async (templateId: string): Promise<VersionListResponse> => {
-    const response = await api.get(`/templates/${templateId}/versions`);
-    return response.data;
-  },
-
-  /**
-   * Get version content
-   */
-  getVersionContent: async (templateId: string, versionId: string): Promise<{ content: string }> => {
-    const response = await api.get(`/templates/${templateId}/versions/${versionId}`);
-    return response.data;
-  },
-
-  /**
-   * Restore to a specific version
-   */
-  restoreVersion: async (
-    templateId: string,
-    versionId: string
-  ): Promise<{ success: boolean; new_version_id: string; message: string }> => {
-    const response = await api.post(`/templates/${templateId}/versions/${versionId}/restore`);
-    return response.data;
-  },
-
-  /**
-   * Compare two versions
-   */
-  compareVersions: async (
-    templateId: string,
-    versionId1: string,
-    versionId2: string
-  ): Promise<VersionCompareResult> => {
-    const response = await api.post(`/templates/${templateId}/versions/compare`, {
-      version_id_1: versionId1,
-      version_id_2: versionId2,
-    });
-    return response.data;
-  },
-
-  /**
-   * Cleanup old versions
-   */
-  cleanupVersions: async (
-    templateId: string,
-    keepCount: number = 20
-  ): Promise<{ success: boolean; deleted_count: number; message: string }> => {
-    const response = await api.delete(`/templates/${templateId}/versions/cleanup?keep_count=${keepCount}`);
-    return response.data;
-  },
-
-  /**
-   * Get standard field mappings
-   */
-  getStandardFields: async (): Promise<{ fields: FieldConfig[] }> => {
-    const response = await api.get('/templates/standard-fields');
-    return response.data;
-  },
-
-  /**
-   * Update fields configuration
-   */
-  updateFields: async (
-    templateId: string,
-    fields: FieldConfig[]
-  ): Promise<{ success: boolean; fields: FieldConfig[] }> => {
-    const response = await api.put(`/templates/${templateId}/fields`, { fields });
-    return response.data;
-  },
-
-  /**
-   * Get fields configuration
-   */
-  getFields: async (templateId: string): Promise<{ fields: FieldConfig[] }> => {
-    const response = await api.get(`/templates/${templateId}/fields`);
-    return response.data;
-  },
-
-  /**
-   * Get OnlyOffice editor configuration
-   */
-  getOnlyOfficeConfig: async (templateId: string): Promise<OnlyOfficeEditorConfig> => {
-    const response = await api.get(`/templates/${templateId}/onlyoffice/config`);
-    return response.data;
   },
 };
 

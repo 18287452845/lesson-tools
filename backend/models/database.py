@@ -412,6 +412,27 @@ class Database:
         await self._add_column_if_not_exists(
             db, "batch_tasks", "class_names", "TEXT"
         )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "supplemental_artifacts", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "academic_year", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "semester", "INTEGER"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "teacher_name", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "plan_date", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "first_class_date", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "class_periods", "TEXT"
+        )
 
         # Add class_ids to lesson_plans
         await self._add_column_if_not_exists(

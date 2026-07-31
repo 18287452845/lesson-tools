@@ -39,7 +39,7 @@ from .document_renderer import DocumentRenderer
 logger = logging.getLogger(__name__)
 
 
-COMPETITION_TEMPLATE_DIR = settings.template_dir.parent / "competition_templates"
+COMPETITION_TEMPLATE_DIR = settings.storage_dir / "competition_templates"
 LESSON_PLAN_MAIN_TEMPLATE = COMPETITION_TEMPLATE_DIR / "参赛教案_主模板.docx"
 LESSON_PLAN_SINGLE_TEMPLATE = COMPETITION_TEMPLATE_DIR / "参赛教案_单课模板.docx"
 REPORT_TEMPLATE = COMPETITION_TEMPLATE_DIR / "教学实施报告_模板.docx"

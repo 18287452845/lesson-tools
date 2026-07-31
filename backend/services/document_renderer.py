@@ -6,16 +6,22 @@ See WORD_EXPORT_FIX.md for details.
 """
 import logging
 import re
+import zipfile
 from copy import deepcopy
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from docxtpl import DocxTemplate
 from docx import Document
+from lxml import etree
 
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+W = f"{{{W_NS}}}"
+NS = {"w": W_NS}
 
 
 class DocumentRenderer:
@@ -39,7 +45,6 @@ class DocumentRenderer:
 
     def __init__(self):
         """Initialize the document renderer."""
-        self.template_dir = settings.template_dir
         self.output_dir = settings.output_dir
 
     def _parse_duration_number(self, duration: str) -> float:
@@ -138,6 +143,126 @@ class DocumentRenderer:
         lines = (line.strip() for line in normalized.split("\n"))
         return "\n".join(line for line in lines if line)
 
+    @staticmethod
+    def _ensure_role_marker(field_name: str, value: str) -> str:
+        """Keep teacher/student responsibilities explicit in fixed-template rows."""
+        marker = {
+            "teacher_activity": "【教师】",
+            "student_activity": "【学生】",
+        }.get(field_name)
+        if not marker or not value or value.startswith(marker):
+            return value
+        return f"{marker}{value}"
+
+    @staticmethod
+    def _compact_rendered_homepage(path: str) -> None:
+        """Remove Jinja-created blank lines without rebuilding the DOCX package.
+
+        The fixed lesson-plan template keeps labels and values in separate
+        paragraphs. Jinja loop boundaries can leave duplicate ``w:br`` nodes
+        between objective groups. Merge only the content rows on the homepage
+        and collapse consecutive/leading/trailing text breaks while preserving
+        every run property and all non-document package parts.
+        """
+        document_path = Path(path)
+        temporary_path = document_path.with_suffix(".layout.docx")
+
+        def has_visible_content(element: etree._Element) -> bool:
+            return any(
+                (node.tag == W + "t" and bool(node.text))
+                or node.tag in {W + "tab", W + "drawing", W + "object"}
+                for node in element.iter()
+            )
+
+        def compact_breaks(paragraph: etree._Element) -> None:
+            previous_kind: Optional[str] = None
+            for node in list(paragraph.iter()):
+                if node.tag == W + "t" and node.text:
+                    previous_kind = "text"
+                elif node.tag == W + "tab":
+                    previous_kind = "text"
+                elif node.tag == W + "br" and node.get(W + "type") in {None, "textWrapping"}:
+                    if previous_kind in {None, "break"}:
+                        node.getparent().remove(node)
+                    else:
+                        previous_kind = "break"
+
+            remaining = [
+                node
+                for node in paragraph.iter()
+                if (node.tag == W + "t" and node.text)
+                or node.tag in {W + "tab", W + "br"}
+            ]
+            if remaining and remaining[-1].tag == W + "br":
+                remaining[-1].getparent().remove(remaining[-1])
+
+        def keep_row_together(row: etree._Element) -> None:
+            row_properties = row.find(W + "trPr")
+            if row_properties is None:
+                row_properties = etree.Element(W + "trPr")
+                row.insert(0, row_properties)
+            if row_properties.find(W + "cantSplit") is None:
+                etree.SubElement(row_properties, W + "cantSplit")
+
+        def remove_minimum_height(row: etree._Element) -> None:
+            row_properties = row.find(W + "trPr")
+            if row_properties is None:
+                return
+            for height in list(row_properties.findall(W + "trHeight")):
+                row_properties.remove(height)
+
+        with zipfile.ZipFile(document_path, "r") as source:
+            root = etree.fromstring(source.read("word/document.xml"))
+            tables = root.xpath("/w:document/w:body/w:tbl", namespaces=NS)
+            if tables:
+                rows = tables[0].xpath("./w:tr", namespaces=NS)
+                for row_index in range(7, min(12, len(rows))):
+                    keep_row_together(rows[row_index])
+                    cells = rows[row_index].xpath("./w:tc", namespaces=NS)
+                    if not cells:
+                        continue
+                    cell = cells[0]
+                    paragraphs = cell.xpath("./w:p", namespaces=NS)
+                    if not paragraphs:
+                        continue
+                    first = paragraphs[0]
+                    for extra in paragraphs[1:]:
+                        if has_visible_content(first) and has_visible_content(extra):
+                            break_run = etree.Element(W + "r")
+                            etree.SubElement(break_run, W + "br")
+                            first.append(break_run)
+                        for child in list(extra):
+                            if child.tag != W + "pPr":
+                                first.append(child)
+                        cell.remove(extra)
+                    compact_breaks(first)
+
+            if len(tables) > 1:
+                process_rows = tables[1].xpath("./w:tr", namespaces=NS)
+                for row_index in (1, 2, 3, 4, 7, 8):
+                    if row_index < len(process_rows):
+                        keep_row_together(process_rows[row_index])
+                for row_index in (5, 6):
+                    if row_index < len(process_rows):
+                        remove_minimum_height(process_rows[row_index])
+
+            patched_xml = etree.tostring(
+                root,
+                encoding="UTF-8",
+                xml_declaration=True,
+                standalone=True,
+            )
+            with zipfile.ZipFile(temporary_path, "w") as target:
+                for item in source.infolist():
+                    payload = (
+                        patched_xml
+                        if item.filename == "word/document.xml"
+                        else source.read(item.filename)
+                    )
+                    target.writestr(deepcopy(item), payload)
+
+        temporary_path.replace(document_path)
+
     def render_lesson_plan(
         self,
         template_path: str,
@@ -177,12 +302,15 @@ class DocumentRenderer:
 
         # Generate output path
         topic = lesson_plan_data.get("topic", "教案")
+        topic = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(topic)).strip(" .")[:60]
+        topic = topic or "lesson_plan"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_filename = f"{topic}_{timestamp}.docx"
         output_path = str(self.output_dir / output_filename)
 
         # Save the rendered document
         template.save(output_path)
+        self._compact_rendered_homepage(output_path)
 
         return output_path
 
@@ -374,7 +502,8 @@ class DocumentRenderer:
                         cleaned_step = {}
                         for key, value in step.items():
                             if isinstance(value, str):
-                                cleaned_step[key] = self._clean_text_for_output(value)
+                                cleaned = self._clean_text_for_output(value)
+                                cleaned_step[key] = self._ensure_role_marker(key, cleaned)
                             else:
                                 cleaned_step[key] = value
                         cleaned_steps.append(cleaned_step)
@@ -437,6 +566,8 @@ class DocumentRenderer:
             # Also add numeric duration for templates that only need the number
             duration_value = self._parse_duration_number(data["duration"])
             processed["duration_hours"] = duration_value
+            if duration_value:
+                processed["duration"] = f"{duration_value:g}"
         if "teaching_methods" in data:
             processed["teaching_methods_content"] = data["teaching_methods"]
         if "teaching_tools" in data:

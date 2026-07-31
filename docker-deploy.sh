@@ -88,7 +88,6 @@ check_env() {
 create_directories() {
     print_info "创建存储目录..."
 
-    mkdir -p storage/templates
     mkdir -p storage/uploads
     mkdir -p storage/outputs
     mkdir -p storage/exports

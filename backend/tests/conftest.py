@@ -291,20 +291,6 @@ def mock_ai_generation(monkeypatch):
     )
 
 
-@pytest.fixture
-def mock_template_sync(monkeypatch):
-    """Mock template sync on startup to speed up tests."""
-    async def mock_sync():
-        return
-
-    import backend.services.template_sync
-    monkeypatch.setattr(
-        backend.services.template_sync,
-        "sync_templates_on_startup",
-        mock_sync
-    )
-
-
 # ==========================================
 # Skip Markers
 # ==========================================

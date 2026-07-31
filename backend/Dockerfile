@@ -19,8 +19,7 @@ COPY backend/requirements.txt /app/
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Create storage directories
-RUN mkdir -p /app/storage/templates \
-    /app/storage/uploads \
+RUN mkdir -p /app/storage/uploads \
     /app/storage/outputs \
     /app/storage/exports
 

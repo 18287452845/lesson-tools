@@ -5,13 +5,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from urllib.parse import urlparse
 import logging
 
 from .config import settings
 from .models.database import init_db, db
-from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans, textbooks, subjects, grades, competition
-from .services.template_sync import sync_templates_on_startup
+from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans, textbooks, subjects, grades, competition, preparation
+from .services.builtin_template import (
+    ensure_builtin_template_registered,
+    validate_all_builtin_templates,
+)
 from .services.metadata_sync import init_metadata
 
 logger = logging.getLogger(__name__)
@@ -29,9 +31,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"元数据初始化失败: {str(e)}")
 
-    # Sync templates from storage/templates/ folder to database
+    # Validate and register the immutable Yunlin template resource.
     try:
-        await sync_templates_on_startup()
+        await ensure_builtin_template_registered()
+        invalid_templates = [
+            report for report in validate_all_builtin_templates() if not report["is_valid"]
+        ]
+        if invalid_templates:
+            raise ValueError(
+                "；".join(
+                    f"{report['name']}：{'、'.join(report['errors'])}"
+                    for report in invalid_templates
+                )
+            )
     except Exception as e:
         logger.error(f"模板同步失败: {str(e)}")
 
@@ -41,9 +53,9 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI application
 app = FastAPI(
-    title="Lesson Plan Tool API",
+    title="Yunlin Teaching Preparation API",
     description="智能教案生成与编辑工具 API",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -58,16 +70,6 @@ cors_origins = [
     "https://ls.linnera.link",
     "http://ls.linnera.link",
 ]
-
-if settings.onlyoffice_docs_url:
-    parsed = urlparse(settings.onlyoffice_docs_url)
-    if parsed.scheme and parsed.netloc:
-        onlyoffice_origin = f"{parsed.scheme}://{parsed.netloc}"
-    else:
-        onlyoffice_origin = settings.onlyoffice_docs_url.rstrip("/")
-
-    if onlyoffice_origin and onlyoffice_origin not in cors_origins:
-        cors_origins.append(onlyoffice_origin)
 
 app.add_middleware(
     CORSMiddleware,
@@ -93,14 +95,15 @@ app.include_router(textbooks.router, prefix=settings.api_prefix, tags=["textbook
 app.include_router(subjects.router, prefix=settings.api_prefix, tags=["subjects"])
 app.include_router(grades.router, prefix=settings.api_prefix, tags=["grades"])
 app.include_router(competition.router, prefix=settings.api_prefix, tags=["competition"])
+app.include_router(preparation.router, prefix=settings.api_prefix, tags=["preparation"])
 
 
 @app.get("/")
 async def root():
     """Root endpoint."""
     return {
-        "message": "Lesson Plan Tool API",
-        "version": "1.0.0",
+        "message": "Yunlin Teaching Preparation API",
+        "version": "1.1.0",
         "docs": "/docs",
     }
 

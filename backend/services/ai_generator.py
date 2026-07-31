@@ -34,6 +34,24 @@ class AIGenerator:
     SYSTEM_PROMPT = """你是一位专业的教案设计专家，擅长根据课程标准和学生实际情况设计高质量的教案。
 你需要生成结构完整、内容详实、可操作性强的教案。"""
 
+    _STAGE_ALIASES = {
+        "导入新课": "新课预热",
+        "探究新知": "传授新知",
+        "巩固练习": "课堂实践",
+        "课堂小结": "课堂总结",
+    }
+    _STAGE_DURATIONS = {
+        "新课预热": "5分钟",
+        "问题导入": "5分钟",
+        "传授新知": "30分钟",
+        "课堂实践": "30分钟",
+        "课堂总结": "5分钟",
+    }
+    _CORE_STAGE_MIN_CHARS = {
+        "传授新知": {"teacher_activity": 120, "student_activity": 80},
+        "课堂实践": {"teacher_activity": 80, "student_activity": 120},
+    }
+
     # Generation prompt template
     GENERATION_PROMPT = """你是一位资深的{subject}学科教研专家，拥有20年教学经验。
 请根据以下信息，生成一份专业、详细、可操作性强的教案。
@@ -70,7 +88,7 @@ class AIGenerator:
   "textbook_analysis": "教材分析，说明本课在单元/教材中的地位",
   "teaching_steps": [
     {{
-      "stage": "导入新课",
+      "stage": "新课预热",
       "duration": "5分钟",
       "teacher_activity": "【教师】教师具体做什么、说什么",
       "student_activity": "【学生】学生具体做什么",
@@ -84,22 +102,22 @@ class AIGenerator:
       "design_intent": "..."
     }},
     {{
-      "stage": "探究新知",
-      "duration": "20分钟",
-      "teacher_activity": "【教师】...",
-      "student_activity": "【学生】...",
-      "design_intent": "..."
+      "stage": "传授新知",
+      "duration": "30分钟",
+      "teacher_activity": "【教师】围绕核心原理、配置步骤、示范案例、易错点和验证方法展开完整讲解，不少于120个汉字",
+      "student_activity": "【学生】按照任务单观察、记录、回答、同步操作并核对结果，不少于80个汉字",
+      "design_intent": "说明知识建构、操作示范与证据验证之间的教学逻辑"
     }},
     {{
-      "stage": "巩固练习",
-      "duration": "12分钟",
-      "teacher_activity": "【教师】...",
-      "student_activity": "【学生】...",
-      "design_intent": "..."
+      "stage": "课堂实践",
+      "duration": "30分钟",
+      "teacher_activity": "【教师】发布分层实践任务，明确步骤、验收标准、故障排查方法并巡回指导，不少于80个汉字",
+      "student_activity": "【学生】独立或小组完成配置、排错、结果验证、证据留存和互评改进，不少于120个汉字",
+      "design_intent": "说明实践任务如何形成岗位能力、规范意识与质量意识"
     }},
     {{
-      "stage": "课堂小结",
-      "duration": "3分钟",
+      "stage": "课堂总结",
+      "duration": "5分钟",
       "teacher_activity": "【教师】...",
       "student_activity": "【学生】...",
       "design_intent": "..."
@@ -117,7 +135,7 @@ class AIGenerator:
 
 注意事项：
 1. 教学目标要具体、可测量、可评价
-2. 教学过程要详细到可以直接使用
+2. 教学过程要详细到可以直接使用；传授新知和课堂实践必须写满教学动作、任务步骤、检查标准与学习产出
 3. 时间分配要合理，总时长匹配课时
 4. 语言要专业但不晦涩
 5. 要体现新课标理念和学生主体地位
@@ -171,7 +189,11 @@ class AIGenerator:
         last_error: Optional[Exception] = None
 
         for attempt in range(max_attempts):
-            prompt = base_prompt if attempt == 0 else f"{base_prompt}{retry_prompt_suffix}"
+            prompt = base_prompt
+            if attempt:
+                prompt = f"{base_prompt}{retry_prompt_suffix}"
+                if last_error:
+                    prompt += f"- 上一次输出未达到内容质量要求：{last_error}\n请逐项补足后重新生成。\n"
             content = await generate_with_ai(
                 prompt=prompt,
                 system_prompt=self.SYSTEM_PROMPT,
@@ -183,6 +205,8 @@ class AIGenerator:
 
             try:
                 parsed_data = self._parse_json_response(content)
+                self._normalize_teaching_steps(parsed_data)
+                self._validate_teaching_step_detail(parsed_data)
                 return GeneratedContent(**parsed_data)
             except ValueError as e:
                 last_error = e
@@ -190,6 +214,8 @@ class AIGenerator:
                 if cleaned_content != content:
                     try:
                         parsed_data = self._parse_json_response(cleaned_content)
+                        self._normalize_teaching_steps(parsed_data)
+                        self._validate_teaching_step_detail(parsed_data)
                         return GeneratedContent(**parsed_data)
                     except ValueError as cleaned_error:
                         last_error = cleaned_error
@@ -335,15 +361,19 @@ class AIGenerator:
    - teaching_goals必须包含knowledge（知识目标）、ability（能力目标）、quality（素质目标）三个字段
    - 每个字段至少包含2-3条具体目标，使用数组格式
 3. **教学过程必须包含5个完整阶段，每个阶段的stage值必须严格使用以下标准名称**：
-   - 第1阶段："新课预热" 或 "导入新课"（课前准备、复习铺垫，3-5分钟）
+   - 第1阶段："新课预热"（课前准备、复习铺垫，5分钟）
    - 第2阶段："问题导入"（提出问题、创设情境，5-8分钟）
-   - 第3阶段："传授新知" 或 "探究新知"（讲授核心内容，20-30分钟）
-   - 第4阶段："课堂实践" 或 "巩固练习"（实践操作、练习巩固，15-20分钟）
-   - 第5阶段："课堂总结" 或 "课堂小结"（总结回顾、布置作业，5分钟）
+   - 第3阶段："传授新知"（讲授核心内容，固定30分钟）
+   - 第4阶段："课堂实践"（实践操作、练习巩固，固定30分钟）
+   - 第5阶段："课堂总结"（总结回顾、布置作业，5分钟）
    - **关键要求**：
      * 必须包含所有5个阶段，缺一不可
      * stage字段的值必须是上述标准名称之一，不要添加编号、说明或其他文字
      * 每个阶段都要有详细的teacher_activity、student_activity和design_intent
+     * teacher_activity必须以“【教师】”开头，student_activity必须以“【学生】”开头
+     * “传授新知”教师活动不少于120个汉字、学生活动不少于80个汉字，至少覆盖核心原理、操作演示、易错点和结果验证
+     * “课堂实践”教师活动不少于80个汉字、学生活动不少于120个汉字，至少覆盖任务要求、操作步骤、故障排查、验收标准和证据留存
+     * 活动内容使用完整语句和分号组织，不要插入空白行
 4. 教学过程要详细到可以直接使用，每个步骤包含教师活动、学生活动和设计意图
 5. 时间分配要合理，总时长匹配课时（{input_data.duration}）
 6. 语言要专业但不晦涩
@@ -528,17 +558,17 @@ class AIGenerator:
     },
     {
       "stage": "传授新知",
-      "duration": "20-25分钟",
-      "teacher_activity": "【教师】讲解核心概念、演示操作、组织探究的详细内容...",
-      "student_activity": "【学生】听讲、记录、思考、提问、探究的详细内容...",
-      "design_intent": "帮助学生理解核心概念，掌握关键方法..."
+      "duration": "30分钟",
+      "teacher_activity": "【教师】围绕核心原理、操作步骤、示范案例、易错点和验证方法进行完整讲解，不少于120个汉字",
+      "student_activity": "【学生】依据任务单观察、记录、回答、同步操作并核对验证结果，不少于80个汉字",
+      "design_intent": "帮助学生建立原理、操作与验证证据之间的联系"
     },
     {
       "stage": "课堂实践",
-      "duration": "15-20分钟",
-      "teacher_activity": "【教师】布置练习任务、巡视指导、组织交流的详细内容...",
-      "student_activity": "【学生】动手实践、小组合作、展示成果的详细内容...",
-      "design_intent": "巩固所学知识，培养应用能力和协作精神..."
+      "duration": "30分钟",
+      "teacher_activity": "【教师】发布分层任务，明确步骤、验收标准和故障排查方法并巡回指导，不少于80个汉字",
+      "student_activity": "【学生】完成配置、排错、结果验证、证据留存、互评和改进，不少于120个汉字",
+      "design_intent": "巩固所学知识，培养岗位实践、协作和质量验收能力"
     },
     {
       "stage": "课堂总结",
@@ -630,7 +660,7 @@ class AIGenerator:
 
             # Add special note for teaching_steps
             if field.name == "teaching_steps":
-                note += f"   - **特别要求**：必须包含5个完整阶段（新课预热、问题导入、传授新知、课堂实践、课堂总结）\n"
+                note += f"   - **特别要求**：必须包含5个完整阶段（新课预热、问题导入、传授新知、课堂实践、课堂总结）；传授新知和课堂实践均为30分钟，并满足核心环节最低内容量\n"
 
         note += f"\n共 **{len(required_fields)}** 个必填字段，请确保每个字段都生成了有价值的具体内容。\n"
         note += "**严格要求**：\n"
@@ -697,7 +727,7 @@ class AIGenerator:
   "textbook_analysis": "教材分析，说明本课在单元/教材中的地位",
   "teaching_steps": [
     {{
-      "stage": "导入新课",
+      "stage": "新课预热",
       "duration": "5分钟",
       "teacher_activity": "【教师】教师具体做什么、说什么",
       "student_activity": "【学生】学生具体做什么",
@@ -711,22 +741,22 @@ class AIGenerator:
       "design_intent": "..."
     }},
     {{
-      "stage": "探究新知",
-      "duration": "20分钟",
-      "teacher_activity": "【教师】...",
-      "student_activity": "【学生】...",
-      "design_intent": "..."
+      "stage": "传授新知",
+      "duration": "30分钟",
+      "teacher_activity": "【教师】围绕核心原理、配置步骤、示范案例、易错点和验证方法进行完整讲解，不少于120个汉字",
+      "student_activity": "【学生】按照任务单观察、记录、回答、同步操作并核对结果，不少于80个汉字",
+      "design_intent": "建立原理、操作与验证证据之间的联系"
     }},
     {{
-      "stage": "巩固练习",
-      "duration": "12分钟",
-      "teacher_activity": "【教师】...",
-      "student_activity": "【学生】...",
-      "design_intent": "..."
+      "stage": "课堂实践",
+      "duration": "30分钟",
+      "teacher_activity": "【教师】发布分层任务，明确步骤、验收标准、故障排查方法并巡回指导，不少于80个汉字",
+      "student_activity": "【学生】完成配置、排错、验证、证据留存、互评和改进，不少于120个汉字",
+      "design_intent": "形成岗位实践、协作和质量验收能力"
     }},
     {{
-      "stage": "课堂小结",
-      "duration": "3分钟",
+      "stage": "课堂总结",
+      "duration": "5分钟",
       "teacher_activity": "【教师】...",
       "student_activity": "【学生】...",
       "design_intent": "..."
@@ -751,6 +781,59 @@ class AIGenerator:
 - reflection（教学反思）：对本节课教学效果的反思（至少2-3条）
 """
         return notes
+
+    @classmethod
+    def _normalize_teaching_steps(cls, data: Dict[str, Any]) -> None:
+        """Normalize fixed-template stage names, durations, and role markers."""
+        steps = data.get("teaching_steps")
+        if not isinstance(steps, list):
+            return
+
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            stage = str(step.get("stage") or "").strip()
+            stage = cls._STAGE_ALIASES.get(stage, stage)
+            step["stage"] = stage
+            if stage in cls._STAGE_DURATIONS:
+                step["duration"] = cls._STAGE_DURATIONS[stage]
+
+            for field_name, marker in (
+                ("teacher_activity", "【教师】"),
+                ("student_activity", "【学生】"),
+            ):
+                value = str(step.get(field_name) or "").strip()
+                if value and not value.startswith(marker):
+                    value = f"{marker}{value}"
+                step[field_name] = value
+
+    @classmethod
+    def _validate_teaching_step_detail(cls, data: Dict[str, Any]) -> None:
+        """Reject sparse core teaching stages so the AI retry can add detail."""
+        steps = data.get("teaching_steps")
+        if not isinstance(steps, list):
+            raise ValueError("teaching_steps缺失，必须生成5个完整教学阶段")
+
+        by_stage = {
+            str(step.get("stage") or "").strip(): step
+            for step in steps
+            if isinstance(step, dict)
+        }
+        missing = [stage for stage in cls._STAGE_DURATIONS if stage not in by_stage]
+        if missing:
+            raise ValueError(f"缺少教学阶段：{'、'.join(missing)}")
+
+        issues: list[str] = []
+        for stage, field_rules in cls._CORE_STAGE_MIN_CHARS.items():
+            step = by_stage[stage]
+            for field_name, minimum in field_rules.items():
+                value = str(step.get(field_name) or "")
+                visible = re.sub(r"\s|【教师】|【学生】", "", value)
+                if len(visible) < minimum:
+                    label = "教师活动" if field_name == "teacher_activity" else "学生活动"
+                    issues.append(f"{stage}{label}仅{len(visible)}字，至少需要{minimum}字")
+        if issues:
+            raise ValueError("；".join(issues))
 
     def _parse_json_response(self, content: str) -> Dict[str, Any]:
         """

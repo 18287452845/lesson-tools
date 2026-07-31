@@ -24,6 +24,7 @@ from ..models.schemas import (
 )
 from .ai_generator import AIGenerator
 from .document_renderer import DocumentRenderer
+from .builtin_template import get_builtin_template_path, require_valid_builtin_template
 
 logger = logging.getLogger(__name__)
 
@@ -249,15 +250,8 @@ class LessonPlanService:
         if not lesson_plan:
             raise ValueError(f"Lesson plan {lesson_plan_id} not found")
 
-        # Get template
-        template_row = await db.fetch_one(
-            "SELECT * FROM templates WHERE id = ?",
-            (lesson_plan.template_id,)
-        )
-        if not template_row:
-            raise ValueError(f"Template {lesson_plan.template_id} not found")
-
-        template_path = template_row["file_path"]
+        require_valid_builtin_template(lesson_plan.template_id)
+        template_path = str(get_builtin_template_path())
 
         # Parse input_data and generated_content
         try:
@@ -389,16 +383,10 @@ class LessonPlanService:
 
         db = await get_db()
 
-        # Use the first lesson plan's template
+        # All new and published plans use the immutable Yunlin resource.
         first_plan = lesson_plans[0]
-        template_row = await db.fetch_one(
-            "SELECT * FROM templates WHERE id = ?",
-            (first_plan.template_id,)
-        )
-        if not template_row:
-            raise ValueError(f"Template {first_plan.template_id} not found")
-
-        template_path = template_row["file_path"]
+        require_valid_builtin_template(first_plan.template_id)
+        template_path = str(get_builtin_template_path())
 
         # Prepare combined data
         # For 2 lesson plans per document, we need to combine their data

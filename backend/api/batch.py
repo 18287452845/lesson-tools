@@ -36,6 +36,8 @@ from ..models.schemas import (
 from ..services.chapter_splitter import ChapterSplitter
 from ..services.batch_processor import BatchTaskProcessor
 from ..services.background_runner import run_in_background
+from ..services.builtin_template import require_valid_builtin_template
+from ..services.course_plan_renderer import require_valid_course_plan_template
 
 logger = logging.getLogger(__name__)
 
@@ -486,6 +488,9 @@ async def create_batch_task(request: BatchTaskCreateRequest):
     to check progress via GET /batch/tasks/{task_id}.
     """
     try:
+        require_valid_builtin_template(request.template_id)
+        for artifact_type in request.supplemental_artifacts:
+            require_valid_course_plan_template(artifact_type)
         task_id = str(uuid4())
         expected_count = max(1, request.total_hours // request.hours_per_lesson)
         total_count = len(request.chapters)
@@ -524,10 +529,16 @@ async def create_batch_task(request: BatchTaskCreateRequest):
         if request.class_ids:
             placeholders = ",".join(["?"] * len(request.class_ids))
             class_rows = await db.fetch_all(
-                f"SELECT name FROM classes WHERE id IN ({placeholders})",
+                f"SELECT id, name FROM classes WHERE id IN ({placeholders})",
                 tuple(request.class_ids)
             )
-            class_names = [row["name"] for row in class_rows]
+            class_name_by_id = {row["id"]: row["name"] for row in class_rows}
+            missing_class_ids = [
+                class_id for class_id in request.class_ids if class_id not in class_name_by_id
+            ]
+            if missing_class_ids:
+                raise HTTPException(status_code=400, detail="选择的授课班级不存在或已被删除")
+            class_names = [class_name_by_id[class_id] for class_id in request.class_ids]
 
         # Create task record in database
         await db.execute(
@@ -536,8 +547,10 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 id, course_name, subject, grade, template_id,
                 total_hours, hours_per_lesson, chapters, start_week, class_ids,
                 location, textbook_name, online_resources, generate_reflection, class_names,
+                supplemental_artifacts, academic_year, semester, teacher_name,
+                plan_date, first_class_date, class_periods,
                 status, total_count, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -555,6 +568,13 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 request.online_resources or "",
                 1 if request.generate_reflection else 0,
                 ",".join(class_names) if class_names else "",
+                json.dumps(request.supplemental_artifacts, ensure_ascii=False),
+                request.academic_year or "",
+                request.semester,
+                request.teacher_name or "",
+                request.plan_date or "",
+                request.first_class_date or "",
+                request.class_periods or "",
                 "pending",
                 total_count,
                 datetime.now().isoformat(),
@@ -583,6 +603,8 @@ async def create_batch_task(request: BatchTaskCreateRequest):
             status="pending",
         )
 
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -620,6 +642,9 @@ async def get_batch_task(task_id: str):
 
         # Convert generate_reflection from INTEGER to boolean
         task_dict["generate_reflection"] = bool(task_dict.get("generate_reflection", 0))
+        task_dict["supplemental_artifacts"] = json.loads(
+            task_dict.get("supplemental_artifacts") or "[]"
+        )
 
         return BatchTask(**task_dict)
 
@@ -682,6 +707,9 @@ async def list_batch_tasks(
 
             # Convert generate_reflection from INTEGER to boolean
             task_dict["generate_reflection"] = bool(task_dict.get("generate_reflection", 0))
+            task_dict["supplemental_artifacts"] = json.loads(
+                task_dict.get("supplemental_artifacts") or "[]"
+            )
 
             tasks.append(BatchTask(**task_dict))
 
@@ -894,6 +922,7 @@ async def create_draft_task(request: DraftTaskCreateRequest):
     and selectively published later.
     """
     try:
+        require_valid_builtin_template(request.template_id)
         task_id = str(uuid4())
         expected_count = max(1, request.total_hours // request.hours_per_lesson)
         total_count = len(request.chapters)
@@ -978,6 +1007,8 @@ async def create_draft_task(request: DraftTaskCreateRequest):
             status="pending",
         )
 
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:

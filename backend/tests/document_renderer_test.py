@@ -14,6 +14,29 @@ def test_clean_text_removes_blank_lines_without_inventing_line_breaks():
     )
 
 
+def test_process_data_adds_role_markers_and_numeric_template_duration():
+    renderer = document_renderer.DocumentRenderer()
+
+    processed = renderer._process_data(
+        {
+            "duration": "2课时",
+            "teaching_steps": [
+                {
+                    "stage": "传授新知",
+                    "duration": "30分钟",
+                    "teacher_activity": "讲解配置原理",
+                    "student_activity": "完成同步操作",
+                    "design_intent": "建立知识与操作的联系",
+                }
+            ],
+        }
+    )
+
+    assert processed["duration"] == "2"
+    assert processed["teaching_steps"][0]["teacher_activity"].startswith("【教师】")
+    assert processed["teaching_steps"][0]["student_activity"].startswith("【学生】")
+
+
 def test_combine_documents_adds_page_break_and_keeps_sectpr_last(
     temp_dir,
     monkeypatch,

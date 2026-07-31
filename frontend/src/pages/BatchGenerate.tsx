@@ -54,6 +54,8 @@ import type {
   CourseChapterTemplate,
   ClassInfo,
   TextbookInfo,
+  FixedTemplateValidation,
+  CoursePlanArtifactType,
 } from '@/types';
 import {
   SUBJECT_OPTIONS,
@@ -67,6 +69,19 @@ const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
 const OUTLINE_INDENT = 2;
+
+const formatLocalDate = (value: Date): string => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const currentDate = new Date();
+const academicYearStart = currentDate.getMonth() >= 7
+  ? currentDate.getFullYear()
+  : currentDate.getFullYear() - 1;
+const defaultAcademicYear = `${academicYearStart}-${academicYearStart + 1}`;
 
 type OutlineNode = {
   title: string;
@@ -116,6 +131,9 @@ const buildOutlineFromTextbook = (chapters: TextbookInfo['chapters']): OutlineNo
 const BatchGenerate: React.FC = () => {
   const navigate = useNavigate();
   const [form] = Form.useForm();
+  const selectedSupplementalArtifacts = (
+    Form.useWatch('supplemental_artifacts', form) || []
+  ) as CoursePlanArtifactType[];
 
   // Step state
   const [currentStep, setCurrentStep] = useState(0);
@@ -134,6 +152,7 @@ const BatchGenerate: React.FC = () => {
   const [cachedTemplates, setCachedTemplates] = useState<CourseChapterTemplate[]>([]);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [textbooks, setTextbooks] = useState<TextbookInfo[]>([]);
+  const [fixedTemplateReports, setFixedTemplateReports] = useState<FixedTemplateValidation[]>([]);
   const [selectedTextbookId, setSelectedTextbookId] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
 
@@ -159,6 +178,9 @@ const BatchGenerate: React.FC = () => {
     loadCachedTemplates();
     loadClasses();
     loadTextbooks();
+    templateApi.validateAllTemplates()
+      .then(setFixedTemplateReports)
+      .catch(() => setFixedTemplateReports([]));
   }, []);
 
   // Poll task status in step 3
@@ -422,6 +444,15 @@ const BatchGenerate: React.FC = () => {
       return;
     }
 
+    const requestedPlans = (values.supplemental_artifacts || []) as CoursePlanArtifactType[];
+    const invalidPlanTemplate = fixedTemplateReports.find(
+      (report) => requestedPlans.includes(report.type as CoursePlanArtifactType) && !report.is_valid,
+    );
+    if (taskType === 'normal' && invalidPlanTemplate) {
+      message.error(`${invalidPlanTemplate.name}校验失败，请先恢复固定模板资源`);
+      return;
+    }
+
     setLoading(true);
     try {
       if (taskType === 'draft') {
@@ -461,6 +492,13 @@ const BatchGenerate: React.FC = () => {
           online_resources: values.online_resources,
           additional_requirements: values.additional_requirements,
           generate_reflection: values.generate_reflection ?? false,
+          supplemental_artifacts: values.supplemental_artifacts ?? [],
+          academic_year: values.academic_year,
+          semester: values.semester,
+          teacher_name: values.teacher_name,
+          plan_date: values.plan_date,
+          first_class_date: values.first_class_date,
+          class_periods: values.class_periods,
         };
 
         const response = await batchApi.createBatchTask(request);
@@ -482,6 +520,7 @@ const BatchGenerate: React.FC = () => {
       topic: '',
       content_summary: '',
       key_concepts: [],
+      experiment_name: '',
     };
     const nextChapters = [...chapters, newChapter];
     const nextOutline = [...chapterOutline, []];
@@ -612,6 +651,23 @@ const BatchGenerate: React.FC = () => {
       ),
     },
     {
+      title: '实验项目（可选）',
+      dataIndex: 'experiment_name',
+      key: 'experiment_name',
+      width: 220,
+      render: (text: string | undefined, _record: ChapterInfo, index: number) => (
+        <Input
+          value={text}
+          placeholder="留空则按每周课题自动生成"
+          onChange={(e) => {
+            const newChapters = [...chapters];
+            newChapters[index].experiment_name = e.target.value;
+            setChapters(newChapters);
+          }}
+        />
+      ),
+    },
+    {
       title: '操作',
       key: 'actions',
       width: 150,
@@ -712,6 +768,10 @@ const BatchGenerate: React.FC = () => {
             initialValues={{
               total_hours: 64,
               hours_per_lesson: 2,
+              supplemental_artifacts: [],
+              academic_year: defaultAcademicYear,
+              semester: 2,
+              plan_date: formatLocalDate(currentDate),
             }}
             preserve={true}
           >
@@ -966,6 +1026,12 @@ const BatchGenerate: React.FC = () => {
                     name="class_ids"
                     label="授课班级"
                     tooltip="可多选，留空则不显示授课班级"
+                    rules={[
+                      {
+                        required: selectedSupplementalArtifacts.length > 0,
+                        message: '同步生成授课/实验计划时必须选择班级',
+                      },
+                    ]}
                   >
                     <Select
                       mode="multiple"
@@ -987,6 +1053,12 @@ const BatchGenerate: React.FC = () => {
                     name="location"
                     label="授课地点"
                     tooltip="所有教案共用同一地点"
+                    rules={[
+                      {
+                        required: selectedSupplementalArtifacts.includes('experiment_plan'),
+                        message: '生成实验计划时请填写实验室/授课地点',
+                      },
+                    ]}
                   >
                     <Input
                       placeholder="例如：教学楼301教室"
@@ -1034,6 +1106,105 @@ const BatchGenerate: React.FC = () => {
                   </Form.Item>
                 </Col>
               </Row>
+            </Card>
+
+            <Card
+              title={
+                <Space>
+                  <FileTextOutlined />
+                  <span>同步生成学期计划（可选）</span>
+                </Space>
+              }
+              style={{ marginBottom: 16 }}
+            >
+              <Form.Item
+                name="supplemental_artifacts"
+                label="固定格式计划"
+                extra="授课计划按课程生成 1 份并合并班级；实验计划按课程与班级分别生成。"
+              >
+                <Checkbox.Group
+                  disabled={taskType === 'draft'}
+                  options={[
+                    { label: '教师授课计划表', value: 'teaching_plan' },
+                    { label: '课程实验计划表', value: 'experiment_plan' },
+                  ]}
+                />
+              </Form.Item>
+
+              {selectedSupplementalArtifacts.length > 0 && (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="计划将与批量教案一起打包"
+                    description="系统以每两份教案作为一周课表：授课计划最多 16 周，实验计划最多 18 条。实验项目可在下一步逐项填写；全部留空时按课题自动生成。"
+                    style={{ marginBottom: 16 }}
+                  />
+                  <Space wrap style={{ marginBottom: 16 }}>
+                    {selectedSupplementalArtifacts.map((type) => {
+                      const report = fixedTemplateReports.find((item) => item.type === type);
+                      const label = type === 'teaching_plan' ? '云林授课计划模板' : '云林实验计划模板';
+                      return (
+                        <Tag key={type} color={report?.is_valid ? 'success' : report ? 'error' : 'default'}>
+                          {label} · {report?.is_valid ? '校验通过' : report ? '校验失败' : '生成前校验'}
+                        </Tag>
+                      );
+                    })}
+                  </Space>
+                  <Row gutter={16}>
+                    <Col xs={24} sm={12} lg={6}>
+                      <Form.Item
+                        name="academic_year"
+                        label="学年"
+                        rules={[
+                          { required: true, message: '请输入学年' },
+                          { pattern: /^\d{4}-\d{4}$/, message: '格式示例：2025-2026' },
+                        ]}
+                      >
+                        <Input placeholder="2025-2026" />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12} lg={6}>
+                      <Form.Item name="semester" label="学期" rules={[{ required: true }]}>
+                        <Select options={[{ label: '第1学期', value: 1 }, { label: '第2学期', value: 2 }]} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12} lg={6}>
+                      <Form.Item name="teacher_name" label="教师姓名" rules={[{ required: true, message: '请输入教师姓名' }]}>
+                        <Input placeholder="例如：李阳" />
+                      </Form.Item>
+                    </Col>
+                    {selectedSupplementalArtifacts.includes('experiment_plan') && (
+                      <>
+                        <Col xs={24} sm={12} lg={6}>
+                          <Form.Item name="plan_date" label="制表日期" rules={[{ required: true, message: '请选择制表日期' }]}>
+                            <Input type="date" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Form.Item
+                            name="first_class_date"
+                            label="首课日期"
+                            tooltip="系统按每周一次自动推算后续实验日期"
+                            rules={[{ required: true, message: '请选择首课日期' }]}
+                          >
+                            <Input type="date" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                          <Form.Item
+                            name="class_periods"
+                            label="上课节次"
+                            rules={[{ required: true, message: '请输入上课节次' }]}
+                          >
+                            <Input placeholder="例如：3-4" />
+                          </Form.Item>
+                        </Col>
+                      </>
+                    )}
+                  </Row>
+                </>
+              )}
             </Card>
 
             {/* Chapter Content Card */}
@@ -1229,7 +1400,7 @@ const BatchGenerate: React.FC = () => {
             >
               <Alert
                 message="编辑提示"
-                description="可直接修改课题、内容概述和核心概念。使用上移/下移调整顺序，点击删除移除章节。核心概念输入后按回车添加。"
+                description="可直接修改课题、内容概述、核心概念和实验项目。实验项目全部留空时会按每周课题自动生成；只填写部分时，仅填写过的周次进入实验计划。"
                 type="info"
                 showIcon
                 closable
@@ -1256,7 +1427,13 @@ const BatchGenerate: React.FC = () => {
             >
               <Radio.Group
                 value={taskType}
-                onChange={(e) => setTaskType(e.target.value)}
+                onChange={(e) => {
+                  const nextType = e.target.value as 'normal' | 'draft';
+                  setTaskType(nextType);
+                  if (nextType === 'draft' && savedFormValues.supplemental_artifacts?.length) {
+                    message.info('草稿模式不导出文件，因此不会同步生成授课计划或实验计划');
+                  }
+                }}
                 size="large"
               >
                 <Space direction="vertical" size="middle">
@@ -1278,6 +1455,14 @@ const BatchGenerate: React.FC = () => {
                   </Radio>
                 </Space>
               </Radio.Group>
+              {taskType === 'draft' && savedFormValues.supplemental_artifacts?.length > 0 && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="草稿模式仅保存教案内容，已选学期计划不会生成"
+                  style={{ marginTop: 16 }}
+                />
+              )}
             </Card>
 
             {/* Action Buttons */}

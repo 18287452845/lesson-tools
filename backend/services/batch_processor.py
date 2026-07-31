@@ -30,6 +30,8 @@ from ..models.schemas import (
 )
 from .ai_generator import AIGenerator
 from .document_renderer import DocumentRenderer
+from .builtin_template import get_builtin_template_path, require_valid_builtin_template
+from .course_plan_renderer import CoursePlanRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,7 @@ class BatchTaskProcessor:
         self.default_duration = f"{hours_per_lesson}课时"
         self.ai_generator = AIGenerator(provider, api_key, model)
         self.document_renderer = DocumentRenderer()
+        self.course_plan_renderer = CoursePlanRenderer()
 
         # Concurrency settings (with config defaults)
         self.max_concurrent_documents = max_concurrent_documents or settings.batch_max_concurrent_documents
@@ -262,10 +265,17 @@ class BatchTaskProcessor:
                     f"All lesson plans saved as drafts (no documents rendered)."
                 )
             elif generated_files:
+                supplemental_files = self._generate_course_plan_files(
+                    batch_task_id=batch_task_id,
+                    task=task,
+                    chapters=chapters,
+                )
+                generated_files.extend(supplemental_files)
                 zip_path = await self._pack_zip(
                     batch_task_id=batch_task_id,
                     course_name=task["course_name"],
                     files=generated_files,
+                    includes_course_plans=bool(supplemental_files),
                 )
 
                 # Update task with ZIP path and mark as completed
@@ -299,6 +309,68 @@ class BatchTaskProcessor:
                 "failed",
                 error_message=str(e),
             )
+
+    def _generate_course_plan_files(
+        self,
+        *,
+        batch_task_id: str,
+        task: Dict[str, Any],
+        chapters: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Render selected fixed-format semester plans for the batch ZIP."""
+        selected = json.loads(task.get("supplemental_artifacts") or "[]")
+        if not selected:
+            return []
+
+        class_names = [
+            value.strip()
+            for value in str(task.get("class_names") or "").split(",")
+            if value.strip()
+        ]
+        common = {
+            "batch_task_id": batch_task_id,
+            "course_name": task["course_name"],
+            "grade": task["grade"],
+            "class_names": class_names,
+            "academic_year": task.get("academic_year") or "",
+            "semester": int(task.get("semester") or 0),
+            "teacher_name": task.get("teacher_name") or "",
+            "hours_per_lesson": int(task.get("hours_per_lesson") or self.hours_per_lesson),
+            "start_week": int(task.get("start_week") or 1),
+            "chapters": chapters,
+            "location": task.get("location") or "",
+        }
+        files: List[Dict[str, Any]] = []
+
+        if "teaching_plan" in selected:
+            path = self.course_plan_renderer.render_teaching_plan(
+                **common,
+                total_hours=int(task["total_hours"]),
+            )
+            files.append(
+                {
+                    "file_path": path,
+                    "archive_name": Path(path).name.removeprefix(f"{batch_task_id}_"),
+                    "topics": ["教师授课计划表"],
+                }
+            )
+
+        if "experiment_plan" in selected:
+            paths = self.course_plan_renderer.render_experiment_plans(
+                **common,
+                plan_date=task.get("plan_date") or "",
+                first_class_date=task.get("first_class_date") or "",
+                class_periods=task.get("class_periods") or "",
+            )
+            files.extend(
+                {
+                    "file_path": path,
+                    "archive_name": Path(path).name.removeprefix(f"{batch_task_id}_"),
+                    "topics": ["课程实验计划表"],
+                }
+                for path in paths
+            )
+        return files
 
     def _group_lessons_by_document(
         self,
@@ -365,16 +437,9 @@ class BatchTaskProcessor:
         # Calculate week number (each document = 1 week)
         week_number = start_week + (document_number - 1)
 
-        # Get template file path from database
+        require_valid_builtin_template(template_id)
+        template_path = str(get_builtin_template_path())
         db = await get_db()
-        template_row = await db.fetch_one(
-            "SELECT file_path FROM templates WHERE id = ?",
-            (template_id,)
-        )
-        if not template_row:
-            raise ValueError(f"Template not found: {template_id}")
-
-        template_path = template_row["file_path"]
 
         # Create semaphore for lesson-level concurrency
         lesson_semaphore = asyncio.Semaphore(self.max_concurrent_lessons)
@@ -629,16 +694,9 @@ class BatchTaskProcessor:
         """
         # Calculate week number (each document = 1 week)
         week_number = start_week + (document_number - 1)
-        # Get template file path from database
+        require_valid_builtin_template(template_id)
+        template_path = str(get_builtin_template_path())
         db = await get_db()
-        template_row = await db.fetch_one(
-            "SELECT file_path FROM templates WHERE id = ?",
-            (template_id,)
-        )
-        if not template_row:
-            raise ValueError(f"Template not found: {template_id}")
-
-        template_path = template_row["file_path"]
 
         # Generate content for each chapter
         lesson_plans_data = []
@@ -755,6 +813,7 @@ class BatchTaskProcessor:
         batch_task_id: str,
         course_name: str,
         files: List[Dict[str, Any]],
+        includes_course_plans: bool = False,
     ) -> str:
         """
         Package all generated files into a ZIP archive.
@@ -768,7 +827,8 @@ class BatchTaskProcessor:
             Path to the generated ZIP file
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        zip_filename = f"{course_name}_批量教案_{timestamp}.zip"
+        package_name = "备课资料" if includes_course_plans else "批量教案"
+        zip_filename = f"{course_name}_{package_name}_{timestamp}.zip"
         zip_path = Path(settings.output_dir) / zip_filename
 
         logger.info(f"Creating ZIP archive: {zip_path}")
@@ -778,7 +838,7 @@ class BatchTaskProcessor:
                 file_path = Path(file_info["file_path"])
                 if file_path.exists():
                     # Use the original filename which already has the format
-                    arcname = file_path.name
+                    arcname = file_info.get("archive_name") or file_path.name
                     zipf.write(file_path, arcname=arcname)
                     logger.debug(f"Added to ZIP: {arcname}")
                 else:

@@ -47,6 +47,7 @@ npm-debug.log*
 # Build outputs
 *.docx
 !backend/templates/*.docx
+!backend/resources/templates/*.docx
 !storage/templates/*.docx
 !storage/competition_templates/*.docx
 
@@ -70,6 +71,7 @@ storage/*.db
 *.tmp
 *.temp
 nul
+.codex_tmp/
 
 # Test coverage
 .coverage

@@ -24,16 +24,12 @@ services:
       - AI_MAX_TOKENS_BATCH=${AI_MAX_TOKENS_BATCH:-0}
       - AI_TEMPERATURE=${AI_TEMPERATURE:-0.7}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
-      - ONLYOFFICE_DOCS_URL=${ONLYOFFICE_DOCS_URL:-}
-      - ONLYOFFICE_JWT_SECRET=${ONLYOFFICE_JWT_SECRET:-}
 
       # Database
       - DATABASE_URL=sqlite:///storage/database.db
     volumes:
       # Persist database and storage
       - ./storage:/app/storage
-      # Mount templates directory
-      - ./storage/templates:/app/storage/templates
       # Mount code for development (comment out for production)
       # - ./backend:/app/backend
     networks:

@@ -4,7 +4,7 @@ Pydantic models for request/response validation.
 import json
 from datetime import datetime
 from typing import Optional, Dict, List, Any, Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from uuid import uuid4
 
 
@@ -423,6 +423,54 @@ class LessonPlanResponse(BaseModel):
     created_at: str
 
 
+PreparationArtifactType = Literal["lesson_plan", "handout", "presentation"]
+
+
+class PreparationGenerateRequest(BaseModel):
+    """Create one or more teaching-preparation artifacts from shared inputs."""
+
+    subject: str = Field(..., min_length=1, max_length=100)
+    grade: str = Field(..., min_length=1, max_length=100)
+    topic: str = Field(..., min_length=1, max_length=200)
+    duration: str = Field(..., min_length=1, max_length=50)
+    artifact_types: List[PreparationArtifactType] = Field(min_length=1)
+    textbook_name: Optional[str] = None
+    location: Optional[str] = None
+    online_resources: Optional[str] = None
+    unit_name: Optional[str] = None
+    prior_knowledge: Optional[str] = None
+    focus_areas: Optional[str] = None
+    teaching_style: Optional[str] = None
+    additional_requirements: Optional[str] = None
+    class_ids: List[str] = Field(default_factory=list)
+    generate_reflection: bool = False
+
+    @field_validator("artifact_types")
+    @classmethod
+    def unique_artifact_types(
+        cls, value: List[PreparationArtifactType]
+    ) -> List[PreparationArtifactType]:
+        return list(dict.fromkeys(value))
+
+
+class PreparationArtifact(BaseModel):
+    type: PreparationArtifactType
+    label: str
+    filename: str
+    download_url: str
+    media_type: str
+
+
+class PreparationResponse(BaseModel):
+    id: str
+    title: str
+    template_id: str
+    template_name: str
+    content: GeneratedContent
+    artifacts: List[PreparationArtifact]
+    created_at: str
+
+
 class FieldRegenerateRequest(BaseModel):
     """Request to regenerate a single field."""
     lesson_plan_id: str
@@ -536,6 +584,11 @@ class ChapterInfo(BaseModel):
     topic: str = Field(..., description="课题/章节标题")
     content_summary: str = Field(default="", description="内容概述")
     key_concepts: List[str] = Field(default_factory=list, description="核心概念")
+    experiment_name: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="实验项目名称；全部留空时按每周课题自动生成",
+    )
 
 
 class ChapterSplitRequest(BaseModel):
@@ -583,6 +636,84 @@ class BatchTaskCreateRequest(BaseModel):
     online_resources: Optional[str] = Field(None, description="网络资源")
     additional_requirements: Optional[str] = None
     generate_reflection: bool = Field(default=False, description="是否生成教学反思")
+    supplemental_artifacts: List[Literal["teaching_plan", "experiment_plan"]] = Field(
+        default_factory=list,
+        description="与批量教案同步生成的学期计划",
+    )
+    academic_year: Optional[str] = Field(
+        None,
+        pattern=r"^\d{4}-\d{4}$",
+        description="学年，如 2025-2026",
+    )
+    semester: Optional[Literal[1, 2]] = None
+    teacher_name: Optional[str] = Field(None, min_length=1, max_length=50)
+    plan_date: Optional[str] = Field(None, description="制表日期，YYYY-MM-DD")
+    first_class_date: Optional[str] = Field(None, description="首课日期，YYYY-MM-DD")
+    class_periods: Optional[str] = Field(None, max_length=30, description="上课节次，如 3-4")
+
+    @field_validator("supplemental_artifacts")
+    @classmethod
+    def unique_supplemental_artifacts(
+        cls, value: List[Literal["teaching_plan", "experiment_plan"]]
+    ) -> List[Literal["teaching_plan", "experiment_plan"]]:
+        return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def validate_supplemental_plan_inputs(self):
+        if not self.supplemental_artifacts:
+            return self
+
+        missing = [
+            label
+            for field_name, label in (
+                ("academic_year", "学年"),
+                ("semester", "学期"),
+                ("teacher_name", "教师姓名"),
+            )
+            if not getattr(self, field_name)
+        ]
+        if not self.class_ids:
+            missing.append("授课班级")
+        if "experiment_plan" in self.supplemental_artifacts:
+            if not self.first_class_date:
+                missing.append("首课日期")
+            if not self.class_periods:
+                missing.append("上课节次")
+            if not self.location:
+                missing.append("实验室/授课地点")
+            if not self.plan_date:
+                missing.append("制表日期")
+        if missing:
+            raise ValueError("同步生成学期计划还需填写：" + "、".join(missing))
+
+        for field_name, label in (("plan_date", "制表日期"), ("first_class_date", "首课日期")):
+            value = getattr(self, field_name)
+            if not value:
+                continue
+            try:
+                datetime.strptime(value, "%Y-%m-%d")
+            except ValueError as exc:
+                raise ValueError(f"{label}必须是 YYYY-MM-DD 格式") from exc
+
+        week_count = (len(self.chapters) + 1) // 2
+        if "teaching_plan" in self.supplemental_artifacts and week_count > 16:
+            raise ValueError(f"授课计划固定模板最多 16 周，当前为 {week_count} 周")
+
+        if "experiment_plan" in self.supplemental_artifacts:
+            has_explicit = any(chapter.experiment_name for chapter in self.chapters)
+            if has_explicit:
+                experiment_count = sum(
+                    1
+                    for index in range(0, len(self.chapters), 2)
+                    if any(chapter.experiment_name for chapter in self.chapters[index:index + 2])
+                )
+            else:
+                experiment_count = week_count
+            if experiment_count > 18:
+                raise ValueError(
+                    f"实验计划固定模板最多 18 条，当前为 {experiment_count} 条"
+                )
+        return self
 
 
 class BatchTaskCreateResponse(BaseModel):
@@ -602,12 +733,21 @@ class BatchTask(BaseModel):
     hours_per_lesson: int = 2
     chapters: List[ChapterInfo]
     start_week: int = 1
-    class_ids: List[str] = []
+    class_ids: List[str] = Field(default_factory=list)
     location: Optional[str] = None
     textbook_name: Optional[str] = None
     online_resources: Optional[str] = None
     generate_reflection: bool = False
     class_names: Optional[str] = None
+    supplemental_artifacts: List[Literal["teaching_plan", "experiment_plan"]] = Field(
+        default_factory=list
+    )
+    academic_year: Optional[str] = None
+    semester: Optional[int] = None
+    teacher_name: Optional[str] = None
+    plan_date: Optional[str] = None
+    first_class_date: Optional[str] = None
+    class_periods: Optional[str] = None
     status: Literal["pending", "processing", "completed", "failed", "cancelled"]
     total_count: int
     completed_count: int

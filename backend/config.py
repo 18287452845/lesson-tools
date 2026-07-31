@@ -3,7 +3,7 @@ Configuration management for the lesson plan tool.
 """
 import os
 from pathlib import Path
-from typing import Optional
+from typing import ClassVar, Optional
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -46,15 +46,19 @@ class Settings(BaseSettings):
     # Paths
     base_dir: Path = Path(__file__).parent.parent
     storage_dir: Path = base_dir / "storage"
-    template_dir: Path = storage_dir / "templates"
+    builtin_template_path: ClassVar[Path] = (
+        base_dir / "backend" / "resources" / "templates" / "yunlin_lesson_plan.docx"
+    )
+    teaching_plan_template_path: ClassVar[Path] = (
+        base_dir / "backend" / "resources" / "templates" / "yunlin_teaching_plan.docx"
+    )
+    experiment_plan_template_path: ClassVar[Path] = (
+        base_dir / "backend" / "resources" / "templates" / "yunlin_experiment_plan.docx"
+    )
     upload_dir: Path = storage_dir / "uploads"
     output_dir: Path = storage_dir / "outputs"
     database_path: str = ""
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "")
-
-    # OnlyOffice Document Server
-    onlyoffice_docs_url: str = os.getenv("ONLYOFFICE_DOCS_URL", "")
-    onlyoffice_jwt_secret: Optional[str] = os.getenv("ONLYOFFICE_JWT_SECRET")
 
     # AI Settings
     # 0 means "do not send max_tokens"; DeepSeek then applies the model/API limit.
@@ -102,12 +106,12 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.database_path = self._resolve_database_path()
         # Ensure directories exist
-        self.template_dir.mkdir(parents=True, exist_ok=True)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 

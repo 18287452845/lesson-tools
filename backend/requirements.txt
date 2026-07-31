@@ -1,6 +1,7 @@
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 python-docx>=1.1.0
+python-pptx>=1.0.0
 docxtpl>=0.16.7
 anthropic>=0.18.0
 python-multipart>=0.0.6
@@ -14,10 +15,3 @@ pytest-cov>=4.1.0
 pytest-mock>=3.12.0
 pytest-timeout>=2.2.0
 httpx>=0.26.0
-
-# 模板在线编辑功能依赖
-mammoth>=1.6.0
-htmldocx>=0.0.6
-beautifulsoup4>=4.12.0
-lxml>=4.9.0
-PyJWT>=2.8.0

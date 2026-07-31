@@ -29,11 +29,31 @@ export interface TemplateInfo {
   updated_at: string;
 }
 
-export interface OnlyOfficeEditorConfig {
-  config: Record<string, any>;
-  token?: string | null;
-  documentServerUrl: string;
-  apiJsUrl: string;
+export interface TemplateValidation {
+  template_id: string;
+  name: string;
+  is_valid: boolean;
+  errors: string[];
+  warnings: string[];
+  required_fields: string[];
+  variables: string[];
+  field_count: number;
+  file_size: number;
+  sha256: string;
+  checked_at: string;
+}
+
+export interface FixedTemplateValidation {
+  template_id: string;
+  type: 'lesson_plan' | 'teaching_plan' | 'experiment_plan';
+  name: string;
+  is_valid: boolean;
+  errors: string[];
+  warnings: string[];
+  file_size: number;
+  sha256: string;
+  checked_at: string;
+  capacity?: number;
 }
 
 // ============================================================================
@@ -97,6 +117,44 @@ export interface LessonPlanResponse {
   input: LessonPlanInput;
   content: GeneratedContent;
   status: string;
+  created_at: string;
+}
+
+export type PreparationArtifactType = 'lesson_plan' | 'handout' | 'presentation';
+
+export interface PreparationGenerateRequest {
+  subject: string;
+  grade: string;
+  topic: string;
+  duration: string;
+  artifact_types: PreparationArtifactType[];
+  textbook_name?: string;
+  location?: string;
+  online_resources?: string;
+  unit_name?: string;
+  prior_knowledge?: string;
+  focus_areas?: string;
+  teaching_style?: string;
+  additional_requirements?: string;
+  class_ids?: string[];
+  generate_reflection?: boolean;
+}
+
+export interface PreparationArtifact {
+  type: PreparationArtifactType;
+  label: string;
+  filename: string;
+  download_url: string;
+  media_type: string;
+}
+
+export interface PreparationResponse {
+  id: string;
+  title: string;
+  template_id: string;
+  template_name: string;
+  content: GeneratedContent;
+  artifacts: PreparationArtifact[];
   created_at: string;
 }
 
@@ -319,7 +377,10 @@ export interface ChapterInfo {
   topic: string;
   content_summary: string;
   key_concepts: string[];
+  experiment_name?: string;
 }
+
+export type CoursePlanArtifactType = 'teaching_plan' | 'experiment_plan';
 
 export interface ChapterSplitRequest {
   course_name: string;
@@ -362,6 +423,13 @@ export interface BatchTaskCreateRequest {
   online_resources?: string;
   additional_requirements?: string;
   generate_reflection?: boolean;
+  supplemental_artifacts?: CoursePlanArtifactType[];
+  academic_year?: string;
+  semester?: 1 | 2;
+  teacher_name?: string;
+  plan_date?: string;
+  first_class_date?: string;
+  class_periods?: string;
 }
 
 export interface BatchTaskCreateResponse {
@@ -385,6 +453,17 @@ export interface BatchTask {
   total_hours: number;
   hours_per_lesson: number;
   chapters: ChapterInfo[];
+  start_week?: number;
+  class_ids?: string[];
+  location?: string;
+  class_names?: string;
+  supplemental_artifacts?: CoursePlanArtifactType[];
+  academic_year?: string;
+  semester?: number;
+  teacher_name?: string;
+  plan_date?: string;
+  first_class_date?: string;
+  class_periods?: string;
   status: BatchTaskStatus;
   total_count: number;
   completed_count: number;

@@ -22,6 +22,11 @@ from ..models.schemas import (
 )
 from ..services.ai_generator import AIGenerator
 from ..services.document_renderer import DocumentRenderer
+from ..services.builtin_template import (
+    BUILTIN_TEMPLATE_ID,
+    get_builtin_template_path,
+    require_valid_builtin_template,
+)
 from ..utils.ai_config import get_ai_generator
 
 router = APIRouter(prefix="/generate", tags=["generate"])
@@ -53,10 +58,15 @@ async def generate_lesson_plan(request: LessonPlanGenerateRequest):
     """
     Generate a complete lesson plan based on input data.
     """
-    # Verify template exists
+    try:
+        require_valid_builtin_template(request.template_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Load metadata for the one supported template.
     template = await db.fetch_one(
         "SELECT * FROM templates WHERE id = ?",
-        (request.template_id,),
+        (BUILTIN_TEMPLATE_ID,),
     )
 
     if not template:
@@ -139,10 +149,16 @@ async def generate_lesson_plan_stream(request: LessonPlanGenerateRequest):
             yield f"data: {json.dumps({'type': 'status', 'message': '正在验证模板...'})}\n\n"
             await asyncio.sleep(0.1)
 
-            # Verify template exists
+            # Enforce and validate the fixed Yunlin template.
+            try:
+                require_valid_builtin_template(request.template_id)
+            except ValueError as exc:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
+                return
+
             template = await db.fetch_one(
                 "SELECT * FROM templates WHERE id = ?",
-                (request.template_id,),
+                (BUILTIN_TEMPLATE_ID,),
             )
 
             if not template:
@@ -363,14 +379,10 @@ async def export_lesson_plan(lesson_plan_id: str):
     if not row:
         raise HTTPException(status_code=404, detail="Lesson plan not found")
 
-    # Get template
-    template = await db.fetch_one(
-        "SELECT * FROM templates WHERE id = ?",
-        (row["template_id"],),
-    )
-
-    if not template:
-        raise HTTPException(status_code=404, detail="Template not found")
+    try:
+        require_valid_builtin_template(row["template_id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Use final content if available, otherwise use generated
     content_data = row["final_content"] or row["generated_content"]
@@ -422,7 +434,9 @@ async def export_lesson_plan(lesson_plan_id: str):
     # Render document
     try:
         renderer = DocumentRenderer()
-        output_path = renderer.render_lesson_plan(template["file_path"], render_data)
+        output_path = renderer.render_lesson_plan(
+            str(get_builtin_template_path()), render_data
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Document rendering failed: {e}")
 
