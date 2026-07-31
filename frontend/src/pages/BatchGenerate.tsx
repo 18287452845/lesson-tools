@@ -152,6 +152,7 @@ const BatchGenerate: React.FC = () => {
   const selectedSupplementalArtifacts = (
     Form.useWatch('supplemental_artifacts', form) || []
   ) as CoursePlanArtifactType[];
+  const selectedMajors = cleanMultiValues(Form.useWatch('majors', form) || []);
 
   // Step state
   const [currentStep, setCurrentStep] = useState(0);
@@ -365,9 +366,22 @@ const BatchGenerate: React.FC = () => {
     const locations = cleanMultiValues(values.locations);
     const subject = majors.join('，');
     const location = locations.join('，');
+    const majorClasses = majors.map((major) => ({
+      major,
+      class_numbers: Array.from(new Set(
+        (values.class_numbers_by_major?.[major] || []).map(Number),
+      )),
+    }));
 
     // Save normalized form values before switching step.
-    setSavedFormValues({ ...values, majors, locations, subject, location });
+    setSavedFormValues({
+      ...values,
+      majors,
+      locations,
+      subject,
+      location,
+      major_classes: majorClasses,
+    });
 
     const request: ChapterSplitRequest = {
       course_name: values.course_name,
@@ -432,7 +446,11 @@ const BatchGenerate: React.FC = () => {
       return;
     }
 
-    if (!values.course_name || !values.subject || !values.grade || !values.class_numbers?.length) {
+    const hasCompleteMajorClasses = values.major_classes?.length > 0
+      && values.major_classes.every((item: { class_numbers?: number[] }) => (
+        item.class_numbers?.length
+      ));
+    if (!values.course_name || !values.subject || !values.grade || !hasCompleteMajorClasses) {
       message.error('请填写完整的课程信息');
       return;
     }
@@ -477,8 +495,7 @@ const BatchGenerate: React.FC = () => {
           total_hours: values.total_hours,
           hours_per_lesson: values.hours_per_lesson ?? 2,
           chapters,
-          majors: values.majors,
-          class_numbers: values.class_numbers,
+          major_classes: values.major_classes,
           textbook_name: values.textbook_name,
           location: values.location,
           locations: values.locations,
@@ -501,8 +518,7 @@ const BatchGenerate: React.FC = () => {
           hours_per_lesson: values.hours_per_lesson ?? 2,
           chapters,
           start_week: values.start_week ?? 1,
-          majors: values.majors,
-          class_numbers: values.class_numbers,
+          major_classes: values.major_classes,
           locations: values.locations,
           location: values.location,
           textbook_name: values.textbook_name,
@@ -1043,26 +1059,28 @@ const BatchGenerate: React.FC = () => {
               style={{ marginBottom: 16 }}
             >
               <Row gutter={16}>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    name="class_numbers"
-                    label="班级"
-                    tooltip="可多选，班级名称由年级、专业和班号自动组合"
-                    rules={[{ required: true, message: '请至少选择一个班级' }]}
-                  >
-                    <Select
-                      mode="multiple"
-                      placeholder="选择 1-5 班（可多选）"
-                      size="large"
-                      options={CLASS_NUMBER_OPTIONS.map((number) => ({
-                        label: `${number}班`,
-                        value: number,
-                      }))}
-                      allowClear
-                      maxTagCount="responsive"
-                    />
-                  </Form.Item>
-                </Col>
+                {selectedMajors.map((major) => (
+                  <Col xs={24} sm={12} key={major}>
+                    <Form.Item
+                      name={['class_numbers_by_major', major]}
+                      label={`${major}班级`}
+                      tooltip="每个专业独立选择实际开设的班级"
+                      rules={[{ required: true, message: `请选择${major}的班级` }]}
+                    >
+                      <Select
+                        mode="multiple"
+                        placeholder={`选择${major}的 1-5 班`}
+                        size="large"
+                        options={CLASS_NUMBER_OPTIONS.map((number) => ({
+                          label: `${number}班`,
+                          value: number,
+                        }))}
+                        allowClear
+                        maxTagCount="responsive"
+                      />
+                    </Form.Item>
+                  </Col>
+                ))}
 
                 <Col xs={24} sm={12}>
                   <Form.Item

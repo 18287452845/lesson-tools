@@ -408,6 +408,11 @@ export interface ChapterSplitResponse {
   total_lessons: number;
 }
 
+export interface MajorClassSelection {
+  major: string;
+  class_numbers: number[];
+}
+
 export interface BatchTaskCreateRequest {
   course_name: string;
   subject: string;
@@ -418,6 +423,7 @@ export interface BatchTaskCreateRequest {
   chapters: ChapterInfo[];
   start_week?: number;
   class_ids?: string[];
+  major_classes?: MajorClassSelection[];
   majors?: string[];
   class_numbers?: number[];
   location?: string;
@@ -658,6 +664,7 @@ export interface DraftTaskCreateRequest {
   total_hours: number;
   hours_per_lesson?: number;
   chapters: ChapterInfo[];
+  major_classes?: MajorClassSelection[];
   majors?: string[];
   class_numbers?: number[];
   textbook_name?: string;

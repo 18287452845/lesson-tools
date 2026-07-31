@@ -620,6 +620,28 @@ class ChapterSplitResponse(BaseModel):
     total_lessons: int = Field(..., description="教案总数")
 
 
+class MajorClassSelection(BaseModel):
+    """Class numbers selected for one major."""
+    major: str = Field(..., min_length=1, max_length=100, description="专业名称")
+    class_numbers: List[int] = Field(..., min_length=1, description="该专业的班号（1-5班）")
+
+    @field_validator("major")
+    @classmethod
+    def clean_major(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("专业名称不能为空")
+        return cleaned
+
+    @field_validator("class_numbers")
+    @classmethod
+    def validate_class_numbers(cls, value: List[int]) -> List[int]:
+        numbers = list(dict.fromkeys(value))
+        if any(number < 1 or number > 5 for number in numbers):
+            raise ValueError("班级只能选择 1-5 班")
+        return numbers
+
+
 class BatchTaskCreateRequest(BaseModel):
     """Request to create a batch task."""
     course_name: str
@@ -631,6 +653,10 @@ class BatchTaskCreateRequest(BaseModel):
     chapters: List[ChapterInfo]
     start_week: int = Field(default=1, ge=1, description="起始周次")
     class_ids: List[str] = Field(default_factory=list, description="授课班级ID列表")
+    major_classes: List[MajorClassSelection] = Field(
+        default_factory=list,
+        description="各专业独立选择的班号",
+    )
     majors: List[str] = Field(default_factory=list, description="专业列表")
     class_numbers: List[int] = Field(default_factory=list, description="班号列表（1-5班）")
     location: Optional[str] = Field(None, description="授课地点")
@@ -676,12 +702,15 @@ class BatchTaskCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_supplemental_plan_inputs(self):
-        uses_professional_classes = bool(self.majors or self.class_numbers)
+        uses_professional_classes = bool(
+            self.major_classes or self.majors or self.class_numbers
+        )
         if uses_professional_classes:
-            if not self.majors:
-                raise ValueError("请选择至少一个专业")
-            if not self.class_numbers:
-                raise ValueError("请选择至少一个班级")
+            if not self.major_classes:
+                if not self.majors:
+                    raise ValueError("请选择至少一个专业")
+                if not self.class_numbers:
+                    raise ValueError("请选择至少一个班级")
             if not self.grade.endswith("级"):
                 raise ValueError("年级必须为 2022级 至 2035级")
             try:
@@ -703,7 +732,9 @@ class BatchTaskCreateRequest(BaseModel):
             )
             if not getattr(self, field_name)
         ]
-        if not self.class_ids and not (self.majors and self.class_numbers):
+        if not self.class_ids and not self.major_classes and not (
+            self.majors and self.class_numbers
+        ):
             missing.append("授课班级")
         if "experiment_plan" in self.supplemental_artifacts:
             if not self.first_class_date:
@@ -918,6 +949,10 @@ class DraftTaskCreateRequest(BaseModel):
     total_hours: int = Field(..., ge=2, description="总课时数")
     hours_per_lesson: int = Field(default=2, ge=1, description="每份教案课时")
     chapters: List[ChapterInfo]
+    major_classes: List[MajorClassSelection] = Field(
+        default_factory=list,
+        description="各专业独立选择的班号",
+    )
     majors: List[str] = Field(default_factory=list, description="专业列表")
     class_numbers: List[int] = Field(default_factory=list, description="班号列表（1-5班）")
     textbook_name: Optional[str] = Field(None, description="教材名称")
@@ -941,12 +976,13 @@ class DraftTaskCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_professional_classes(self):
-        if not self.majors and not self.class_numbers:
+        if not self.major_classes and not self.majors and not self.class_numbers:
             return self
-        if not self.majors:
-            raise ValueError("请选择至少一个专业")
-        if not self.class_numbers:
-            raise ValueError("请选择至少一个班级")
+        if not self.major_classes:
+            if not self.majors:
+                raise ValueError("请选择至少一个专业")
+            if not self.class_numbers:
+                raise ValueError("请选择至少一个班级")
         if not self.grade.endswith("级"):
             raise ValueError("年级必须为 2022级 至 2035级")
         try:

@@ -34,6 +34,23 @@ def build_class_names(
     ]
 
 
+def build_class_names_from_selections(
+    grade: str,
+    selections: Iterable[tuple[str, Sequence[int]]],
+) -> list[str]:
+    """Build concrete names when every major has its own class numbers."""
+    names: list[str] = []
+    for major, class_numbers in selections:
+        clean_major = str(major).strip()
+        if not clean_major:
+            continue
+        for number in dict.fromkeys(int(value) for value in class_numbers):
+            name = f"{grade.strip()}{clean_major}{number}班"
+            if name not in names:
+                names.append(name)
+    return names
+
+
 def join_display_values(values: Iterable[str]) -> str:
     """Join user-facing multi-value text with a Chinese comma."""
     return "，".join(clean_text_values(values))

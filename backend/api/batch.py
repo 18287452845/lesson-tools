@@ -38,7 +38,11 @@ from ..services.batch_processor import BatchTaskProcessor
 from ..services.background_runner import run_in_background
 from ..services.builtin_template import require_valid_builtin_template
 from ..services.course_plan_renderer import require_valid_course_plan_template
-from ..services.batch_context import build_class_names, join_display_values
+from ..services.batch_context import (
+    build_class_names,
+    build_class_names_from_selections,
+    join_display_values,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -527,12 +531,23 @@ async def create_batch_task(request: BatchTaskCreateRequest):
         # Resolve the new professional-class selection, while keeping legacy
         # class_ids requests compatible with existing saved clients.
         db = await get_db()
-        class_names = build_class_names(
-            request.grade,
-            request.majors,
-            request.class_numbers,
-        )
-        normalized_subject = join_display_values(request.majors) or request.subject.strip()
+        if request.major_classes:
+            class_names = build_class_names_from_selections(
+                request.grade,
+                [
+                    (selection.major, selection.class_numbers)
+                    for selection in request.major_classes
+                ],
+            )
+            selected_majors = [selection.major for selection in request.major_classes]
+        else:
+            class_names = build_class_names(
+                request.grade,
+                request.majors,
+                request.class_numbers,
+            )
+            selected_majors = request.majors
+        normalized_subject = join_display_values(selected_majors) or request.subject.strip()
         normalized_location = (
             join_display_values(request.locations)
             or (request.location or "").strip()
@@ -967,12 +982,23 @@ async def create_draft_task(request: DraftTaskCreateRequest):
 
         # Create task record in database with task_type='draft'
         db = await get_db()
-        class_names = build_class_names(
-            request.grade,
-            request.majors,
-            request.class_numbers,
-        )
-        normalized_subject = join_display_values(request.majors) or request.subject.strip()
+        if request.major_classes:
+            class_names = build_class_names_from_selections(
+                request.grade,
+                [
+                    (selection.major, selection.class_numbers)
+                    for selection in request.major_classes
+                ],
+            )
+            selected_majors = [selection.major for selection in request.major_classes]
+        else:
+            class_names = build_class_names(
+                request.grade,
+                request.majors,
+                request.class_numbers,
+            )
+            selected_majors = request.majors
+        normalized_subject = join_display_values(selected_majors) or request.subject.strip()
         normalized_location = (
             join_display_values(request.locations)
             or (request.location or "").strip()
