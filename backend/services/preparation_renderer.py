@@ -272,7 +272,11 @@ class PreparationRenderer:
         bullets: list[str],
         eyebrow: str = "",
     ) -> None:
-        rendered_bullets = [str(bullet)[:360] for bullet in bullets[:7]]
+        rendered_bullets = [
+            chunk
+            for bullet in bullets[:7]
+            for chunk in self._split_presentation_bullet(str(bullet))
+        ]
         pages: list[list[str]] = []
         current_page: list[str] = []
         current_characters = 0
@@ -294,6 +298,45 @@ class PreparationRenderer:
                 page_bullets,
                 eyebrow,
             )
+
+    @staticmethod
+    def _split_presentation_bullet(text: str, max_characters: int = 480) -> list[str]:
+        if len(text) <= max_characters:
+            return [text]
+
+        label = next(
+            (
+                candidate
+                for candidate in (
+                    "教师引导：",
+                    "学习活动：",
+                    "学习提示：",
+                    "重点：",
+                    "难点：",
+                )
+                if text.startswith(candidate)
+            ),
+            "",
+        )
+        remaining = text[len(label) :]
+        chunks: list[str] = []
+        prefix = label
+        continuation_prefix = f"{label[:-1]}（续）：" if label else "续："
+        while remaining:
+            available = max_characters - len(prefix)
+            if len(remaining) <= available:
+                split_at = len(remaining)
+            else:
+                candidate = remaining[:available]
+                split_at = max(candidate.rfind(mark) + 1 for mark in "。；！？")
+                if split_at < available // 2:
+                    split_at = available
+            chunk = remaining[:split_at].strip()
+            if chunk:
+                chunks.append(prefix + chunk)
+            remaining = remaining[split_at:].lstrip()
+            prefix = continuation_prefix
+        return chunks
 
     def _add_bullet_slide_page(
         self,

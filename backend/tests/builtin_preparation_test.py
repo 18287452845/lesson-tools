@@ -127,14 +127,23 @@ def test_presentation_dense_slide_uses_text_autofit():
     renderer = preparation_renderer.PreparationRenderer()
     presentation = Presentation()
     bullets = [
-        "教师引导：" + "讲解配置、验证和故障排查步骤。" * 20,
-        "学习活动：" + "完成配置、记录证据并相互检查。" * 20,
-        "学习提示：" + "对照验收标准复核学习产出。" * 20,
+        "教师引导：" + "讲解配置、验证和故障排查步骤。" * 20 + "教师内容结束",
+        "学习活动：" + "完成配置、记录证据并相互检查。" * 20 + "学生活动结束",
+        "学习提示：" + "对照验收标准复核学习产出。" * 20 + "提示内容结束",
     ]
 
     renderer._add_bullet_slide(presentation, "课堂实践", bullets, eyebrow="30分钟")
 
-    assert len(presentation.slides) == 3
+    assert len(presentation.slides) >= 3
+    rendered_text = "\n".join(
+        shape.text
+        for slide in presentation.slides
+        for shape in slide.shapes
+        if hasattr(shape, "text")
+    )
+    assert "教师内容结束" in rendered_text
+    assert "学生活动结束" in rendered_text
+    assert "提示内容结束" in rendered_text
     for slide in presentation.slides:
         body = next(
             shape.text_frame
