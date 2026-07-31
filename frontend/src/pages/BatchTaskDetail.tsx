@@ -210,7 +210,7 @@ const BatchTaskDetail: React.FC = () => {
         <Descriptions column={2}>
           <Descriptions.Item label="课程名称">{task.course_name}</Descriptions.Item>
           <Descriptions.Item label="状态">{getStatusBadge(task.status)}</Descriptions.Item>
-          <Descriptions.Item label="学科">{task.subject}</Descriptions.Item>
+          <Descriptions.Item label="专业">{task.subject}</Descriptions.Item>
           <Descriptions.Item label="年级">{task.grade}</Descriptions.Item>
           <Descriptions.Item label="总课时">{task.total_hours}课时</Descriptions.Item>
           <Descriptions.Item label="每份教案课时">{task.hours_per_lesson}课时</Descriptions.Item>
@@ -306,7 +306,7 @@ const BatchTaskDetail: React.FC = () => {
                         <Descriptions size="small" column={2}>
                           <Descriptions.Item label="课题">{plan.topic}</Descriptions.Item>
                           <Descriptions.Item label="课时">{inputData.duration}</Descriptions.Item>
-                          <Descriptions.Item label="学科">{plan.subject}</Descriptions.Item>
+                          <Descriptions.Item label="专业">{plan.subject}</Descriptions.Item>
                           <Descriptions.Item label="年级">{plan.grade}</Descriptions.Item>
                           {inputData.textbook_name && (
                             <Descriptions.Item label="教材" span={2}>

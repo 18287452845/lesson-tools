@@ -71,7 +71,7 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
             hours_per_lesson=2,
             start_week=1,
             chapters=chapters,
-            location="慧心楼3516",
+            location="慧心楼3516，实训楼204",
         )
     )
     experiment_paths = [
@@ -103,6 +103,7 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     assert teaching.tables[-1].rows[-1].cells[4].text == "64"
     teaching_text = _all_text(teaching_path)
     assert "24级信息安全技术应用1、2班" in teaching_text
+    assert "慧心楼3516，实训楼204" in teaching_text
     assert "任务32 Windows服务器安全配置" in teaching_text
 
     for path, class_name in zip(

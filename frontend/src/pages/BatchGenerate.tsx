@@ -52,17 +52,12 @@ import type {
   BatchTask,
   TemplateInfo,
   CourseChapterTemplate,
-  ClassInfo,
   TextbookInfo,
   FixedTemplateValidation,
   CoursePlanArtifactType,
 } from '@/types';
-import {
-  SUBJECT_OPTIONS,
-  GRADE_OPTIONS,
-} from '@/types';
 import { batchApi } from '@/services/batchApi';
-import { templateApi, classApi } from '@/services/api';
+import { templateApi } from '@/services/api';
 import { textbookApi } from '@/services/textbookApi';
 
 const { Title, Text, Paragraph } = Typography;
@@ -82,6 +77,29 @@ const academicYearStart = currentDate.getMonth() >= 7
   ? currentDate.getFullYear()
   : currentDate.getFullYear() - 1;
 const defaultAcademicYear = `${academicYearStart}-${academicYearStart + 1}`;
+const BATCH_MAJOR_OPTIONS = [
+  '信息安全技术应用',
+  '计算机网络技术',
+  '计算机应用技术',
+  '软件技术',
+  '大数据技术',
+  '云计算技术应用',
+  '人工智能技术应用',
+  '移动应用开发',
+];
+const BATCH_GRADE_OPTIONS = Array.from({ length: 14 }, (_, index) => `${2022 + index}级`);
+const CLASS_NUMBER_OPTIONS = Array.from({ length: 5 }, (_, index) => index + 1);
+
+const cleanMultiValues = (values: unknown): string[] => {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return Array.from(new Set(values.map((value) => String(value).trim()).filter(Boolean)));
+};
+
+const splitMultiValueText = (value?: string): string[] => (
+  value ? cleanMultiValues(value.split(/[，,]/)) : []
+);
 
 type OutlineNode = {
   title: string;
@@ -150,7 +168,6 @@ const BatchGenerate: React.FC = () => {
   // Step 1: Basic information
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [cachedTemplates, setCachedTemplates] = useState<CourseChapterTemplate[]>([]);
-  const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [textbooks, setTextbooks] = useState<TextbookInfo[]>([]);
   const [fixedTemplateReports, setFixedTemplateReports] = useState<FixedTemplateValidation[]>([]);
   const [selectedTextbookId, setSelectedTextbookId] = useState<string | undefined>();
@@ -176,7 +193,6 @@ const BatchGenerate: React.FC = () => {
   useEffect(() => {
     loadTemplates();
     loadCachedTemplates();
-    loadClasses();
     loadTextbooks();
     templateApi.validateAllTemplates()
       .then(setFixedTemplateReports)
@@ -222,15 +238,6 @@ const BatchGenerate: React.FC = () => {
     }
   };
 
-  const loadClasses = async () => {
-    try {
-      const data = await classApi.listClasses();
-      setClasses(data.classes);
-    } catch (error) {
-      console.error('Failed to load classes:', error);
-    }
-  };
-
   const loadTextbooks = async () => {
     try {
       const data = await textbookApi.listTextbooks({ status: 'active' });
@@ -257,7 +264,7 @@ const BatchGenerate: React.FC = () => {
       // Prepare form values
       const formValues: any = {
         course_name: selected.course_name,
-        subject: selected.subject,
+        majors: splitMultiValueText(selected.subject),
         grade: selected.grade,
         total_hours: selected.total_hours,
         hours_per_lesson: selected.hours_per_lesson ?? 2,
@@ -311,7 +318,7 @@ const BatchGenerate: React.FC = () => {
       // Prepare form values
       const formValues: any = {
         course_name: textbook.name,
-        subject: textbook.subject,
+        majors: splitMultiValueText(textbook.subject),
         grade: textbook.grade,
         textbook_name: textbook.name,
       };
@@ -354,12 +361,17 @@ const BatchGenerate: React.FC = () => {
     const hoursPerLesson = Number(values.hours_per_lesson ?? form.getFieldValue('hours_per_lesson') ?? 2);
     const chaptersInput = values.chapters_input?.trim();
 
-    // Save form values before switching step
-    setSavedFormValues(values);
+    const majors = cleanMultiValues(values.majors);
+    const locations = cleanMultiValues(values.locations);
+    const subject = majors.join('，');
+    const location = locations.join('，');
+
+    // Save normalized form values before switching step.
+    setSavedFormValues({ ...values, majors, locations, subject, location });
 
     const request: ChapterSplitRequest = {
       course_name: values.course_name,
-      subject: values.subject,
+      subject,
       grade: values.grade,
       total_hours: values.total_hours,
       hours_per_lesson: values.hours_per_lesson ?? 2,
@@ -420,7 +432,7 @@ const BatchGenerate: React.FC = () => {
       return;
     }
 
-    if (!values.course_name || !values.subject || !values.grade) {
+    if (!values.course_name || !values.subject || !values.grade || !values.class_numbers?.length) {
       message.error('请填写完整的课程信息');
       return;
     }
@@ -465,8 +477,11 @@ const BatchGenerate: React.FC = () => {
           total_hours: values.total_hours,
           hours_per_lesson: values.hours_per_lesson ?? 2,
           chapters,
+          majors: values.majors,
+          class_numbers: values.class_numbers,
           textbook_name: values.textbook_name,
           location: values.location,
+          locations: values.locations,
           online_resources: values.online_resources,
           generate_reflection: values.generate_reflection ?? false,
         };
@@ -486,7 +501,9 @@ const BatchGenerate: React.FC = () => {
           hours_per_lesson: values.hours_per_lesson ?? 2,
           chapters,
           start_week: values.start_week ?? 1,
-          class_ids: values.class_ids ?? [],
+          majors: values.majors,
+          class_numbers: values.class_numbers,
+          locations: values.locations,
           location: values.location,
           textbook_name: values.textbook_name,
           online_resources: values.online_resources,
@@ -840,16 +857,22 @@ const BatchGenerate: React.FC = () => {
               <Row gutter={16}>
                 <Col xs={24} sm={8}>
                   <Form.Item
-                    name="subject"
-                    label="学科"
-                    rules={[{ required: true, message: '请选择学科' }]}
+                    name="majors"
+                    label="专业"
+                    rules={[{ required: true, message: '请选择至少一个专业' }]}
                   >
                     <Select
-                      placeholder="选择学科"
+                      mode="tags"
+                      placeholder="选择或输入专业（可多选）"
                       size="large"
-                      options={SUBJECT_OPTIONS.map((s) => ({ label: s, value: s }))}
+                      options={BATCH_MAJOR_OPTIONS.map((major) => ({
+                        label: major,
+                        value: major,
+                      }))}
                       showSearch
-                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
+                      allowClear
+                      tokenSeparators={[',', '，']}
+                      maxTagCount="responsive"
                     />
                   </Form.Item>
                 </Col>
@@ -863,9 +886,8 @@ const BatchGenerate: React.FC = () => {
                     <Select
                       placeholder="选择年级"
                       size="large"
-                      options={GRADE_OPTIONS.map((g) => ({ label: g, value: g }))}
+                      options={BATCH_GRADE_OPTIONS.map((g) => ({ label: g, value: g }))}
                       showSearch
-                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
                 </Col>
@@ -1023,36 +1045,30 @@ const BatchGenerate: React.FC = () => {
               <Row gutter={16}>
                 <Col xs={24} sm={12}>
                   <Form.Item
-                    name="class_ids"
-                    label="授课班级"
-                    tooltip="可多选，留空则不显示授课班级"
-                    rules={[
-                      {
-                        required: selectedSupplementalArtifacts.length > 0,
-                        message: '同步生成授课/实验计划时必须选择班级',
-                      },
-                    ]}
+                    name="class_numbers"
+                    label="班级"
+                    tooltip="可多选，班级名称由年级、专业和班号自动组合"
+                    rules={[{ required: true, message: '请至少选择一个班级' }]}
                   >
                     <Select
                       mode="multiple"
-                      placeholder="选择班级（可多选）"
+                      placeholder="选择 1-5 班（可多选）"
                       size="large"
-                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
-                      options={classes.map((c) => ({ label: c.name, value: c.id }))}
+                      options={CLASS_NUMBER_OPTIONS.map((number) => ({
+                        label: `${number}班`,
+                        value: number,
+                      }))}
                       allowClear
-                      showSearch
-                      filterOption={(input, option) =>
-                        (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                      }
+                      maxTagCount="responsive"
                     />
                   </Form.Item>
                 </Col>
 
                 <Col xs={24} sm={12}>
                   <Form.Item
-                    name="location"
+                    name="locations"
                     label="授课地点"
-                    tooltip="所有教案共用同一地点"
+                    tooltip="可输入多个地点，生成时使用逗号分隔"
                     rules={[
                       {
                         required: selectedSupplementalArtifacts.includes('experiment_plan'),
@@ -1060,10 +1076,13 @@ const BatchGenerate: React.FC = () => {
                       },
                     ]}
                   >
-                    <Input
-                      placeholder="例如：教学楼301教室"
+                    <Select
+                      mode="tags"
+                      placeholder="输入地点后按回车，可添加多个"
                       size="large"
-                      disabled={!!selectedCachedTemplateId && chapters.length > 0}
+                      allowClear
+                      tokenSeparators={[',', '，']}
+                      maxTagCount="responsive"
                     />
                   </Form.Item>
                 </Col>

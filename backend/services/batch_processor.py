@@ -32,6 +32,7 @@ from .ai_generator import AIGenerator
 from .document_renderer import DocumentRenderer
 from .builtin_template import get_builtin_template_path, require_valid_builtin_template
 from .course_plan_renderer import CoursePlanRenderer
+from .batch_context import format_class_names
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,11 @@ class BatchTaskProcessor:
                         location=task.get("location"),
                         textbook_name=task.get("textbook_name"),
                         online_resources=task.get("online_resources"),
-                        class_names=task.get("class_names"),
+                        class_names=format_class_names([
+                            value.strip()
+                            for value in str(task.get("class_names") or "").split(",")
+                            if value.strip()
+                        ]),
                         is_draft_mode=is_draft_mode,
                     )
 

@@ -102,7 +102,7 @@ const BatchDownloads: React.FC = () => {
       render: (text: string) => <Text strong>{text}</Text>,
     },
     {
-      title: '学科/年级',
+      title: '专业/年级',
       key: 'subject_grade',
       width: 150,
       render: (_: any, record: BatchTask) => (

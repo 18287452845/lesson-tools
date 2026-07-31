@@ -38,6 +38,7 @@ from ..services.batch_processor import BatchTaskProcessor
 from ..services.background_runner import run_in_background
 from ..services.builtin_template import require_valid_builtin_template
 from ..services.course_plan_renderer import require_valid_course_plan_template
+from ..services.batch_context import build_class_names, join_display_values
 
 logger = logging.getLogger(__name__)
 
@@ -523,10 +524,20 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 detail="Cannot generate more than 100 lesson plans in one batch"
             )
 
-        # Query class names from class_ids
+        # Resolve the new professional-class selection, while keeping legacy
+        # class_ids requests compatible with existing saved clients.
         db = await get_db()
-        class_names = []
-        if request.class_ids:
+        class_names = build_class_names(
+            request.grade,
+            request.majors,
+            request.class_numbers,
+        )
+        normalized_subject = join_display_values(request.majors) or request.subject.strip()
+        normalized_location = (
+            join_display_values(request.locations)
+            or (request.location or "").strip()
+        )
+        if not class_names and request.class_ids:
             placeholders = ",".join(["?"] * len(request.class_ids))
             class_rows = await db.fetch_all(
                 f"SELECT id, name FROM classes WHERE id IN ({placeholders})",
@@ -555,7 +566,7 @@ async def create_batch_task(request: BatchTaskCreateRequest):
             (
                 task_id,
                 request.course_name,
-                request.subject,
+                normalized_subject,
                 request.grade,
                 request.template_id,
                 request.total_hours,
@@ -563,7 +574,7 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 json.dumps([c.model_dump() for c in request.chapters], ensure_ascii=False),
                 request.start_week,
                 json.dumps(request.class_ids, ensure_ascii=False),
-                request.location or "",
+                normalized_location,
                 request.textbook_name or "",
                 request.online_resources or "",
                 1 if request.generate_reflection else 0,
@@ -956,28 +967,39 @@ async def create_draft_task(request: DraftTaskCreateRequest):
 
         # Create task record in database with task_type='draft'
         db = await get_db()
+        class_names = build_class_names(
+            request.grade,
+            request.majors,
+            request.class_numbers,
+        )
+        normalized_subject = join_display_values(request.majors) or request.subject.strip()
+        normalized_location = (
+            join_display_values(request.locations)
+            or (request.location or "").strip()
+        )
         await db.execute(
             """
             INSERT INTO batch_tasks (
                 id, course_name, subject, grade, template_id,
                 total_hours, hours_per_lesson, chapters,
                 textbook_name, location, online_resources, generate_reflection,
-                status, total_count, task_type, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                class_names, status, total_count, task_type, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
                 request.course_name,
-                request.subject,
+                normalized_subject,
                 request.grade,
                 request.template_id,
                 request.total_hours,
                 request.hours_per_lesson,
                 json.dumps([c.model_dump() for c in request.chapters], ensure_ascii=False),
                 request.textbook_name or "",
-                request.location or "",
+                normalized_location,
                 request.online_resources or "",
                 1 if request.generate_reflection else 0,
+                ",".join(class_names) if class_names else "",
                 "pending",
                 total_count,
                 "draft",  # task_type='draft'

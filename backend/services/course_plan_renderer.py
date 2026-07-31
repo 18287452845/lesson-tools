@@ -22,6 +22,7 @@ from docx.enum.section import WD_ORIENT
 from lxml import etree
 
 from ..config import settings
+from .batch_context import format_class_names
 
 
 CoursePlanType = Literal["teaching_plan", "experiment_plan"]
@@ -377,27 +378,7 @@ def _parse_date(value: str | date) -> date:
 
 
 def _format_classes(class_names: Sequence[str]) -> str:
-    names = [str(name).strip() for name in class_names if str(name).strip()]
-    if len(names) <= 1:
-        return "".join(names)
-
-    prefix = names[0]
-    for name in names[1:]:
-        while prefix and not name.startswith(prefix):
-            prefix = prefix[:-1]
-
-    reversed_names = [name[::-1] for name in names]
-    reversed_suffix = reversed_names[0]
-    for name in reversed_names[1:]:
-        while reversed_suffix and not name.startswith(reversed_suffix):
-            reversed_suffix = reversed_suffix[:-1]
-    suffix = reversed_suffix[::-1]
-
-    if prefix and suffix and len(prefix) + len(suffix) < min(map(len, names)):
-        middle = [name[len(prefix):len(name) - len(suffix)] for name in names]
-        if all(middle):
-            return f"{prefix}{'、'.join(middle)}{suffix}"
-    return "、".join(names)
+    return format_class_names(class_names)
 
 
 def _compact_topic_lines(topics: Sequence[str]) -> list[str]:
@@ -523,7 +504,7 @@ class CoursePlanRenderer:
                     str(weekly_hours),
                     _fit_text(focus, 44),
                     _fit_text(difficulty, 40),
-                    (location or "机房") if _display_width(location or "") <= 8 else "机房",
+                    location or "机房",
                     "\n".join(assignment_lines),
                 )
                 for cell, value in zip(cells, values):

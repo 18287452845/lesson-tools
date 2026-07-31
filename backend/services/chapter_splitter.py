@@ -192,7 +192,7 @@ class ChapterSplitter:
 
 ## 课程信息
 - 课程名称：{course_name}
-- 学科：{subject}
+- 专业：{subject}
 - 年级：{grade}
 - 总课时：{total_hours} 课时
 - 每份教案课时：{hours_per_lesson} 课时
@@ -257,7 +257,7 @@ class ChapterSplitter:
 
 ## 课程信息
 - 课程名称：{course_name}
-- 学科：{subject}
+- 专业：{subject}
 - 年级：{grade}
 - 总周数：{total_weeks} 周
 - 每周课时：{hours_per_week} 课时/周
@@ -732,7 +732,7 @@ class ChapterSplitter:
 
         Args:
             course_name: 课程名称
-            subject: 学科
+            subject: 专业
             grade: 年级
             chapters_input: 用户输入的章节标题（每行一个）
             total_weeks: 总周数
@@ -782,7 +782,7 @@ class ChapterSplitter:
 
         Args:
             course_name: 课程名称
-            subject: 学科
+            subject: 专业
             grade: 年级
             chapters_input: 用户输入的章节标题
             total_weeks: 总周数

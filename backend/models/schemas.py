@@ -631,7 +631,10 @@ class BatchTaskCreateRequest(BaseModel):
     chapters: List[ChapterInfo]
     start_week: int = Field(default=1, ge=1, description="起始周次")
     class_ids: List[str] = Field(default_factory=list, description="授课班级ID列表")
+    majors: List[str] = Field(default_factory=list, description="专业列表")
+    class_numbers: List[int] = Field(default_factory=list, description="班号列表（1-5班）")
     location: Optional[str] = Field(None, description="授课地点")
+    locations: List[str] = Field(default_factory=list, description="授课地点列表")
     textbook_name: Optional[str] = Field(None, description="教材名称")
     online_resources: Optional[str] = Field(None, description="网络资源")
     additional_requirements: Optional[str] = None
@@ -658,8 +661,36 @@ class BatchTaskCreateRequest(BaseModel):
     ) -> List[Literal["teaching_plan", "experiment_plan"]]:
         return list(dict.fromkeys(value))
 
+    @field_validator("majors", "locations")
+    @classmethod
+    def clean_multi_value_text(cls, value: List[str]) -> List[str]:
+        return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+
+    @field_validator("class_numbers")
+    @classmethod
+    def validate_class_numbers(cls, value: List[int]) -> List[int]:
+        numbers = list(dict.fromkeys(value))
+        if any(number < 1 or number > 5 for number in numbers):
+            raise ValueError("班级只能选择 1-5 班")
+        return numbers
+
     @model_validator(mode="after")
     def validate_supplemental_plan_inputs(self):
+        uses_professional_classes = bool(self.majors or self.class_numbers)
+        if uses_professional_classes:
+            if not self.majors:
+                raise ValueError("请选择至少一个专业")
+            if not self.class_numbers:
+                raise ValueError("请选择至少一个班级")
+            if not self.grade.endswith("级"):
+                raise ValueError("年级必须为 2022级 至 2035级")
+            try:
+                grade_year = int(self.grade[:-1])
+            except ValueError as exc:
+                raise ValueError("年级必须为 2022级 至 2035级") from exc
+            if grade_year < 2022 or grade_year > 2035:
+                raise ValueError("年级必须为 2022级 至 2035级")
+
         if not self.supplemental_artifacts:
             return self
 
@@ -672,14 +703,14 @@ class BatchTaskCreateRequest(BaseModel):
             )
             if not getattr(self, field_name)
         ]
-        if not self.class_ids:
+        if not self.class_ids and not (self.majors and self.class_numbers):
             missing.append("授课班级")
         if "experiment_plan" in self.supplemental_artifacts:
             if not self.first_class_date:
                 missing.append("首课日期")
             if not self.class_periods:
                 missing.append("上课节次")
-            if not self.location:
+            if not self.location and not self.locations:
                 missing.append("实验室/授课地点")
             if not self.plan_date:
                 missing.append("制表日期")
@@ -887,10 +918,44 @@ class DraftTaskCreateRequest(BaseModel):
     total_hours: int = Field(..., ge=2, description="总课时数")
     hours_per_lesson: int = Field(default=2, ge=1, description="每份教案课时")
     chapters: List[ChapterInfo]
+    majors: List[str] = Field(default_factory=list, description="专业列表")
+    class_numbers: List[int] = Field(default_factory=list, description="班号列表（1-5班）")
     textbook_name: Optional[str] = Field(None, description="教材名称")
     location: Optional[str] = Field(None, description="授课地点")
+    locations: List[str] = Field(default_factory=list, description="授课地点列表")
     online_resources: Optional[str] = Field(None, description="网络资源")
     generate_reflection: bool = Field(default=False, description="是否生成教学反思")
+
+    @field_validator("majors", "locations")
+    @classmethod
+    def clean_multi_value_text(cls, value: List[str]) -> List[str]:
+        return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+
+    @field_validator("class_numbers")
+    @classmethod
+    def validate_class_numbers(cls, value: List[int]) -> List[int]:
+        numbers = list(dict.fromkeys(value))
+        if any(number < 1 or number > 5 for number in numbers):
+            raise ValueError("班级只能选择 1-5 班")
+        return numbers
+
+    @model_validator(mode="after")
+    def validate_professional_classes(self):
+        if not self.majors and not self.class_numbers:
+            return self
+        if not self.majors:
+            raise ValueError("请选择至少一个专业")
+        if not self.class_numbers:
+            raise ValueError("请选择至少一个班级")
+        if not self.grade.endswith("级"):
+            raise ValueError("年级必须为 2022级 至 2035级")
+        try:
+            grade_year = int(self.grade[:-1])
+        except ValueError as exc:
+            raise ValueError("年级必须为 2022级 至 2035级") from exc
+        if grade_year < 2022 or grade_year > 2035:
+            raise ValueError("年级必须为 2022级 至 2035级")
+        return self
 
 
 class DraftTaskCreateResponse(BaseModel):

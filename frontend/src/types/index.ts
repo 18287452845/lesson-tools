@@ -418,7 +418,10 @@ export interface BatchTaskCreateRequest {
   chapters: ChapterInfo[];
   start_week?: number;
   class_ids?: string[];
+  majors?: string[];
+  class_numbers?: number[];
   location?: string;
+  locations?: string[];
   textbook_name?: string;
   online_resources?: string;
   additional_requirements?: string;
@@ -655,8 +658,11 @@ export interface DraftTaskCreateRequest {
   total_hours: number;
   hours_per_lesson?: number;
   chapters: ChapterInfo[];
+  majors?: string[];
+  class_numbers?: number[];
   textbook_name?: string;
   location?: string;
+  locations?: string[];
   online_resources?: string;
   generate_reflection?: boolean;
 }
