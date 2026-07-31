@@ -169,7 +169,7 @@ class DocumentRenderer:
 
         def has_visible_content(element: etree._Element) -> bool:
             return any(
-                (node.tag == W + "t" and bool(node.text))
+                (node.tag == W + "t" and bool(node.text and node.text.strip()))
                 or node.tag in {W + "tab", W + "drawing", W + "object"}
                 for node in element.iter()
             )
@@ -245,6 +245,29 @@ class DocumentRenderer:
                 for row_index in (5, 6):
                     if row_index < len(process_rows):
                         remove_minimum_height(process_rows[row_index])
+
+                body = root.find(W + "body")
+                if body is not None:
+                    homepage = tables[0]
+                    process = tables[1]
+                    children = list(body)
+                    homepage_index = children.index(homepage)
+                    process_index = children.index(process)
+                    blank_between = [
+                        child
+                        for child in children[homepage_index + 1:process_index]
+                        if child.tag == W + "p" and not has_visible_content(child)
+                    ]
+                    for extra in blank_between[1:]:
+                        body.remove(extra)
+
+                    children = list(body)
+                    process_index = children.index(process)
+                    for child in children[process_index + 1:]:
+                        if child.tag == W + "sectPr":
+                            break
+                        if child.tag == W + "p" and not has_visible_content(child):
+                            body.remove(child)
 
             patched_xml = etree.tostring(
                 root,

@@ -189,3 +189,17 @@ def test_batch_lesson_plan_compacts_each_homepage(tmp_path: pathlib.Path, prepar
         objective_cell = document.tables[table_index].rows[7].cells[0]
         assert len(objective_cell.paragraphs) == 1
         assert "\n\n" not in objective_cell.text
+
+    body = document.element.body
+    assert body[-2].tag == qn("w:tbl")
+    empty_body_paragraphs = [
+        element
+        for element in body
+        if element.tag == qn("w:p")
+        and not any(
+            (node.tag == qn("w:t") and node.text and node.text.strip())
+            or node.tag == qn("w:br")
+            for node in element.iter()
+        )
+    ]
+    assert len(empty_body_paragraphs) == 2
