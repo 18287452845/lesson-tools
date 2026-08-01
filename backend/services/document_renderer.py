@@ -162,7 +162,9 @@ class DocumentRenderer:
         paragraphs. Jinja loop boundaries can leave duplicate ``w:br`` nodes
         between objective groups. Merge only the content rows on the homepage
         and collapse consecutive/leading/trailing text breaks while preserving
-        every run property and all non-document package parts.
+        every run property and all non-document package parts. Variable-height
+        homepage rows must remain splittable so Word can use the rest of the
+        current page instead of moving an entire long row to the next page.
         """
         document_path = Path(path)
         temporary_path = document_path.with_suffix(".layout.docx")
@@ -204,6 +206,13 @@ class DocumentRenderer:
             if row_properties.find(W + "cantSplit") is None:
                 etree.SubElement(row_properties, W + "cantSplit")
 
+        def allow_row_split(row: etree._Element) -> None:
+            row_properties = row.find(W + "trPr")
+            if row_properties is None:
+                return
+            for cant_split in list(row_properties.findall(W + "cantSplit")):
+                row_properties.remove(cant_split)
+
         def remove_minimum_height(row: etree._Element) -> None:
             row_properties = row.find(W + "trPr")
             if row_properties is None:
@@ -217,7 +226,7 @@ class DocumentRenderer:
             if tables:
                 rows = tables[0].xpath("./w:tr", namespaces=NS)
                 for row_index in range(7, min(12, len(rows))):
-                    keep_row_together(rows[row_index])
+                    allow_row_split(rows[row_index])
                     cells = rows[row_index].xpath("./w:tc", namespaces=NS)
                     if not cells:
                         continue

@@ -186,7 +186,8 @@ def test_yunlin_lesson_plan_renders(tmp_path: pathlib.Path, preparation_data):
     objective_cell = document.tables[0].rows[7].cells[0]
     assert len(objective_cell.paragraphs) == 1
     assert "\n\n" not in objective_cell.text
-    assert document.tables[0].rows[8]._tr.trPr.find(qn("w:cantSplit")) is not None
+    for row_index in range(7, 12):
+        assert document.tables[0].rows[row_index]._tr.trPr.find(qn("w:cantSplit")) is None
     assert document.tables[1].rows[4]._tr.trPr.find(qn("w:cantSplit")) is not None
     assert document.tables[1].rows[5]._tr.trPr.find(qn("w:trHeight")) is None
     assert document.tables[1].rows[6]._tr.trPr.find(qn("w:trHeight")) is None
