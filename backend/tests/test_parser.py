@@ -126,6 +126,7 @@ class TestDatabase:
             "edit_logs",
             "user_settings",
             "textbooks",  # Added
+            "textbook_sources",  # Added
             "textbook_chapters",  # Added
             "lesson_plan_textbooks",  # Added
             "subjects",

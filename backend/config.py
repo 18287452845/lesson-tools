@@ -60,6 +60,24 @@ class Settings(BaseSettings):
     database_path: str = ""
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "")
 
+    # External book discovery services
+    google_books_api_key: Optional[str] = os.getenv("GOOGLE_BOOKS_API_KEY")
+    google_books_base_url: str = os.getenv(
+        "GOOGLE_BOOKS_BASE_URL", "https://www.googleapis.com/books/v1"
+    )
+    open_library_base_url: str = os.getenv(
+        "OPEN_LIBRARY_BASE_URL", "https://openlibrary.org"
+    )
+    tsinghua_press_base_url: str = os.getenv(
+        "TSINGHUA_PRESS_BASE_URL", "https://www.tup.tsinghua.edu.cn"
+    )
+    book_search_timeout: float = float(os.getenv("BOOK_SEARCH_TIMEOUT", "15.0"))
+    book_search_max_results: int = int(os.getenv("BOOK_SEARCH_MAX_RESULTS", "8"))
+    book_search_user_agent: str = os.getenv(
+        "BOOK_SEARCH_USER_AGENT",
+        "YunlinLessonTools/1.1 (educational textbook discovery)",
+    )
+
     # AI Settings
     # 0 means "do not send max_tokens"; DeepSeek then applies the model/API limit.
     ai_max_tokens: int = int(os.getenv("AI_MAX_TOKENS", "0"))

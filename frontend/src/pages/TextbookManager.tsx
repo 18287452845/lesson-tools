@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Badge,
+  Alert,
   Button,
   Card,
   Checkbox,
@@ -40,11 +41,15 @@ import type {
   TextbookChapterCreateRequest,
   TextbookChapterInfo,
   TextbookCreateRequest,
+  TextbookCatalogPreviewResponse,
   TextbookInfo,
+  TextbookSearchCandidate,
+  TextbookSearchRequest,
   TextbookUpdateRequest,
 } from '@/types';
 import { SUBJECT_OPTIONS, GRADE_OPTIONS } from '@/types';
 import { useTextbookStore } from '@/stores/textbookStore';
+import { textbookApi } from '@/services/textbookApi';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -55,6 +60,14 @@ interface ChapterNode extends TextbookChapterCreateRequest {
   client_id: string;
   children: ChapterNode[];
   level: number;
+}
+
+interface DiscoveryImportMeta {
+  source_url?: string;
+  ai_enrich?: boolean;
+  subject?: string;
+  grade?: string;
+  description?: string;
 }
 
 const generateClientId = () =>
@@ -95,6 +108,9 @@ const buildChapterTree = (
       sort_order: chapter.sort_order ?? index + 1,
       hours_required: chapter.hours_required,
       parent_chapter_id: chapter.parent_chapter_id,
+      source_id: chapter.source_id,
+      content_origin: chapter.content_origin,
+      confidence: chapter.confidence,
       children: [],
       level: 1,
     };
@@ -131,6 +147,9 @@ const flattenChapterTreeForSave = (nodes: ChapterNode[]): TextbookChapterCreateR
         sort_order: counter,
         hours_required: node.hours_required,
         parent_chapter_id: parentKey,
+        source_id: node.source_id,
+        content_origin: node.content_origin,
+        confidence: node.confidence,
       });
       if (node.children?.length) {
         walk(node.children, clientKey);
@@ -323,9 +342,19 @@ const TextbookManager: React.FC = () => {
   const [batchImportLoading, setBatchImportLoading] = useState(false);
   const [filterSubject, setFilterSubject] = useState<string | undefined>();
   const [filterGrade, setFilterGrade] = useState<string | undefined>();
+  const [discoveryVisible, setDiscoveryVisible] = useState(false);
+  const [searchingBooks, setSearchingBooks] = useState(false);
+  const [previewingCatalog, setPreviewingCatalog] = useState(false);
+  const [importingBook, setImportingBook] = useState(false);
+  const [bookCandidates, setBookCandidates] = useState<TextbookSearchCandidate[]>([]);
+  const [selectedCandidate, setSelectedCandidate] = useState<TextbookSearchCandidate | null>(null);
+  const [catalogPreview, setCatalogPreview] = useState<TextbookCatalogPreviewResponse | null>(null);
+  const [sourceErrors, setSourceErrors] = useState<Record<string, string>>({});
 
   const [form] = Form.useForm<TextbookCreateRequest | TextbookUpdateRequest>();
   const [generateForm] = Form.useForm();
+  const [searchForm] = Form.useForm<TextbookSearchRequest>();
+  const [discoveryMetaForm] = Form.useForm<DiscoveryImportMeta>();
 
   useEffect(() => {
     loadTextbooks();
@@ -370,6 +399,102 @@ const TextbookManager: React.FC = () => {
     setEditingTextbook(null);
     form.resetFields();
     setModalVisible(true);
+  };
+
+  const openDiscovery = () => {
+    searchForm.resetFields();
+    discoveryMetaForm.resetFields();
+    discoveryMetaForm.setFieldsValue({ ai_enrich: true });
+    setBookCandidates([]);
+    setSelectedCandidate(null);
+    setCatalogPreview(null);
+    setSourceErrors({});
+    setDiscoveryVisible(true);
+  };
+
+  const handleBookSearch = async () => {
+    try {
+      const values = await searchForm.validateFields();
+      setSearchingBooks(true);
+      setSelectedCandidate(null);
+      setCatalogPreview(null);
+      const response = await textbookApi.searchTextbooks(values);
+      setBookCandidates(response.candidates);
+      setSourceErrors(response.source_errors || {});
+      if (response.candidates.length > 0) {
+        setSelectedCandidate(response.candidates[0]);
+        message.success(response.message);
+      } else {
+        message.warning(response.message);
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        message.error(error.message);
+      }
+    } finally {
+      setSearchingBooks(false);
+    }
+  };
+
+  const handleCatalogPreview = async () => {
+    if (!selectedCandidate) {
+      message.warning('请先选择一个确切版本');
+      return;
+    }
+    try {
+      const values = await discoveryMetaForm.validateFields();
+      setPreviewingCatalog(true);
+      const response = await textbookApi.previewCatalog({
+        candidate: selectedCandidate,
+        source_url: values.source_url?.trim() || undefined,
+        ai_enrich: values.ai_enrich !== false,
+      });
+      setCatalogPreview(response);
+      message.success(response.message);
+    } catch (error) {
+      if (error instanceof Error) {
+        message.error(error.message);
+      }
+    } finally {
+      setPreviewingCatalog(false);
+    }
+  };
+
+  const handleDiscoveryImport = async () => {
+    if (!selectedCandidate || !catalogPreview) {
+      message.warning('请先获取并确认目录');
+      return;
+    }
+    try {
+      const values = await discoveryMetaForm.validateFields();
+      setImportingBook(true);
+      const imported = await textbookApi.importTextbook({
+        candidate: selectedCandidate,
+        chapters: catalogPreview.chapters,
+        source_type: catalogPreview.source_type,
+        source_name: catalogPreview.source_name,
+        source_url: catalogPreview.source_url,
+        confidence: catalogPreview.confidence,
+        subject: values.subject,
+        grade: values.grade,
+        description: values.description,
+      });
+      await fetchTextbooks({
+        page: currentPage,
+        limit: pageSize,
+        subject: filterSubject,
+        grade: filterGrade,
+        status: 'active',
+      });
+      setDiscoveryVisible(false);
+      message.success(`《${imported.name}》及 ${imported.chapters.length} 个目录节点已导入`);
+    } catch (error) {
+      if (error instanceof Error) {
+        message.error(error.message);
+      }
+    } finally {
+      setImportingBook(false);
+    }
   };
 
   const handleEdit = (textbook: TextbookInfo) => {
@@ -947,6 +1072,9 @@ const TextbookManager: React.FC = () => {
                   onChange={setFilterGrade}
                   options={GRADE_OPTIONS.map((g) => ({ label: g, value: g }))}
                 />
+                <Button icon={<BookOutlined />} onClick={openDiscovery}>
+                  联网搜索导入
+                </Button>
                 <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
                   新建教材
                 </Button>
@@ -970,6 +1098,269 @@ const TextbookManager: React.FC = () => {
           }}
         />
       </Card>
+
+      <Modal
+        title="联网搜索并导入教材目录"
+        open={discoveryVisible}
+        onCancel={() => setDiscoveryVisible(false)}
+        width={1100}
+        footer={null}
+        destroyOnClose
+        maskClosable={!importingBook}
+      >
+        <Alert
+          type="info"
+          showIcon
+          message="优先使用 ISBN 精确搜索；书名和作者搜索需要手动确认具体版次。AI 只补充概述和关键词，不会修改来源目录标题。"
+          style={{ marginBottom: 16 }}
+        />
+
+        <Form form={searchForm} layout="vertical">
+          <Row gutter={12} align="bottom">
+            <Col span={7}>
+              <Form.Item label="ISBN" name="isbn">
+                <Input placeholder="9787302720126" allowClear />
+              </Form.Item>
+            </Col>
+            <Col span={7}>
+              <Form.Item
+                label="书名"
+                name="title"
+                dependencies={['isbn']}
+                rules={[
+                  ({ getFieldValue }) => ({
+                    validator: (_, value) =>
+                      value || getFieldValue('isbn')
+                        ? Promise.resolve()
+                        : Promise.reject(new Error('请输入 ISBN 或书名')),
+                  }),
+                ]}
+              >
+                <Input placeholder="例如：Java程序设计" allowClear />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item label="作者" name="author">
+                <Input placeholder="可选，用于消除同名书歧义" allowClear />
+              </Form.Item>
+            </Col>
+            <Col span={4}>
+              <Form.Item>
+                <Button
+                  type="primary"
+                  block
+                  loading={searchingBooks}
+                  onClick={handleBookSearch}
+                >
+                  搜索书籍
+                </Button>
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+
+        {Object.keys(sourceErrors).length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            message="部分来源暂时不可用，其余来源的结果仍可正常使用"
+            description={Object.entries(sourceErrors)
+              .map(([source, detail]) => `${source}: ${detail}`)
+              .join('；')}
+            style={{ marginBottom: 12 }}
+          />
+        )}
+
+        {bookCandidates.length > 0 && (
+          <>
+            <Table<TextbookSearchCandidate>
+              size="small"
+              rowKey="id"
+              dataSource={bookCandidates}
+              pagination={false}
+              scroll={{ y: 260 }}
+              rowSelection={{
+                type: 'radio',
+                selectedRowKeys: selectedCandidate ? [selectedCandidate.id] : [],
+                onChange: (_keys, rows) => {
+                  setSelectedCandidate(rows[0] || null);
+                  setCatalogPreview(null);
+                  discoveryMetaForm.setFieldValue('source_url', undefined);
+                },
+              }}
+              onRow={(record) => ({
+                onClick: () => {
+                  setSelectedCandidate(record);
+                  setCatalogPreview(null);
+                  discoveryMetaForm.setFieldValue('source_url', undefined);
+                },
+              })}
+              columns={[
+                {
+                  title: '候选教材',
+                  key: 'book',
+                  render: (_, record) => (
+                    <Space direction="vertical" size={0}>
+                      {record.source_url ? (
+                        <a href={record.source_url} target="_blank" rel="noreferrer">
+                          {record.title}
+                        </a>
+                      ) : (
+                        <Text strong>{record.title}</Text>
+                      )}
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {record.authors.join('、') || '作者未知'}
+                      </Text>
+                    </Space>
+                  ),
+                },
+                {
+                  title: 'ISBN',
+                  width: 145,
+                  render: (_, record) => record.isbn_13 || record.isbn_10 || '-',
+                },
+                {
+                  title: '出版社/日期',
+                  width: 180,
+                  render: (_, record) => (
+                    <Space direction="vertical" size={0}>
+                      <Text>{record.publisher || '-'}</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {record.published_date || ''}
+                      </Text>
+                    </Space>
+                  ),
+                },
+                {
+                  title: '来源',
+                  width: 150,
+                  render: (_, record) => (
+                    <Space direction="vertical" size={2}>
+                      <Tag color={record.toc_available ? 'green' : 'blue'}>
+                        {record.source_name}
+                      </Tag>
+                      {record.toc_available && <Text type="success">含官方目录</Text>}
+                    </Space>
+                  ),
+                },
+                {
+                  title: '匹配度',
+                  dataIndex: 'match_score',
+                  width: 90,
+                  render: (score: number) => <Badge count={`${score}%`} color={score >= 90 ? 'green' : 'blue'} />,
+                },
+              ]}
+            />
+
+            <Divider orientation="left">目录获取与导入设置</Divider>
+            <Form form={discoveryMetaForm} layout="vertical">
+              <Row gutter={12}>
+                <Col span={12}>
+                  <Form.Item
+                    label="出版社目录页网址（可选）"
+                    name="source_url"
+                    tooltip="候选来源没有目录时，可粘贴出版社公开的 HTML 目录页"
+                    rules={[{ type: 'url', message: '请输入有效的公开网址' }]}
+                  >
+                    <Input placeholder="https://出版社官网/图书目录页" allowClear />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item label="学科" name="subject">
+                    <Select
+                      allowClear
+                      showSearch
+                      options={SUBJECT_OPTIONS.map((value) => ({ label: value, value }))}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item label="适用年级" name="grade">
+                    <Select
+                      allowClear
+                      showSearch
+                      options={GRADE_OPTIONS.map((value) => ({ label: value, value }))}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={12} align="bottom">
+                <Col span={14}>
+                  <Form.Item label="教材简介补充" name="description">
+                    <Input placeholder="可选；留空时使用书目来源简介" allowClear />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item name="ai_enrich" valuePropName="checked">
+                    <Checkbox>AI生成章节概述和关键词</Checkbox>
+                  </Form.Item>
+                </Col>
+                <Col span={4}>
+                  <Form.Item>
+                    <Button
+                      block
+                      type="primary"
+                      loading={previewingCatalog}
+                      onClick={handleCatalogPreview}
+                    >
+                      获取目录
+                    </Button>
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Form>
+          </>
+        )}
+
+        {catalogPreview && (
+          <>
+            <Alert
+              type={catalogPreview.warnings.length ? 'warning' : 'success'}
+              showIcon
+              message={`${catalogPreview.source_name} · 可信度 ${Math.round(
+                catalogPreview.confidence * 100
+              )}% · ${catalogPreview.chapters.length} 个目录节点`}
+              description={catalogPreview.warnings.join('；') || '目录已准备好，请确认后导入。'}
+              style={{ marginBottom: 12 }}
+            />
+            <Table<TextbookChapterCreateRequest>
+              size="small"
+              rowKey={(record) => record.client_id || `${record.chapter_number}-${record.sort_order}`}
+              dataSource={catalogPreview.chapters}
+              pagination={false}
+              scroll={{ y: 360 }}
+              columns={[
+                { title: '序号', dataIndex: 'sort_order', width: 70 },
+                { title: '章节编号', dataIndex: 'chapter_number', width: 130 },
+                { title: '章节标题', dataIndex: 'chapter_title' },
+                {
+                  title: '处理方式',
+                  dataIndex: 'content_origin',
+                  width: 120,
+                  render: (origin: string) => (
+                    <Tag color={origin === 'ai_enriched' ? 'purple' : 'green'}>
+                      {origin === 'ai_enriched' ? '来源+AI整理' : '来源目录'}
+                    </Tag>
+                  ),
+                },
+              ]}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+              <Space>
+                <Button onClick={() => setCatalogPreview(null)}>重新选择</Button>
+                <Button
+                  type="primary"
+                  icon={<UploadOutlined />}
+                  loading={importingBook}
+                  onClick={handleDiscoveryImport}
+                >
+                  确认导入教材和目录
+                </Button>
+              </Space>
+            </div>
+          </>
+        )}
+      </Modal>
 
       {/* Create/Edit Textbook Modal */}
       <Modal

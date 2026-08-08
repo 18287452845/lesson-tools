@@ -9,7 +9,7 @@ import logging
 
 from .config import settings
 from .models.database import init_db, db
-from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans, textbooks, subjects, grades, competition, preparation
+from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans, textbooks, textbook_discovery, subjects, grades, competition, preparation
 from .services.builtin_template import (
     ensure_builtin_template_registered,
     validate_all_builtin_templates,
@@ -92,6 +92,7 @@ app.include_router(batch.router, prefix=settings.api_prefix, tags=["batch"])
 app.include_router(classes.router, prefix=settings.api_prefix, tags=["classes"])
 app.include_router(lesson_plans.router, prefix=settings.api_prefix, tags=["lesson_plans"])
 app.include_router(textbooks.router, prefix=settings.api_prefix, tags=["textbooks"])
+app.include_router(textbook_discovery.router, prefix=settings.api_prefix, tags=["textbook-discovery"])
 app.include_router(subjects.router, prefix=settings.api_prefix, tags=["subjects"])
 app.include_router(grades.router, prefix=settings.api_prefix, tags=["grades"])
 app.include_router(competition.router, prefix=settings.api_prefix, tags=["competition"])

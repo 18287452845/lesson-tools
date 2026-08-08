@@ -19,6 +19,7 @@ class Database:
     async def initialize(self) -> None:
         """Initialize database and create tables."""
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
             await self._create_tables(db)
             await db.commit()
 
@@ -268,6 +269,23 @@ class Database:
             )
         """)
 
+        # Provenance for externally discovered textbook metadata and catalogs
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS textbook_sources (
+                id TEXT PRIMARY KEY,
+                textbook_id TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_name TEXT NOT NULL,
+                source_url TEXT,
+                external_id TEXT,
+                confidence REAL DEFAULT 0,
+                raw_metadata TEXT,
+                retrieved_at TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (textbook_id) REFERENCES textbooks(id) ON DELETE CASCADE
+            )
+        """)
+
         # Textbook chapters table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS textbook_chapters (
@@ -280,11 +298,26 @@ class Database:
                 sort_order INTEGER DEFAULT 0,
                 hours_required INTEGER,
                 parent_chapter_id TEXT,
+                source_id TEXT,
+                content_origin TEXT DEFAULT 'manual',
+                confidence REAL,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (textbook_id) REFERENCES textbooks(id) ON DELETE CASCADE
+                FOREIGN KEY (textbook_id) REFERENCES textbooks(id) ON DELETE CASCADE,
+                FOREIGN KEY (source_id) REFERENCES textbook_sources(id) ON DELETE SET NULL
             )
         """)
+
+        # Add provenance columns when upgrading an existing database.
+        await self._add_column_if_not_exists(
+            db, "textbook_chapters", "source_id", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "textbook_chapters", "content_origin", "TEXT DEFAULT 'manual'"
+        )
+        await self._add_column_if_not_exists(
+            db, "textbook_chapters", "confidence", "REAL"
+        )
 
         # Lesson plan textbooks association table
         await db.execute("""
@@ -325,6 +358,21 @@ class Database:
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_textbook_chapters_sort_order
             ON textbook_chapters(textbook_id, sort_order)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_textbook_sources_textbook_id
+            ON textbook_sources(textbook_id)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_textbook_sources_external
+            ON textbook_sources(source_type, external_id)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_textbook_chapters_source_id
+            ON textbook_chapters(source_id)
         """)
 
         # Create indexes for lesson_plan_textbooks
@@ -567,7 +615,21 @@ class Database:
     async def get_connection(self) -> AsyncIterator[aiosqlite.Connection]:
         """Get a database connection."""
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
             yield db
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Yield one connection and commit or roll back all statements atomically."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
+            try:
+                await db.execute("BEGIN")
+                yield db
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
 
     async def execute(
         self,

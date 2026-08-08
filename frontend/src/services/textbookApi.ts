@@ -14,6 +14,11 @@ import type {
   TextbookChapterGenerateResponse,
   TextbookChapterEnrichRequest,
   TextbookChapterEnrichResponse,
+  TextbookSearchRequest,
+  TextbookSearchResponse,
+  TextbookCatalogRequest,
+  TextbookCatalogPreviewResponse,
+  TextbookImportRequest,
 } from '@/types';
 
 const api = axios.create({
@@ -159,6 +164,28 @@ export const textbookApi = {
    */
   deleteChapter: async (textbookId: string, chapterId: string): Promise<void> => {
     await api.delete(`/textbooks/${textbookId}/chapters/${chapterId}`);
+  },
+
+  /** Search public book catalogs and publisher sites. */
+  searchTextbooks: async (data: TextbookSearchRequest): Promise<TextbookSearchResponse> => {
+    const response = await api.post('/textbook-searches', data, { timeout: 45000 });
+    return response.data;
+  },
+
+  /** Resolve and optionally AI-enrich a selected edition's real catalog. */
+  previewCatalog: async (
+    data: TextbookCatalogRequest
+  ): Promise<TextbookCatalogPreviewResponse> => {
+    const response = await api.post('/textbook-catalog-previews', data, {
+      timeout: 180000,
+    });
+    return response.data;
+  },
+
+  /** Persist a confirmed edition and its catalog atomically. */
+  importTextbook: async (data: TextbookImportRequest): Promise<TextbookInfo> => {
+    const response = await api.post('/textbook-imports', data);
+    return response.data;
   },
 };
 

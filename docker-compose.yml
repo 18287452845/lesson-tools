@@ -25,6 +25,12 @@ services:
       - AI_TEMPERATURE=${AI_TEMPERATURE:-0.7}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
 
+      # External textbook discovery
+      - GOOGLE_BOOKS_API_KEY=${GOOGLE_BOOKS_API_KEY:-}
+      - BOOK_SEARCH_TIMEOUT=${BOOK_SEARCH_TIMEOUT:-15.0}
+      - BOOK_SEARCH_MAX_RESULTS=${BOOK_SEARCH_MAX_RESULTS:-8}
+      - BOOK_SEARCH_USER_AGENT=${BOOK_SEARCH_USER_AGENT:-YunlinLessonTools/1.1 (educational textbook discovery)}
+
       # Database
       - DATABASE_URL=sqlite:///storage/database.db
     volumes:

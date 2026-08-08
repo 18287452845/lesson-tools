@@ -23,12 +23,27 @@ from ..models.schemas import (
     TextbookChapterGenerateResponse,
     TextbookChapterEnrichRequest,
     TextbookChapterEnrichResponse,
+    TextbookSourceInfo,
 )
 from ..services.textbook_generator import TextbookChapterGenerator
 from ..services.ai_provider import AIProviderFactory
 from ..config import settings
 
 router = APIRouter(prefix="/textbooks", tags=["textbooks"])
+
+
+async def _get_textbook_sources(textbook_id: str) -> List[TextbookSourceInfo]:
+    rows = await db.fetch_all(
+        """
+        SELECT id, textbook_id, source_type, source_name, source_url,
+               external_id, confidence, retrieved_at, created_at
+        FROM textbook_sources
+        WHERE textbook_id = ?
+        ORDER BY created_at DESC
+        """,
+        (textbook_id,),
+    )
+    return [TextbookSourceInfo(**dict(row)) for row in rows]
 
 
 # ============================================================================
@@ -190,6 +205,7 @@ async def list_textbooks(
             chapters.append(TextbookChapterInfo(**chapter_dict))
 
         textbook_dict["chapters"] = chapters
+        textbook_dict["sources"] = await _get_textbook_sources(textbook_id)
         textbooks.append(TextbookInfo(**textbook_dict))
 
     return TextbookListResponse(textbooks=textbooks, total=total)
@@ -241,6 +257,7 @@ async def get_textbook(textbook_id: str):
         chapters.append(TextbookChapterInfo(**chapter_dict))
 
     textbook_dict["chapters"] = chapters
+    textbook_dict["sources"] = await _get_textbook_sources(textbook_id)
     return TextbookInfo(**textbook_dict)
 
 
@@ -538,14 +555,7 @@ async def save_chapters(
     if not textbook_row:
         raise HTTPException(status_code=404, detail="教材不存在")
 
-    # Delete existing chapters (if any)
-    await db.execute(
-        "DELETE FROM textbook_chapters WHERE textbook_id = ?",
-        (textbook_id,),
-        commit=True,
-    )
-
-    # Insert new chapters with client_id mapping to preserve hierarchy
+    # Resolve IDs before entering the transaction so parent mappings are stable.
     timestamp = datetime.now().isoformat()
     id_map = {}
     resolved_chapters = []
@@ -557,47 +567,53 @@ async def save_chapters(
         id_map[chapter_id] = chapter_id  # allow direct id references
         resolved_chapters.append((index, chapter, chapter_id, client_key))
 
-    for index, chapter, chapter_id, _ in resolved_chapters:
-        parent_id = None
-        if chapter.parent_chapter_id:
-            parent_id = id_map.get(chapter.parent_chapter_id, chapter.parent_chapter_id)
-
-        key_concepts_json = json.dumps(
-            chapter.key_concepts or [], ensure_ascii=False
+    async with db.transaction() as connection:
+        await connection.execute(
+            "DELETE FROM textbook_chapters WHERE textbook_id = ?",
+            (textbook_id,),
         )
 
-        await db.execute(
-            """
-            INSERT INTO textbook_chapters (
-                id, textbook_id, chapter_number, chapter_title,
-                content_summary, key_concepts, sort_order,
-                hours_required, parent_chapter_id,
-                created_at, updated_at
+        for index, chapter, chapter_id, _ in resolved_chapters:
+            parent_id = None
+            if chapter.parent_chapter_id:
+                parent_id = id_map.get(chapter.parent_chapter_id, chapter.parent_chapter_id)
+
+            key_concepts_json = json.dumps(
+                chapter.key_concepts or [], ensure_ascii=False
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                chapter_id,
-                textbook_id,
-                chapter.chapter_number,
-                chapter.chapter_title,
-                chapter.content_summary,
-                key_concepts_json,
-                chapter.sort_order if chapter.sort_order is not None else index + 1,
-                chapter.hours_required,
-                parent_id,
-                timestamp,
-                timestamp,
-            ),
-            commit=True,
-        )
 
-    # Update textbook's updated_at
-    await db.execute(
-        "UPDATE textbooks SET updated_at = ? WHERE id = ?",
-        (timestamp, textbook_id),
-        commit=True,
-    )
+            await connection.execute(
+                """
+                INSERT INTO textbook_chapters (
+                    id, textbook_id, chapter_number, chapter_title,
+                    content_summary, key_concepts, sort_order,
+                    hours_required, parent_chapter_id, source_id,
+                    content_origin, confidence, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    chapter_id,
+                    textbook_id,
+                    chapter.chapter_number,
+                    chapter.chapter_title,
+                    chapter.content_summary,
+                    key_concepts_json,
+                    chapter.sort_order if chapter.sort_order is not None else index + 1,
+                    chapter.hours_required,
+                    parent_id,
+                    chapter.source_id,
+                    chapter.content_origin,
+                    chapter.confidence,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+
+        await connection.execute(
+            "UPDATE textbooks SET updated_at = ? WHERE id = ?",
+            (timestamp, textbook_id),
+        )
 
     # Return updated textbook with chapters
     return await get_textbook(textbook_id)

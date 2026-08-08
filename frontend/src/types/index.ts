@@ -717,8 +717,23 @@ export interface TextbookChapterInfo {
   sort_order: number;
   hours_required?: number;
   parent_chapter_id?: string;
+  source_id?: string;
+  content_origin?: 'manual' | 'source' | 'ai_enriched' | 'ai_inferred';
+  confidence?: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface TextbookSourceInfo {
+  id: string;
+  textbook_id: string;
+  source_type: string;
+  source_name: string;
+  source_url?: string;
+  external_id?: string;
+  confidence: number;
+  retrieved_at: string;
+  created_at: string;
 }
 
 export interface TextbookInfo {
@@ -738,6 +753,7 @@ export interface TextbookInfo {
   created_at: string;
   updated_at: string;
   chapters: TextbookChapterInfo[];
+  sources?: TextbookSourceInfo[];
 }
 
 export interface TextbookCreateRequest {
@@ -780,6 +796,9 @@ export interface TextbookChapterCreateRequest {
   sort_order?: number;
   hours_required?: number;
   parent_chapter_id?: string;
+  source_id?: string;
+  content_origin?: 'manual' | 'source' | 'ai_enriched' | 'ai_inferred';
+  confidence?: number;
 }
 
 export interface TextbookChapterBatchCreateRequest {
@@ -806,6 +825,68 @@ export interface TextbookChapterEnrichRequest {
 export interface TextbookChapterEnrichResponse {
   chapters: TextbookChapterCreateRequest[];
   message: string;
+}
+
+export interface TextbookSearchRequest {
+  isbn?: string;
+  title?: string;
+  author?: string;
+  max_results?: number;
+}
+
+export interface TextbookSearchCandidate {
+  id: string;
+  source: string;
+  source_name: string;
+  source_id: string;
+  source_url?: string;
+  title: string;
+  authors: string[];
+  publisher?: string;
+  published_date?: string;
+  edition?: string;
+  isbn_10?: string;
+  isbn_13?: string;
+  description?: string;
+  cover_image?: string;
+  toc_available: boolean;
+  match_score: number;
+}
+
+export interface TextbookSearchResponse {
+  candidates: TextbookSearchCandidate[];
+  source_errors: Record<string, string>;
+  message: string;
+}
+
+export interface TextbookCatalogRequest {
+  candidate: TextbookSearchCandidate;
+  source_url?: string;
+  ai_enrich?: boolean;
+}
+
+export interface TextbookCatalogPreviewResponse {
+  candidate: TextbookSearchCandidate;
+  chapters: TextbookChapterCreateRequest[];
+  source_type: string;
+  source_name: string;
+  source_url?: string;
+  confidence: number;
+  warnings: string[];
+  message: string;
+}
+
+export interface TextbookImportRequest {
+  candidate: TextbookSearchCandidate;
+  chapters: TextbookChapterCreateRequest[];
+  source_type: string;
+  source_name: string;
+  source_url?: string;
+  confidence: number;
+  subject?: string;
+  grade?: string;
+  description?: string;
+  allow_duplicate?: boolean;
 }
 
 

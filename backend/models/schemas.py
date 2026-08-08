@@ -216,8 +216,24 @@ class TextbookChapterInfo(BaseModel):
     sort_order: int = 0
     hours_required: Optional[int] = None
     parent_chapter_id: Optional[str] = None
+    source_id: Optional[str] = None
+    content_origin: Literal["manual", "source", "ai_enriched", "ai_inferred"] = "manual"
+    confidence: Optional[float] = Field(None, ge=0, le=1)
     created_at: str
     updated_at: str
+
+
+class TextbookSourceInfo(BaseModel):
+    """External evidence used to import textbook metadata or its catalog."""
+    id: str
+    textbook_id: str
+    source_type: str
+    source_name: str
+    source_url: Optional[str] = None
+    external_id: Optional[str] = None
+    confidence: float = Field(0, ge=0, le=1)
+    retrieved_at: str
+    created_at: str
 
 
 class TextbookInfo(BaseModel):
@@ -237,6 +253,7 @@ class TextbookInfo(BaseModel):
     created_at: str
     updated_at: str
     chapters: List[TextbookChapterInfo] = Field(default_factory=list)
+    sources: List[TextbookSourceInfo] = Field(default_factory=list)
 
 
 class TextbookListResponse(BaseModel):
@@ -267,6 +284,9 @@ class TextbookChapterCreateRequest(BaseModel):
     sort_order: int = Field(0, description="排序顺序")
     hours_required: Optional[int] = Field(None, description="建议课时数")
     parent_chapter_id: Optional[str] = Field(None, description="父章节ID")
+    source_id: Optional[str] = Field(None, description="章节来源ID")
+    content_origin: Literal["manual", "source", "ai_enriched", "ai_inferred"] = "manual"
+    confidence: Optional[float] = Field(None, ge=0, le=1)
 
 
 class TextbookChapterBatchCreateRequest(BaseModel):
@@ -289,6 +309,79 @@ class TextbookChapterEnrichResponse(BaseModel):
     """Response for AI enriched chapters."""
     chapters: List[TextbookChapterCreateRequest]
     message: str = "章节内容概述和核心概念已生成"
+
+
+class TextbookSearchRequest(BaseModel):
+    """Search external catalogs by ISBN or by title and author."""
+    isbn: Optional[str] = Field(None, max_length=32)
+    title: Optional[str] = Field(None, max_length=200)
+    author: Optional[str] = Field(None, max_length=200)
+    max_results: int = Field(8, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def validate_search_terms(self):
+        self.isbn = self.isbn.strip() if self.isbn else None
+        self.title = self.title.strip() if self.title else None
+        self.author = self.author.strip() if self.author else None
+        if not self.isbn and not self.title:
+            raise ValueError("请提供 ISBN，或至少提供书名")
+        return self
+
+
+class TextbookSearchCandidate(BaseModel):
+    """A single edition candidate returned by an external source."""
+    id: str
+    source: str
+    source_name: str
+    source_id: str
+    source_url: Optional[str] = None
+    title: str
+    authors: List[str] = Field(default_factory=list)
+    publisher: Optional[str] = None
+    published_date: Optional[str] = None
+    edition: Optional[str] = None
+    isbn_10: Optional[str] = None
+    isbn_13: Optional[str] = None
+    description: Optional[str] = None
+    cover_image: Optional[str] = None
+    toc_available: bool = False
+    match_score: int = Field(0, ge=0, le=100)
+
+
+class TextbookSearchResponse(BaseModel):
+    candidates: List[TextbookSearchCandidate]
+    source_errors: Dict[str, str] = Field(default_factory=dict)
+    message: str
+
+
+class TextbookCatalogRequest(BaseModel):
+    candidate: TextbookSearchCandidate
+    source_url: Optional[str] = Field(None, max_length=2000)
+    ai_enrich: bool = True
+
+
+class TextbookCatalogPreviewResponse(BaseModel):
+    candidate: TextbookSearchCandidate
+    chapters: List[TextbookChapterCreateRequest]
+    source_type: str
+    source_name: str
+    source_url: Optional[str] = None
+    confidence: float = Field(0, ge=0, le=1)
+    warnings: List[str] = Field(default_factory=list)
+    message: str
+
+
+class TextbookImportRequest(BaseModel):
+    candidate: TextbookSearchCandidate
+    chapters: List[TextbookChapterCreateRequest] = Field(..., min_length=1)
+    source_type: str
+    source_name: str
+    source_url: Optional[str] = Field(None, max_length=2000)
+    confidence: float = Field(0, ge=0, le=1)
+    subject: Optional[str] = Field(None, max_length=50)
+    grade: Optional[str] = Field(None, max_length=50)
+    description: Optional[str] = None
+    allow_duplicate: bool = False
 
 
 # ============================================================================
