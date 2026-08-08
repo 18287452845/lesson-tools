@@ -383,6 +383,14 @@ class TextbookImportRequest(BaseModel):
     description: Optional[str] = None
     allow_duplicate: bool = False
 
+    @field_validator("subject", "grade")
+    @classmethod
+    def reject_corrupted_metadata(cls, value: Optional[str]) -> Optional[str]:
+        """Reject metadata that has clearly been replaced by encoding placeholders."""
+        if value and all(character in "?？�" or character.isspace() for character in value):
+            raise ValueError("字段疑似乱码，请重新选择或输入")
+        return value
+
 
 # ============================================================================
 # Lesson Plan Generation Models

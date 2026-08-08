@@ -296,6 +296,22 @@ async def test_discovery_api_search_preview_and_import(test_db, monkeypatch):
         assert preview_response.status_code == 200
         preview = preview_response.json()
 
+        corrupted_response = await client.post(
+            "/api/textbook-imports",
+            json={
+                "candidate": selected,
+                "chapters": preview["chapters"],
+                "source_type": preview["source_type"],
+                "source_name": preview["source_name"],
+                "source_url": preview["source_url"],
+                "confidence": preview["confidence"],
+                "subject": "???",
+                "grade": "��",
+            },
+        )
+        assert corrupted_response.status_code == 422
+        assert "字段疑似乱码" in corrupted_response.text
+
         import_response = await client.post(
             "/api/textbook-imports",
             json={

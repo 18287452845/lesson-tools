@@ -344,8 +344,6 @@ const BatchGenerate: React.FC = () => {
       // Prepare form values
       const formValues: any = {
         course_name: textbook.name,
-        majors: splitMultiValueText(textbook.subject),
-        grade: textbook.grade,
         textbook_name: textbook.name,
       };
 
