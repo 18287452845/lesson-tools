@@ -27,6 +27,7 @@ services:
 
       # External textbook discovery
       - GOOGLE_BOOKS_API_KEY=${GOOGLE_BOOKS_API_KEY:-}
+      - AIJIAOCAI_BASE_URL=${AIJIAOCAI_BASE_URL:-https://www.aijiaocai.com}
       - BOOK_SEARCH_TIMEOUT=${BOOK_SEARCH_TIMEOUT:-15.0}
       - BOOK_SEARCH_MAX_RESULTS=${BOOK_SEARCH_MAX_RESULTS:-8}
       - BOOK_SEARCH_USER_AGENT=${BOOK_SEARCH_USER_AGENT:-YunlinLessonTools/1.1 (educational textbook discovery)}

@@ -475,6 +475,9 @@ def _looks_like_catalog_entry(line: str) -> bool:
     normalized = unicodedata.normalize("NFKC", line)
     return bool(
         re.match(r"^第\s*[一二三四五六七八九十百零〇\d]+\s*(?:篇|章|单元|部分)", normalized)
+        or re.match(r"^(?:项目|任务)\s*\d+", normalized)
+        or re.match(r"^[一二三四五六七八九十百]+[、.]\s*\S+", normalized)
+        or re.match(r"^附录\s*[A-Z\d一二三四五六七八九十]+", normalized, re.I)
         or re.match(r"^\d+(?:\.\d+){0,2}\s*\S+", normalized)
         or re.match(r"^(?:Chapter|Unit|Part)\s+[\w一二三四五六七八九十]+", normalized, re.I)
     )
@@ -511,6 +514,13 @@ def parse_catalog_lines(lines: Iterable[str], confidence: float = 0.9) -> list[C
     )
     numeric_pattern = re.compile(r"^(\d+(?:\.\d+){0,2})\s*[、.．-]?\s*(.+)$")
     english_pattern = re.compile(r"^((?:Chapter|Unit|Part)\s+[\w一二三四五六七八九十]+)\s*[:：.-]?\s*(.*)$", re.I)
+    project_pattern = re.compile(r"^(项目\s*\d+)\s*(.*)$")
+    task_pattern = re.compile(r"^(任务\s*\d+)\s*(.*)$")
+    chinese_item_pattern = re.compile(r"^([一二三四五六七八九十百]+)[、.]\s*(.+)$")
+    appendix_pattern = re.compile(
+        r"^(附录\s*[A-Z\d一二三四五六七八九十]+)\s*(.*)$",
+        re.I,
+    )
 
     for raw_line in lines:
         line = unicodedata.normalize("NFKC", html.unescape(str(raw_line)))
@@ -525,6 +535,10 @@ def parse_catalog_lines(lines: Iterable[str], confidence: float = 0.9) -> list[C
         chinese_match = chinese_pattern.match(line)
         numeric_match = numeric_pattern.match(line)
         english_match = english_pattern.match(line)
+        project_match = project_pattern.match(line)
+        task_match = task_pattern.match(line)
+        chinese_item_match = chinese_item_pattern.match(line)
+        appendix_match = appendix_pattern.match(line)
         if chinese_match:
             chapter_number = re.sub(r"\s+", "", chinese_match.group(1))
             chapter_title = chinese_match.group(2).strip() or chapter_number
@@ -536,6 +550,22 @@ def parse_catalog_lines(lines: Iterable[str], confidence: float = 0.9) -> list[C
         elif english_match:
             chapter_number = english_match.group(1).strip()
             chapter_title = english_match.group(2).strip() or chapter_number
+            level = 1
+        elif project_match:
+            chapter_number = re.sub(r"\s+", "", project_match.group(1))
+            chapter_title = project_match.group(2).strip() or chapter_number
+            level = 1
+        elif task_match:
+            chapter_number = re.sub(r"\s+", "", task_match.group(1))
+            chapter_title = task_match.group(2).strip() or chapter_number
+            level = 2
+        elif chinese_item_match:
+            chapter_number = f"{chinese_item_match.group(1)}、"
+            chapter_title = chinese_item_match.group(2).strip()
+            level = 3
+        elif appendix_match:
+            chapter_number = re.sub(r"\s+", "", appendix_match.group(1))
+            chapter_title = appendix_match.group(2).strip() or chapter_number
             level = 1
         else:
             continue
@@ -557,6 +587,157 @@ def parse_catalog_lines(lines: Iterable[str], confidence: float = 0.9) -> list[C
         for stale_level in range(level + 1, 4):
             last_at_level.pop(stale_level, None)
     return chapters
+
+
+def _plain_html_text(value: str) -> str:
+    return re.sub(
+        r"\s+",
+        " ",
+        html.unescape(re.sub(r"<[^>]+>", " ", value)),
+    ).strip()
+
+
+def parse_aijiaocai_search_html(
+    content: str,
+    query: DiscoveryQuery,
+) -> list[BookCandidate]:
+    """Parse public textbook results from the national selection system."""
+    candidates: list[BookCandidate] = []
+    blocks = re.findall(
+        r'<li\b[^>]*class=["\'][^"\']*\bclearfix\b[^"\']*["\'][^>]*>(.*?)</li>',
+        content,
+        re.I | re.S,
+    )
+    for block in blocks:
+        detail_matches = list(
+            re.finditer(
+                r'<a\b([^>]*)href=["\']([^"\']*textbook/details\?textbook_id=(\d+)[^"\']*)["\']([^>]*)>',
+                block,
+                re.I | re.S,
+            )
+        )
+        if not detail_matches:
+            continue
+        source_id = detail_matches[0].group(3)
+        href = detail_matches[0].group(2)
+        title = ""
+        for detail_match in detail_matches:
+            attributes = f"{detail_match.group(1)} {detail_match.group(4)}"
+            title_match = re.search(r'title=["\']([^"\']+)["\']', attributes, re.I)
+            if title_match:
+                title = html.unescape(title_match.group(1)).strip()
+                break
+        if not title:
+            continue
+
+        info_match = re.search(
+            r'<div\b[^>]*class=["\'][^"\']*bookList-info[^"\']*["\'][^>]*>(.*?)</div>',
+            block,
+            re.I | re.S,
+        )
+        info = info_match.group(1) if info_match else block
+        paragraphs = [
+            _plain_html_text(value)
+            for value in re.findall(r"<p\b[^>]*>(.*?)</p>", info, re.I | re.S)
+        ]
+        author_text = paragraphs[0] if paragraphs else ""
+        author_text = re.sub(r"\s*(?:著|编著|主编)?[；;]?\s*$", "", author_text)
+        authors = [
+            value.strip()
+            for value in re.split(r"[，、,；;/]+", author_text)
+            if value.strip()
+        ]
+        isbn_match = re.search(r"ISBN[：:]\s*([0-9Xx-]+)", info, re.I)
+        isbn = normalize_isbn(isbn_match.group(1) if isbn_match else None)
+        date_match = re.search(r"出版年月[：:]\s*([^<]+)", info, re.I)
+        publisher_match = re.search(r"出版社[：:]\s*([^<]+)", info, re.I)
+        image_match = re.search(r'<img\b[^>]*src=["\']([^"\']+)["\']', block, re.I)
+        base_url = settings.aijiaocai_base_url.rstrip("/")
+        candidate = BookCandidate(
+            id=f"aijiaocai:{source_id}",
+            source="aijiaocai",
+            source_name="全国大中专教材网络采选系统",
+            source_id=source_id,
+            source_url=urljoin(f"{base_url}/", href),
+            title=title,
+            authors=authors,
+            publisher=(
+                _plain_html_text(publisher_match.group(1))
+                if publisher_match
+                else None
+            ),
+            published_date=(
+                _plain_html_text(date_match.group(1)) if date_match else None
+            ),
+            isbn_10=isbn if isbn and len(isbn) == 10 else None,
+            isbn_13=isbn if isbn and len(isbn) == 13 else None,
+            cover_image=(
+                urljoin(f"{base_url}/", image_match.group(1))
+                if image_match
+                else None
+            ),
+            toc_available=True,
+        )
+        candidate.match_score = calculate_match_score(candidate, query)
+        candidates.append(candidate)
+    return candidates
+
+
+class AijiaocaiSource:
+    key = "aijiaocai"
+    name = "全国大中专教材网络采选系统"
+
+    async def search(self, query: DiscoveryQuery, max_results: int) -> list[BookCandidate]:
+        keyword = normalize_isbn(query.isbn) or query.title or query.author or ""
+        base_url = settings.aijiaocai_base_url.rstrip("/")
+        try:
+            async with httpx.AsyncClient(
+                timeout=settings.book_search_timeout,
+                headers={"User-Agent": settings.book_search_user_agent},
+                follow_redirects=True,
+            ) as client:
+                response = await client.get(
+                    f"{base_url}/textbook/list",
+                    params={"keyword": keyword, "page": 1},
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise SourceUnavailableError(f"{self.name}暂时不可用") from exc
+        return parse_aijiaocai_search_html(response.text, query)[:max_results]
+
+    async def fetch_catalog(self, candidate: BookCandidate) -> CatalogPreview:
+        base_url = settings.aijiaocai_base_url.rstrip("/")
+        detail_url = f"{base_url}/textbook/details?textbook_id={candidate.source_id}"
+        try:
+            async with httpx.AsyncClient(
+                timeout=settings.book_search_timeout,
+                headers={"User-Agent": settings.book_search_user_agent},
+                follow_redirects=True,
+            ) as client:
+                response = await client.get(detail_url)
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise CatalogNotFoundError(f"{self.name}目录页暂时不可用") from exc
+
+        catalog_match = re.search(
+            r'<div\b[^>]*class=["\'][^"\']*\btpml\b[^"\']*["\'][^>]*>(.*?)</div>',
+            response.text,
+            re.I | re.S,
+        )
+        if not catalog_match:
+            raise CatalogNotFoundError(f"{self.name}未收录该教材目录")
+        parser = _HTMLTextExtractor()
+        parser.feed(catalog_match.group(1))
+        chapters = parse_catalog_lines(parser.lines(), confidence=0.94)
+        if not chapters:
+            raise CatalogNotFoundError(f"{self.name}目录格式暂时无法识别")
+        return CatalogPreview(
+            chapters=chapters,
+            source_type=self.key,
+            source_name=self.name,
+            source_url=detail_url,
+            confidence=0.94,
+        )
 
 
 async def _resolve_public_host(hostname: str) -> None:
@@ -629,6 +810,7 @@ class TextbookDiscoveryService:
     def __init__(self, sources: Optional[list[Any]] = None):
         self.sources = sources or [
             TsinghuaPressSource(),
+            AijiaocaiSource(),
             GoogleBooksSource(),
             OpenLibrarySource(),
         ]
@@ -673,6 +855,8 @@ class TextbookDiscoveryService:
             return await PublicCatalogPageSource().fetch_catalog(source_url)
         if candidate.source == TsinghuaPressSource.key:
             return await TsinghuaPressSource().fetch_catalog(candidate)
+        if candidate.source == AijiaocaiSource.key:
+            return await AijiaocaiSource().fetch_catalog(candidate)
         if candidate.source == OpenLibrarySource.key:
             return await OpenLibrarySource().fetch_catalog(candidate)
         if candidate.isbn_13 or candidate.isbn_10:

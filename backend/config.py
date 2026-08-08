@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     tsinghua_press_base_url: str = os.getenv(
         "TSINGHUA_PRESS_BASE_URL", "https://www.tup.tsinghua.edu.cn"
     )
+    aijiaocai_base_url: str = os.getenv(
+        "AIJIAOCAI_BASE_URL", "https://www.aijiaocai.com"
+    )
     book_search_timeout: float = float(os.getenv("BOOK_SEARCH_TIMEOUT", "15.0"))
     book_search_max_results: int = int(os.getenv("BOOK_SEARCH_MAX_RESULTS", "8"))
     book_search_user_agent: str = os.getenv(

@@ -39,6 +39,62 @@ def test_tsinghua_search_fragment_is_parsed_and_ranked():
 
 
 @pytest.mark.unit
+def test_aijiaocai_search_and_project_catalog_are_parsed():
+    content = """
+    <ul class="bookList"><li class="clearfix">
+      <label><a href="/textbook/details?textbook_id=12871864">
+        <img src="https://img.aijiaocai.com/cover/9787516541456.png">
+      </a></label>
+      <div class="bookList-info">
+        <a href="/textbook/details?textbook_id=12871864"
+           title="Python程序设计案例教程（双色）（含微课）">教材</a>
+        <p>远俊红，杨旭，向魏 著；</p>
+        <p>ISBN：9787516541456</p>
+        <p>出版年月：2026-02</p>
+        <p>出版社：航空工业出版社</p>
+      </div>
+    </li></ul>
+    """
+    candidates = discovery.parse_aijiaocai_search_html(
+        content,
+        discovery.DiscoveryQuery(isbn="978-7-5165-4145-6"),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].source_id == "12871864"
+    assert candidates[0].authors == ["远俊红", "杨旭", "向魏"]
+    assert candidates[0].publisher == "航空工业出版社"
+    assert candidates[0].match_score == 100
+
+    chapters = discovery.parse_catalog_lines(
+        [
+            "基础篇",
+            "项目1 开启Python学习之旅",
+            "任务1 搭建Python开发环境",
+            "一、Python简介",
+            "二、Python开发工具",
+            "项目2 Python编程基础",
+            "任务1 计算订单总价",
+            "附录A 常用字符与ASCII代码对照表",
+        ],
+        confidence=0.94,
+    )
+    assert [chapter.chapter_number for chapter in chapters] == [
+        "项目1",
+        "任务1",
+        "一、",
+        "二、",
+        "项目2",
+        "任务1",
+        "附录A",
+    ]
+    assert chapters[1].parent_chapter_id == chapters[0].client_id
+    assert chapters[2].parent_chapter_id == chapters[1].client_id
+    assert chapters[5].parent_chapter_id == chapters[4].client_id
+    assert chapters[6].parent_chapter_id is None
+
+
+@pytest.mark.unit
 def test_html_catalog_extraction_and_three_level_hierarchy():
     content = """
     <html><body><h3>图书目录</h3><div class="article">
