@@ -92,6 +92,111 @@ class ClassListResponse(BaseModel):
 
 
 # ============================================================================
+# Teaching Resource and Course Archive Models
+# ============================================================================
+
+
+class TeachingResourceBase(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    resource_type: Literal[
+        "case", "activity", "assignment", "rubric", "ideology", "reference", "experiment"
+    ]
+    subject: Optional[str] = Field(None, max_length=100)
+    grade: Optional[str] = Field(None, max_length=100)
+    content: str = Field(..., min_length=1)
+    source_url: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+
+    @field_validator("tags")
+    @classmethod
+    def clean_tags(cls, value: List[str]) -> List[str]:
+        return list(dict.fromkeys(tag.strip() for tag in value if tag.strip()))
+
+
+class TeachingResourceCreate(TeachingResourceBase):
+    pass
+
+
+class TeachingResourceUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    resource_type: Optional[
+        Literal["case", "activity", "assignment", "rubric", "ideology", "reference", "experiment"]
+    ] = None
+    subject: Optional[str] = Field(None, max_length=100)
+    grade: Optional[str] = Field(None, max_length=100)
+    content: Optional[str] = Field(None, min_length=1)
+    source_url: Optional[str] = None
+    tags: Optional[List[str]] = None
+    status: Optional[Literal["active", "archived"]] = None
+
+
+class TeachingResource(TeachingResourceBase):
+    id: str
+    status: Literal["active", "archived"]
+    use_count: int
+    created_at: str
+    updated_at: str
+
+
+class TeachingResourceListResponse(BaseModel):
+    resources: List[TeachingResource]
+    total: int
+
+
+class CourseArchiveBase(BaseModel):
+    course_name: str = Field(..., min_length=1, max_length=200)
+    subject: str = Field(..., min_length=1, max_length=100)
+    grade: str = Field(..., min_length=1, max_length=100)
+    academic_year: str = Field(..., pattern=r"^\d{4}-\d{4}$")
+    semester: Literal[1, 2]
+    teacher_name: Optional[str] = Field(None, max_length=100)
+    textbook_id: Optional[str] = None
+    total_hours: int = Field(default=32, ge=1)
+    hours_per_lesson: int = Field(default=2, ge=1)
+    start_week: int = Field(default=1, ge=1, le=30)
+    class_ids: List[str] = Field(default_factory=list)
+    resource_ids: List[str] = Field(default_factory=list)
+    location: Optional[str] = Field(None, max_length=200)
+    notes: Optional[str] = None
+
+
+class CourseArchiveCreate(CourseArchiveBase):
+    pass
+
+
+class CourseArchiveUpdate(BaseModel):
+    course_name: Optional[str] = Field(None, min_length=1, max_length=200)
+    subject: Optional[str] = Field(None, min_length=1, max_length=100)
+    grade: Optional[str] = Field(None, min_length=1, max_length=100)
+    academic_year: Optional[str] = Field(None, pattern=r"^\d{4}-\d{4}$")
+    semester: Optional[Literal[1, 2]] = None
+    teacher_name: Optional[str] = Field(None, max_length=100)
+    textbook_id: Optional[str] = None
+    total_hours: Optional[int] = Field(None, ge=1)
+    hours_per_lesson: Optional[int] = Field(None, ge=1)
+    start_week: Optional[int] = Field(None, ge=1, le=30)
+    class_ids: Optional[List[str]] = None
+    resource_ids: Optional[List[str]] = None
+    location: Optional[str] = Field(None, max_length=200)
+    notes: Optional[str] = None
+    status: Optional[Literal["active", "archived"]] = None
+
+
+class CourseArchive(CourseArchiveBase):
+    id: str
+    status: Literal["active", "archived"]
+    batch_task_count: int = 0
+    lesson_plan_count: int = 0
+    created_at: str
+    updated_at: str
+
+
+class CourseArchiveListResponse(BaseModel):
+    archives: List[CourseArchive]
+    total: int
+
+
+# ============================================================================
 # Subject Management Models
 # ============================================================================
 
@@ -554,6 +659,8 @@ class PreparationGenerateRequest(BaseModel):
     teaching_style: Optional[str] = None
     additional_requirements: Optional[str] = None
     class_ids: List[str] = Field(default_factory=list)
+    resource_ids: List[str] = Field(default_factory=list)
+    course_archive_id: Optional[str] = None
     generate_reflection: bool = False
 
     @field_validator("artifact_types")
@@ -569,6 +676,7 @@ class PreparationArtifact(BaseModel):
     label: str
     filename: str
     download_url: str
+    preview_url: Optional[str] = None
     media_type: str
 
 
@@ -791,6 +899,9 @@ class ExperimentClassSchedule(BaseModel):
 
 class BatchTaskCreateRequest(BaseModel):
     """Request to create a batch task."""
+    resource_ids: List[str] = Field(default_factory=list)
+    course_archive_id: Optional[str] = None
+
     course_name: str
     subject: str
     grade: str
@@ -938,6 +1049,9 @@ class BatchTaskCreateResponse(BaseModel):
 
 class BatchTask(BaseModel):
     """Batch task information."""
+    resource_ids: List[str] = Field(default_factory=list)
+    course_archive_id: Optional[str] = None
+
     id: str
     course_name: str
     subject: str
@@ -1095,6 +1209,9 @@ class BatchLessonPlanListResponse(BaseModel):
 
 class DraftTaskCreateRequest(BaseModel):
     """Request to create a draft task (pre-generate lesson plans)."""
+    resource_ids: List[str] = Field(default_factory=list)
+    course_archive_id: Optional[str] = None
+
     course_name: str
     subject: str
     grade: str

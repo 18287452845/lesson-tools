@@ -528,6 +528,129 @@ class Database:
             ON batch_tasks(task_type, status)
         """)
 
+        # Teaching resource library
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS teaching_resources (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                subject TEXT,
+                grade TEXT,
+                content TEXT NOT NULL,
+                source_url TEXT,
+                tags TEXT DEFAULT '[]',
+                status TEXT DEFAULT 'active',
+                use_count INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Course and semester archives provide a reusable preparation context.
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS course_archives (
+                id TEXT PRIMARY KEY,
+                course_name TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                grade TEXT NOT NULL,
+                academic_year TEXT NOT NULL,
+                semester INTEGER NOT NULL,
+                teacher_name TEXT,
+                textbook_id TEXT,
+                total_hours INTEGER DEFAULT 32,
+                hours_per_lesson INTEGER DEFAULT 2,
+                start_week INTEGER DEFAULT 1,
+                class_ids TEXT DEFAULT '[]',
+                location TEXT,
+                notes TEXT,
+                status TEXT DEFAULT 'active',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (textbook_id) REFERENCES textbooks(id) ON DELETE SET NULL
+            )
+        """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS course_archive_resources (
+                archive_id TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (archive_id, resource_id),
+                FOREIGN KEY (archive_id) REFERENCES course_archives(id) ON DELETE CASCADE,
+                FOREIGN KEY (resource_id) REFERENCES teaching_resources(id) ON DELETE CASCADE
+            )
+        """)
+
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "course_archive_id", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "batch_tasks", "resource_ids", "TEXT DEFAULT '[]'"
+        )
+        await self._add_column_if_not_exists(
+            db, "lesson_plans", "course_archive_id", "TEXT"
+        )
+        await self._add_column_if_not_exists(
+            db, "lesson_plans", "resource_ids", "TEXT DEFAULT '[]'"
+        )
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_teaching_resources_filters
+            ON teaching_resources(status, resource_type, subject, grade)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_course_archives_term
+            ON course_archives(status, academic_year, semester)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_batch_tasks_archive
+            ON batch_tasks(course_archive_id)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_lesson_plans_archive
+            ON lesson_plans(course_archive_id)
+        """)
+
+        # AI usage and generated-content quality observability.
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ai_usage_metrics (
+                id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                operation TEXT DEFAULT 'generate',
+                status TEXT NOT NULL,
+                prompt_tokens INTEGER DEFAULT 0,
+                cached_input_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                estimated_cost REAL DEFAULT 0,
+                latency_ms INTEGER DEFAULT 0,
+                error_message TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS content_quality_metrics (
+                id TEXT PRIMARY KEY,
+                source_type TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                score REAL NOT NULL,
+                dimensions TEXT DEFAULT '{}',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self._add_column_if_not_exists(
+            db, "ai_usage_metrics", "cached_input_tokens", "INTEGER DEFAULT 0"
+        )
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_ai_usage_created
+            ON ai_usage_metrics(created_at, provider, model)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_quality_source
+            ON content_quality_metrics(source_type, source_id, created_at)
+        """)
+
         # ====================================================================
         # Competition module tables (教学能力比赛模块)
         # ====================================================================

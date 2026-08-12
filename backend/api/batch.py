@@ -36,6 +36,7 @@ from ..models.schemas import (
 from ..services.chapter_splitter import ChapterSplitter
 from ..services.batch_processor import BatchTaskProcessor
 from ..services.background_runner import run_in_background
+from ..services.batch_execution import launch_batch_task
 from ..services.builtin_template import require_valid_builtin_template
 from ..services.course_plan_renderer import require_valid_course_plan_template
 from ..services.experiment_names import ensure_experiment_names
@@ -637,8 +638,9 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 location, textbook_name, online_resources, generate_reflection, class_names,
                 supplemental_artifacts, academic_year, semester, teacher_name,
                 plan_date, first_class_date, class_periods, experiment_schedules,
-                status, total_count, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                status, total_count, created_at, updated_at,
+                course_archive_id, resource_ids
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -671,6 +673,8 @@ async def create_batch_task(request: BatchTaskCreateRequest):
                 total_count,
                 datetime.now().isoformat(),
                 datetime.now().isoformat(),
+                request.course_archive_id,
+                json.dumps(request.resource_ids, ensure_ascii=False),
             ),
             commit=True,
         )
@@ -704,6 +708,47 @@ async def create_batch_task(request: BatchTaskCreateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _restart_checkpointed_task(task_id: str, *, failed_only: bool) -> BatchTaskCreateResponse:
+    database = await get_db()
+    row = await database.fetch_one(
+        "SELECT status, failed_count, hours_per_lesson, task_type FROM batch_tasks WHERE id = ?",
+        (task_id,),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Batch task not found")
+    if row["status"] in {"pending", "processing"}:
+        raise HTTPException(status_code=409, detail="Task is already running")
+    if failed_only and not row["failed_count"] and row["status"] != "failed":
+        raise HTTPException(status_code=400, detail="Task has no failed lessons to retry")
+
+    cursor = await database.execute(
+        """
+        UPDATE batch_tasks
+        SET status = 'pending', error_message = NULL, completed_at = NULL, updated_at = ?
+        WHERE id = ? AND status = ?
+        """,
+        (datetime.now().isoformat(), task_id, row["status"]), commit=True,
+    )
+    if cursor.rowcount != 1:
+        raise HTTPException(status_code=409, detail="Task state changed; refresh and try again")
+    launch_batch_task(
+        task_id, int(row["hours_per_lesson"] or 2), row["task_type"] or "normal"
+    )
+    return BatchTaskCreateResponse(task_id=task_id, status="pending")
+
+
+@router.post("/batch/tasks/{task_id}/retry-failed", response_model=BatchTaskCreateResponse)
+async def retry_failed_batch_task(task_id: str):
+    """Retry failed lessons while reusing completed checkpoints."""
+    return await _restart_checkpointed_task(task_id, failed_only=True)
+
+
+@router.post("/batch/tasks/{task_id}/resume", response_model=BatchTaskCreateResponse)
+async def resume_batch_task(task_id: str):
+    """Resume a cancelled or failed task from persisted checkpoints."""
+    return await _restart_checkpointed_task(task_id, failed_only=False)
+
+
 @router.get("/batch/tasks/{task_id}", response_model=BatchTask)
 async def get_batch_task(task_id: str):
     """
@@ -731,6 +776,9 @@ async def get_batch_task(task_id: str):
             task_dict["class_ids"] = json.loads(task_dict["class_ids"])
         else:
             task_dict["class_ids"] = []
+        task_dict["resource_ids"] = json.loads(
+            task_dict.get("resource_ids") or "[]"
+        )
 
         # Convert generate_reflection from INTEGER to boolean
         task_dict["generate_reflection"] = bool(task_dict.get("generate_reflection", 0))
@@ -799,6 +847,9 @@ async def list_batch_tasks(
                 task_dict["class_ids"] = json.loads(task_dict["class_ids"])
             else:
                 task_dict["class_ids"] = []
+            task_dict["resource_ids"] = json.loads(
+                task_dict.get("resource_ids") or "[]"
+            )
 
             # Convert generate_reflection from INTEGER to boolean
             task_dict["generate_reflection"] = bool(task_dict.get("generate_reflection", 0))
@@ -1081,8 +1132,9 @@ async def create_draft_task(request: DraftTaskCreateRequest):
                 id, course_name, subject, grade, template_id,
                 total_hours, hours_per_lesson, chapters,
                 textbook_name, location, online_resources, generate_reflection,
-                class_names, status, total_count, task_type, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                class_names, status, total_count, task_type, created_at, updated_at,
+                course_archive_id, resource_ids
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -1103,6 +1155,8 @@ async def create_draft_task(request: DraftTaskCreateRequest):
                 "draft",  # task_type='draft'
                 datetime.now().isoformat(),
                 datetime.now().isoformat(),
+                request.course_archive_id,
+                json.dumps(request.resource_ids, ensure_ascii=False),
             ),
             commit=True,
         )
@@ -1163,6 +1217,7 @@ async def get_task_lesson_plans(
         task_dict = dict(task_row)
         task_dict["chapters"] = json.loads(task_dict["chapters"])
         task_dict["class_ids"] = json.loads(task_dict.get("class_ids") or "[]")
+        task_dict["resource_ids"] = json.loads(task_dict.get("resource_ids") or "[]")
         task_dict["generate_reflection"] = bool(task_dict.get("generate_reflection", 0))
         task_dict["supplemental_artifacts"] = json.loads(
             task_dict.get("supplemental_artifacts") or "[]"

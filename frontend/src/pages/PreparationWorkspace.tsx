@@ -18,6 +18,7 @@ import {
   Tag,
   Typography,
   message,
+  Modal,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -28,10 +29,12 @@ import {
   FormOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined,
+  EyeOutlined,
 } from '@ant-design/icons';
 
 import { classApi, preparationApi, templateApi } from '@/services/api';
 import { textbookApi } from '@/services/textbookApi';
+import { courseArchiveApi, resourceApi } from '@/services/workspaceApi';
 import { DURATION_OPTIONS, GRADE_OPTIONS, SUBJECT_OPTIONS } from '@/types';
 import type {
   ClassInfo,
@@ -40,6 +43,7 @@ import type {
   PreparationResponse,
   TemplateValidation,
   TextbookInfo,
+  TeachingResource,
 } from '@/types';
 
 const { Title, Text, Paragraph } = Typography;
@@ -80,8 +84,10 @@ function PreparationWorkspace() {
   const [validationLoading, setValidationLoading] = useState(true);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [textbooks, setTextbooks] = useState<TextbookInfo[]>([]);
+  const [resources, setResources] = useState<TeachingResource[]>([]);
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<PreparationResponse | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const initialArtifact = useMemo<PreparationArtifactType>(() => {
     const requested = searchParams.get('type');
@@ -109,6 +115,27 @@ function PreparationWorkspace() {
       .listAllTextbooks({ status: 'active' })
       .then(setTextbooks)
       .catch(() => setTextbooks([]));
+    void resourceApi
+      .list({ limit: 100 })
+      .then((data) => setResources(data.resources))
+      .catch(() => setResources([]));
+    const archiveId = searchParams.get('course_archive_id');
+    if (archiveId) {
+      void courseArchiveApi.get(archiveId).then(async (archive) => {
+        form.setFieldsValue({
+          subject: archive.subject,
+          grade: archive.grade,
+          location: archive.location,
+          class_ids: archive.class_ids,
+          resource_ids: archive.resource_ids,
+          course_archive_id: archive.id,
+        });
+        if (archive.textbook_id) {
+          const textbook = await textbookApi.getTextbook(archive.textbook_id);
+          form.setFieldValue('textbook_name', textbook.name);
+        }
+      }).catch(() => messageApi.error('课程档案加载失败'));
+    }
   }, [form, initialArtifact]);
 
   const handleGenerate = async () => {
@@ -264,6 +291,18 @@ function PreparationWorkspace() {
                   </Form.Item>
                 </Col>
                 <Col span={24}>
+                  <Form.Item name="resource_ids" label="教学资源库（可多选）">
+                    <Select
+                      mode="multiple"
+                      allowClear
+                      optionFilterProp="label"
+                      placeholder="选择案例、活动、作业、量规或思政素材"
+                      options={resources.map((item) => ({ value: item.id, label: item.title }))}
+                    />
+                  </Form.Item>
+                  <Form.Item name="course_archive_id" hidden><Input /></Form.Item>
+                </Col>
+                <Col span={24}>
                   <Form.Item name="additional_requirements" label="其他备课要求（可选）">
                     <TextArea rows={3} placeholder="例如：增加小组实践，突出课程思政与职业情境" />
                   </Form.Item>
@@ -352,13 +391,17 @@ function PreparationWorkspace() {
                       <Text strong>{artifact.label}</Text>
                     </Space>
                     <Text type="secondary" ellipsis={{ tooltip: artifact.filename }}>{artifact.filename}</Text>
-                    <Button
-                      type="primary"
-                      icon={<CloudDownloadOutlined />}
-                      onClick={() => window.open(preparationApi.resolveDownloadUrl(artifact.download_url), '_blank')}
-                    >
-                      下载文件
-                    </Button>
+                    <Space wrap>
+                      {artifact.preview_url && <Button
+                        icon={<EyeOutlined />}
+                        onClick={() => setPreviewUrl(preparationApi.resolveDownloadUrl(artifact.preview_url!))}
+                      >可视化预览</Button>}
+                      <Button
+                        type="primary"
+                        icon={<CloudDownloadOutlined />}
+                        onClick={() => window.open(preparationApi.resolveDownloadUrl(artifact.download_url), '_blank')}
+                      >下载文件</Button>
+                    </Space>
                   </Space>
                 </Card>
               </Col>
@@ -377,6 +420,16 @@ function PreparationWorkspace() {
           </Row>
         </Card>
       )}
+      <Modal
+        open={Boolean(previewUrl)}
+        title="生成结果可视化预览"
+        width="92vw"
+        footer={null}
+        onCancel={() => setPreviewUrl(null)}
+        destroyOnClose
+      >
+        {previewUrl && <iframe title="文档预览" src={previewUrl} style={{ width: '100%', height: '76vh', border: 0, background: '#eef2f0' }} />}
+      </Modal>
     </div>
   );
 }

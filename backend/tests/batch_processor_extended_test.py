@@ -158,6 +158,72 @@ async def test_parallel_document_generation_success_failure_draft_and_render(
 
 
 @pytest.mark.asyncio
+async def test_parallel_generation_reuses_completed_checkpoint_and_replaces_failed(
+    processor_db, tmp_path, monkeypatch
+):
+    task_id = "checkpoint-task"
+    chapters = [_chapter(1), _chapter(2)]
+    await _insert_task(processor_db, task_id, chapters)
+    stored = _content()
+    for number, status in ((1, "completed"), (2, "failed")):
+        await processor_db.execute(
+            """
+            INSERT INTO lesson_plans
+              (id, template_id, title, subject, grade, topic, input_data,
+               generated_content, status, batch_task_id, lesson_number)
+            VALUES (?, 'yunlin-standard', ?, '计算机', '大学', ?, '{}', ?, ?, ?, ?)
+            """,
+            (
+                f"plan-{number}", f"教案{number}", f"主题{number}",
+                json.dumps(stored.model_dump(), ensure_ascii=False),
+                "generated" if status == "completed" else "failed", task_id, number,
+            ), commit=True,
+        )
+        await processor_db.execute(
+            """
+            INSERT INTO batch_lesson_plans
+              (id, batch_task_id, lesson_plan_id, lesson_number, topic, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (f"link-{number}", task_id, f"plan-{number}", number, f"主题{number}", status),
+            commit=True,
+        )
+
+    monkeypatch.setattr(module, "require_valid_builtin_template", lambda _id: None)
+    monkeypatch.setattr(module, "get_builtin_template_path", lambda: tmp_path / "template.docx")
+    processor = BatchTaskProcessor(max_concurrent_lessons=2)
+    calls = []
+
+    class FakeAI:
+        async def generate_lesson_plan(self, request, generate_reflection=False):
+            calls.append(request.topic)
+            return _content()
+
+    rendered = tmp_path / "checkpoint.docx"
+    class Renderer:
+        def render_lesson_plans_document(self, **kwargs):
+            assert len(kwargs["lesson_plans_data"]) == 2
+            rendered.write_bytes(b"checkpoint")
+            return str(rendered)
+
+    processor.ai_generator = FakeAI()
+    processor.document_renderer = Renderer()
+    result = await processor._generate_document_parallel(
+        task_id, 1, chapters, "yunlin-standard", "计算机", "大学", "Python",
+        resource_ids=["resource-1"], course_archive_id="archive-1",
+    )
+    assert result == (str(rendered), 2, 0, [1, 2])
+    assert calls == ["主题2"]
+    links = await processor_db.fetch_all(
+        "SELECT lesson_number, lesson_plan_id, status FROM batch_lesson_plans WHERE batch_task_id=? ORDER BY lesson_number",
+        (task_id,),
+    )
+    assert len(links) == 2 and all(row["status"] == "completed" for row in links)
+    assert links[0]["lesson_plan_id"] == "plan-1"
+    assert links[1]["lesson_plan_id"] != "plan-2"
+
+
+@pytest.mark.asyncio
 async def test_sequential_generation_course_plans_zip_and_database_helpers(
     processor_db, tmp_path, monkeypatch
 ):

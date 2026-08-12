@@ -229,6 +229,16 @@ export const batchApi = {
     return response.data;
   },
 
+  async retryFailed(taskId: string): Promise<BatchTaskCreateResponse> {
+    const response = await api.post<BatchTaskCreateResponse>(`/batch/tasks/${taskId}/retry-failed`);
+    return response.data;
+  },
+
+  async resume(taskId: string): Promise<BatchTaskCreateResponse> {
+    const response = await api.post<BatchTaskCreateResponse>(`/batch/tasks/${taskId}/resume`);
+    return response.data;
+  },
+
   /**
    * List all batch tasks
    */

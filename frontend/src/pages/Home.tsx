@@ -15,6 +15,9 @@ import {
   TeamOutlined,
   ThunderboltOutlined,
   TrophyOutlined,
+  ReadOutlined,
+  FolderOpenOutlined,
+  DashboardOutlined,
 } from '@ant-design/icons';
 import type { ReactNode } from 'react';
 
@@ -51,6 +54,9 @@ const preparationCards: Array<{
 ];
 
 const supportingTools = [
+  { title: '教学资源库', icon: <ReadOutlined />, route: '/resources' },
+  { title: '课程学期档案', icon: <FolderOpenOutlined />, route: '/course-archives' },
+  { title: 'AI 成本与质量', icon: <DashboardOutlined />, route: '/analytics' },
   { title: '学期批量备课', icon: <AppstoreAddOutlined />, route: '/batch-generate' },
   { title: '批量下载', icon: <CloudDownloadOutlined />, route: '/batch-downloads' },
   { title: '备课记录', icon: <HistoryOutlined />, route: '/history' },

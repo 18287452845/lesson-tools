@@ -34,6 +34,8 @@ from .builtin_template import get_builtin_template_path, require_valid_builtin_t
 from .course_plan_renderer import CoursePlanRenderer
 from .batch_context import format_class_names
 from .experiment_names import ensure_experiment_names
+from .teaching_resource_service import get_resource_context
+from .ai_metrics import record_quality
 
 logger = logging.getLogger(__name__)
 
@@ -134,13 +136,17 @@ class BatchTaskProcessor:
                 f"max_concurrent_lessons={self.max_concurrent_lessons})"
             )
 
-            # Update status to processing
-            await self._update_task_status(batch_task_id, "processing")
-
             # Load task details
             task = await self._load_batch_task(batch_task_id)
             if not task:
                 raise ValueError(f"Batch task not found: {batch_task_id}")
+
+            first_run = not task.get("completed_count") and not task.get("failed_count")
+            await self._reset_task_run(batch_task_id)
+            resource_ids = json.loads(task.get("resource_ids") or "[]")
+            resource_context = await get_resource_context(
+                resource_ids, increment_use=first_run
+            )
 
             # Parse chapters
             chapters = json.loads(task["chapters"])
@@ -188,6 +194,9 @@ class BatchTaskProcessor:
                             for value in str(task.get("class_names") or "").split(",")
                             if value.strip()
                         ]),
+                        resource_context=resource_context,
+                        resource_ids=resource_ids,
+                        course_archive_id=task.get("course_archive_id"),
                         is_draft_mode=is_draft_mode,
                     )
 
@@ -438,6 +447,9 @@ class BatchTaskProcessor:
         textbook_name: Optional[str] = None,
         online_resources: Optional[str] = None,
         class_names: Optional[str] = None,
+        resource_context: Optional[str] = None,
+        resource_ids: Optional[List[str]] = None,
+        course_archive_id: Optional[str] = None,
         is_draft_mode: bool = False,
     ) -> Tuple[str, int, int, List[int]]:
         """
@@ -493,9 +505,66 @@ class BatchTaskProcessor:
                     textbook_name=textbook_name,
                     online_resources=online_resources,
                     class_name=class_names,
+                    additional_requirements=(
+                        f"请优先融合以下已审核教学资源：\n{resource_context}"
+                        if resource_context else None
+                    ),
+                )
+
+                existing = await db.fetch_one(
+                    """
+                    SELECT blp.id AS batch_lesson_plan_id, blp.status AS batch_status,
+                           lp.id AS lesson_plan_id, lp.generated_content
+                    FROM batch_lesson_plans blp
+                    JOIN lesson_plans lp ON lp.id = blp.lesson_plan_id
+                    WHERE blp.batch_task_id = ? AND blp.lesson_number = ?
+                    ORDER BY blp.created_at DESC LIMIT 1
+                    """,
+                    (batch_task_id, chapter.lesson_number),
                 )
 
                 try:
+                    if (
+                        existing
+                        and existing["batch_status"] == "completed"
+                        and existing["generated_content"]
+                    ):
+                        generated_content = GeneratedContent(
+                            **json.loads(existing["generated_content"])
+                        )
+                        online_res_raw = (
+                            online_resources
+                            or getattr(generated_content, "online_resources", None)
+                            or ""
+                        )
+                        online_res = (
+                            "\n".join(str(item) for item in online_res_raw)
+                            if isinstance(online_res_raw, list)
+                            else str(online_res_raw or "")
+                        )
+                        references = "\n".join(
+                            value for value in (
+                                f"《{textbook_name}》" if textbook_name else "",
+                                online_res,
+                            ) if value
+                        )
+                        return {
+                            "chapter": chapter,
+                            "lesson_input": lesson_input,
+                            "generated_content": generated_content,
+                            "lesson_plan_data": {
+                                **lesson_input.model_dump(),
+                                **generated_content.model_dump(),
+                                "lesson_number": chapter.lesson_number,
+                                "week_number": week_number,
+                                "week_display": f"第{week_number}周",
+                                "references": references,
+                                "online_resources": online_res,
+                            },
+                            "existing": dict(existing),
+                            "reused": True,
+                        }
+
                     # Generate content using AI
                     logger.debug(f"Generating AI content for: {chapter.topic}")
                     generated_content = await self.ai_generator.generate_lesson_plan(
@@ -539,11 +608,13 @@ class BatchTaskProcessor:
                         "lesson_input": lesson_input,
                         "generated_content": generated_content,
                         "lesson_plan_data": lesson_plan_data,
+                        "existing": dict(existing) if existing else None,
                     }
                 except Exception as exc:
                     return {
                         "chapter": chapter,
                         "lesson_input": lesson_input,
+                        "existing": dict(existing) if existing else None,
                         "error": str(exc),
                     }
 
@@ -566,6 +637,26 @@ class BatchTaskProcessor:
             generated_content = result.get("generated_content")
             lesson_plan_data = result.get("lesson_plan_data")
             error_message = result.get("error")
+
+            # Completed items are the checkpoint boundary. Reuse them without
+            # mutating IDs or calling the provider again.
+            if result.get("reused"):
+                lesson_plans_data.append(lesson_plan_data)
+                successful_lesson_numbers.append(chapter.lesson_number)
+                continue
+
+            # Replace one failed checkpoint in place conceptually, keeping one
+            # association per task/lesson and avoiding duplicate retry rows.
+            existing = result.get("existing")
+            if existing:
+                await db.execute(
+                    "DELETE FROM batch_lesson_plans WHERE id = ?",
+                    (existing["batch_lesson_plan_id"],), commit=True,
+                )
+                await db.execute(
+                    "DELETE FROM lesson_plans WHERE id = ?",
+                    (existing["lesson_plan_id"],), commit=True,
+                )
 
             # Create lesson plan record in database
             lesson_plan_id = str(uuid4())
@@ -625,6 +716,19 @@ class BatchTaskProcessor:
                 ),
                 commit=True,
             )
+            await db.execute(
+                """
+                UPDATE lesson_plans
+                SET course_archive_id = ?, resource_ids = ?
+                WHERE id = ?
+                """,
+                (
+                    course_archive_id,
+                    json.dumps(resource_ids or [], ensure_ascii=False),
+                    lesson_plan_id,
+                ),
+                commit=True,
+            )
 
             # Create batch_lesson_plans record
             batch_lesson_plan_id = str(uuid4())
@@ -651,6 +755,7 @@ class BatchTaskProcessor:
             if batch_status == "completed":
                 lesson_plans_data.append(lesson_plan_data)
                 successful_lesson_numbers.append(chapter.lesson_number)
+                await record_quality("batch_lesson_plan", lesson_plan_id, generated_content)
 
         # Check if we have any successful lesson plans
         if not lesson_plans_data:
@@ -890,6 +995,19 @@ class BatchTaskProcessor:
             (batch_task_id,)
         )
         return dict(row) if row else None
+
+    async def _reset_task_run(self, batch_task_id: str) -> None:
+        """Start or resume a task with counters for the new accounting pass."""
+        db = await get_db()
+        await db.execute(
+            """
+            UPDATE batch_tasks
+            SET status = 'processing', completed_count = 0, failed_count = 0,
+                error_message = NULL, completed_at = NULL, updated_at = ?
+            WHERE id = ?
+            """,
+            (datetime.now().isoformat(), batch_task_id), commit=True,
+        )
 
     async def _update_task_status(
         self,

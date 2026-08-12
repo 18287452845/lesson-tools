@@ -25,6 +25,8 @@ from ..services.builtin_template import (
 )
 from ..services.document_renderer import DocumentRenderer
 from ..services.preparation_renderer import PreparationRenderer
+from ..services.teaching_resource_service import get_resource_context
+from ..services.ai_metrics import record_quality
 from ..utils.ai_config import get_ai_generator
 
 
@@ -113,9 +115,21 @@ async def generate_preparation(
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    resource_context = await get_resource_context(request.resource_ids, increment_use=True)
+    requirements = request.additional_requirements or ""
+    if resource_context:
+        requirements = (
+            f"{requirements}\n\n请优先融合以下已审核教学资源：\n{resource_context}"
+        ).strip()
+
     lesson_request = LessonPlanGenerateRequest(
         template_id=BUILTIN_TEMPLATE_ID,
-        **request.model_dump(exclude={"artifact_types"}),
+        **{
+            **request.model_dump(
+                exclude={"artifact_types", "resource_ids", "course_archive_id"}
+            ),
+            "additional_requirements": requirements or None,
+        },
     )
 
     try:
@@ -164,6 +178,7 @@ async def generate_preparation(
                     label=ARTIFACT_LABELS[artifact_type],
                     filename=path.name,
                     download_url=f"/static/{quote(path.name)}",
+                    preview_url=f"/api/documents/preview/{quote(path.name)}",
                     media_type=ARTIFACT_MEDIA_TYPES[artifact_type],
                 )
             )
@@ -178,14 +193,17 @@ async def generate_preparation(
         "artifact_types": request.artifact_types,
         "preparation_artifacts": [item.model_dump() for item in artifacts],
         "template_sha256": report["sha256"],
+        "resource_ids": request.resource_ids,
+        "course_archive_id": request.course_archive_id,
     }
     primary_output = str(created_paths[0]) if created_paths else None
     await db.execute(
         """
         INSERT INTO lesson_plans
             (id, template_id, title, subject, grade, topic, input_data,
-             generated_content, output_file_path, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             generated_content, output_file_path, status, course_archive_id,
+             resource_ids)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             preparation_id,
@@ -198,6 +216,8 @@ async def generate_preparation(
             json.dumps(content, ensure_ascii=False),
             primary_output,
             "completed",
+            request.course_archive_id,
+            json.dumps(request.resource_ids, ensure_ascii=False),
         ),
         commit=True,
     )
@@ -206,6 +226,7 @@ async def generate_preparation(
         (BUILTIN_TEMPLATE_ID,),
         commit=True,
     )
+    await record_quality("preparation", preparation_id, content_model)
 
     return PreparationResponse(
         id=preparation_id,

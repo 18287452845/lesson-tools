@@ -137,6 +137,8 @@ export interface PreparationGenerateRequest {
   teaching_style?: string;
   additional_requirements?: string;
   class_ids?: string[];
+  resource_ids?: string[];
+  course_archive_id?: string;
   generate_reflection?: boolean;
 }
 
@@ -145,6 +147,7 @@ export interface PreparationArtifact {
   label: string;
   filename: string;
   download_url: string;
+  preview_url?: string;
   media_type: string;
 }
 
@@ -214,6 +217,88 @@ export interface ApiResponse<T> {
   data?: T;
   error?: string;
   message?: string;
+}
+
+export type TeachingResourceType =
+  | 'case' | 'activity' | 'assignment' | 'rubric'
+  | 'ideology' | 'reference' | 'experiment';
+
+export interface TeachingResource {
+  id: string;
+  title: string;
+  resource_type: TeachingResourceType;
+  subject?: string;
+  grade?: string;
+  content: string;
+  source_url?: string;
+  tags: string[];
+  status: 'active' | 'archived';
+  use_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type TeachingResourceInput = Omit<
+  TeachingResource,
+  'id' | 'status' | 'use_count' | 'created_at' | 'updated_at'
+>;
+
+export interface CourseArchive {
+  id: string;
+  course_name: string;
+  subject: string;
+  grade: string;
+  academic_year: string;
+  semester: 1 | 2;
+  teacher_name?: string;
+  textbook_id?: string;
+  total_hours: number;
+  hours_per_lesson: number;
+  start_week: number;
+  class_ids: string[];
+  resource_ids: string[];
+  location?: string;
+  notes?: string;
+  status: 'active' | 'archived';
+  batch_task_count: number;
+  lesson_plan_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CourseArchiveInput = Omit<
+  CourseArchive,
+  'id' | 'status' | 'batch_task_count' | 'lesson_plan_count' | 'created_at' | 'updated_at'
+>;
+
+export interface AIAnalyticsSummary {
+  period_days: number;
+  summary: {
+    calls: number;
+    total_tokens: number;
+    estimated_cost: number;
+    avg_latency_ms: number;
+    successes: number;
+    success_rate: number;
+  };
+  by_model: Array<{
+    provider: string;
+    model: string;
+    calls: number;
+    total_tokens: number;
+    estimated_cost: number;
+    avg_latency_ms: number;
+  }>;
+  daily: Array<{ date: string; calls: number; total_tokens: number; estimated_cost: number }>;
+  cost_notice: string;
+}
+
+export interface QualityAnalyticsSummary {
+  count: number;
+  average_score: number;
+  pass_rate: number;
+  dimensions: Record<string, number>;
+  recent: Array<{ score: number; dimensions: string; source_type: string; created_at: string }>;
 }
 
 export type GradeLevel =
@@ -431,6 +516,8 @@ export interface BatchTaskCreateRequest {
   chapters: ChapterInfo[];
   start_week?: number;
   class_ids?: string[];
+  resource_ids?: string[];
+  course_archive_id?: string;
   major_classes?: MajorClassSelection[];
   majors?: string[];
   class_numbers?: number[];
@@ -473,6 +560,8 @@ export interface BatchTask {
   chapters: ChapterInfo[];
   start_week?: number;
   class_ids?: string[];
+  resource_ids?: string[];
+  course_archive_id?: string;
   location?: string;
   class_names?: string;
   supplemental_artifacts?: CoursePlanArtifactType[];
@@ -674,6 +763,8 @@ export interface DraftTaskCreateRequest {
   total_hours: number;
   hours_per_lesson?: number;
   chapters: ChapterInfo[];
+  resource_ids?: string[];
+  course_archive_id?: string;
   major_classes?: MajorClassSelection[];
   majors?: string[];
   class_numbers?: number[];

@@ -5,12 +5,14 @@ import asyncio
 import json
 import logging
 import ssl
+import time
 from typing import Optional, Dict, Any, Callable, Type, Tuple
 from abc import ABC, abstractmethod
 
 import httpx
 
 from ..config import DEEPSEEK_DEFAULT_MODEL, normalize_deepseek_model, settings
+from .ai_metrics import record_ai_usage
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,7 @@ class AIProvider(ABC):
         self.max_tokens = max_tokens if max_tokens is not None else settings.ai_max_tokens
         self.temperature = settings.ai_temperature
         self.timeout = settings.ai_timeout
+        self.last_usage: Dict[str, Any] = {}
 
     @abstractmethod
     async def generate(
@@ -189,7 +192,9 @@ class DeepSeekProvider(AIProvider):
                         f"Request payload: {json.dumps(payload, ensure_ascii=False)}"
                     )
 
-                return self._parse_response(response.json())
+                response_data = response.json()
+                self.last_usage = response_data.get("usage") or {}
+                return self._parse_response(response_data)
 
         # 使用重试装饰器
         return await retry_with_backoff(_do_generate)
@@ -330,7 +335,9 @@ class AnthropicProvider(AIProvider):
                         f"Anthropic API error (status {e.response.status_code}): {error_detail}"
                     )
 
-                return self._parse_response(response.json())
+                response_data = response.json()
+                self.last_usage = response_data.get("usage") or {}
+                return self._parse_response(response_data)
 
         # 使用重试装饰器
         return await retry_with_backoff(_do_generate)
@@ -465,8 +472,41 @@ async def generate_with_ai(
         AI生成的内容
     """
     ai_provider = AIProviderFactory.create_provider(provider, api_key, model, max_tokens)
-    return await ai_provider.generate(
-        prompt,
-        system_prompt,
-        response_format=response_format,
-    )
+    started = time.perf_counter()
+    provider_name = provider or settings.ai_provider
+    provider_model = getattr(ai_provider, "model", model or settings.get_active_model())
+    try:
+        result = await ai_provider.generate(
+            prompt,
+            system_prompt,
+            response_format=response_format,
+        )
+        usage = getattr(ai_provider, "last_usage", {})
+        prompt_tokens = int(
+            usage.get("prompt_tokens") or usage.get("input_tokens")
+            or max(1, len(prompt + (system_prompt or "")) // 2)
+        )
+        completion_tokens = int(
+            usage.get("completion_tokens") or usage.get("output_tokens")
+            or max(1, len(result) // 2)
+        )
+        cached_tokens = int(
+            usage.get("prompt_cache_hit_tokens")
+            or usage.get("cache_read_input_tokens") or 0
+        )
+        await record_ai_usage(
+            provider=provider_name, model=provider_model, status="success",
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            cached_input_tokens=cached_tokens,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+        )
+        return result
+    except Exception as exc:
+        await record_ai_usage(
+            provider=provider_name, model=provider_model, status="failed",
+            prompt_tokens=max(1, len(prompt + (system_prompt or "")) // 2),
+            completion_tokens=0,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            error_message=str(exc)[:500],
+        )
+        raise

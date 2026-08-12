@@ -1,0 +1,4 @@
+interface:
+  display_name: "发布并部署 Lesson Tools"
+  short_description: "Push Git changes and safely redeploy the Lesson Tools VPS"
+  default_prompt: "Use $deploy-lesson-tools to validate, push, and safely redeploy Lesson Tools to the VPS."

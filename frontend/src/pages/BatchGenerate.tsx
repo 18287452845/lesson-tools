@@ -12,7 +12,7 @@
  * - Optional chapter references, AI always splits by hours
  */
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Card,
   Steps,
@@ -57,10 +57,12 @@ import type {
   TextbookInfo,
   FixedTemplateValidation,
   CoursePlanArtifactType,
+  TeachingResource,
 } from '@/types';
 import { batchApi } from '@/services/batchApi';
 import { templateApi } from '@/services/api';
 import { textbookApi } from '@/services/textbookApi';
+import { courseArchiveApi, resourceApi } from '@/services/workspaceApi';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -196,6 +198,7 @@ const buildOutlineFromTextbook = (chapters: TextbookInfo['chapters']): OutlineNo
 
 const BatchGenerate: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [form] = Form.useForm();
   const selectedSupplementalArtifacts = (
     Form.useWatch('supplemental_artifacts', form) || []
@@ -238,6 +241,7 @@ const BatchGenerate: React.FC = () => {
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [cachedTemplates, setCachedTemplates] = useState<CourseChapterTemplate[]>([]);
   const [textbooks, setTextbooks] = useState<TextbookInfo[]>([]);
+  const [resources, setResources] = useState<TeachingResource[]>([]);
   const [fixedTemplateReports, setFixedTemplateReports] = useState<FixedTemplateValidation[]>([]);
   const [selectedTextbookId, setSelectedTextbookId] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
@@ -263,6 +267,31 @@ const BatchGenerate: React.FC = () => {
     loadTemplates();
     loadCachedTemplates();
     loadTextbooks();
+    resourceApi.list({ limit: 100 }).then((data) => setResources(data.resources)).catch(() => setResources([]));
+    const archiveId = searchParams.get('course_archive_id');
+    if (archiveId) {
+      courseArchiveApi.get(archiveId).then(async (archive) => {
+        form.setFieldsValue({
+          course_name: archive.course_name,
+          subject: archive.subject,
+          grade: archive.grade,
+          total_hours: archive.total_hours,
+          hours_per_lesson: archive.hours_per_lesson,
+          start_week: archive.start_week,
+          location: archive.location,
+          academic_year: archive.academic_year,
+          semester: archive.semester,
+          teacher_name: archive.teacher_name,
+          resource_ids: archive.resource_ids,
+          course_archive_id: archive.id,
+        });
+        if (archive.textbook_id) {
+          const textbook = await textbookApi.getTextbook(archive.textbook_id);
+          setSelectedTextbookId(textbook.id);
+          form.setFieldValue('textbook_name', textbook.name);
+        }
+      }).catch(() => message.error('课程档案加载失败'));
+    }
     templateApi.validateAllTemplates()
       .then(setFixedTemplateReports)
       .catch(() => setFixedTemplateReports([]));
@@ -601,6 +630,8 @@ const BatchGenerate: React.FC = () => {
           total_hours: values.total_hours,
           hours_per_lesson: values.hours_per_lesson ?? 2,
           chapters,
+          resource_ids: values.resource_ids,
+          course_archive_id: values.course_archive_id,
           major_classes: values.major_classes,
           textbook_name: values.textbook_name,
           location: values.location,
@@ -623,6 +654,8 @@ const BatchGenerate: React.FC = () => {
           total_hours: values.total_hours,
           hours_per_lesson: values.hours_per_lesson ?? 2,
           chapters,
+          resource_ids: values.resource_ids,
+          course_archive_id: values.course_archive_id,
           start_week: values.start_week ?? 1,
           major_classes: values.major_classes,
           locations: values.locations,
@@ -1231,6 +1264,19 @@ const BatchGenerate: React.FC = () => {
                       disabled={!!selectedCachedTemplateId && chapters.length > 0}
                     />
                   </Form.Item>
+                </Col>
+
+                <Col xs={24}>
+                  <Form.Item name="resource_ids" label="教学资源库（可多选）">
+                    <Select
+                      mode="multiple"
+                      allowClear
+                      optionFilterProp="label"
+                      placeholder="关联案例、活动、作业、量规或实验资源"
+                      options={resources.map((item) => ({ value: item.id, label: item.title }))}
+                    />
+                  </Form.Item>
+                  <Form.Item name="course_archive_id" hidden><Input /></Form.Item>
                 </Col>
 
                 <Col xs={24}>

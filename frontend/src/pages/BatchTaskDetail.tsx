@@ -30,6 +30,7 @@ import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   ExclamationCircleOutlined,
+  RedoOutlined,
 } from '@ant-design/icons';
 import type { BatchTask, LessonPlan, GeneratedContent as GeneratedContentType } from '@/types';
 import { batchApi } from '@/services/batchApi';
@@ -55,6 +56,14 @@ const BatchTaskDetail: React.FC = () => {
       loadLessonPlans();
     }
   }, [taskId]);
+
+  useEffect(() => {
+    if (!taskId || !task || !['pending', 'processing'].includes(task.status)) return;
+    const timer = window.setInterval(() => {
+      void loadTaskDetails();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [taskId, task?.status]);
 
   const loadTaskDetails = async () => {
     try {
@@ -142,6 +151,16 @@ const BatchTaskDetail: React.FC = () => {
     }
   };
 
+  const handleRestart = async (failedOnly: boolean) => {
+    try {
+      if (failedOnly) await batchApi.retryFailed(taskId!); else await batchApi.resume(taskId!);
+      message.success(failedOnly ? '失败课次已进入重试队列' : '任务已从断点继续');
+      await loadTaskDetails();
+    } catch (error: any) {
+      message.error(error.message || '任务启动失败');
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     const statusConfig: Record<string, { icon: React.ReactNode; color: string; text: string }> = {
       pending: { icon: <ClockCircleOutlined />, color: 'default', text: '等待中' },
@@ -202,6 +221,14 @@ const BatchTaskDetail: React.FC = () => {
           <Title level={2} style={{ margin: 0 }}>
             批量任务详情
           </Title>
+        </Space>
+        <Space>
+          {task.failed_count > 0 && task.status !== 'processing' && task.status !== 'pending' && (
+            <Button type="primary" icon={<RedoOutlined />} onClick={() => void handleRestart(true)}>重试失败课次</Button>
+          )}
+          {['failed', 'cancelled'].includes(task.status) && (
+            <Button icon={<RedoOutlined />} onClick={() => void handleRestart(false)}>从断点续跑</Button>
+          )}
         </Space>
       </div>
 

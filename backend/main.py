@@ -9,12 +9,13 @@ import logging
 
 from .config import settings
 from .models.database import init_db, db
-from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans, textbooks, textbook_discovery, subjects, grades, competition, preparation
+from .api import templates, generate, edit, documents, settings as settings_api, batch, classes, lesson_plans, textbooks, textbook_discovery, subjects, grades, competition, preparation, resources, course_archives, analytics
 from .services.builtin_template import (
     ensure_builtin_template_registered,
     validate_all_builtin_templates,
 )
 from .services.metadata_sync import init_metadata
+from .services.batch_execution import recover_interrupted_batch_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,11 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         logger.error(f"模板同步失败: {str(e)}")
+
+    try:
+        await recover_interrupted_batch_tasks()
+    except Exception as e:
+        logger.error("批量任务断点恢复失败: %s", e, exc_info=True)
 
     yield
     # Cleanup on shutdown
@@ -97,6 +103,9 @@ app.include_router(subjects.router, prefix=settings.api_prefix, tags=["subjects"
 app.include_router(grades.router, prefix=settings.api_prefix, tags=["grades"])
 app.include_router(competition.router, prefix=settings.api_prefix, tags=["competition"])
 app.include_router(preparation.router, prefix=settings.api_prefix, tags=["preparation"])
+app.include_router(resources.router, prefix=settings.api_prefix, tags=["resources"])
+app.include_router(course_archives.router, prefix=settings.api_prefix, tags=["course-archives"])
+app.include_router(analytics.router, prefix=settings.api_prefix, tags=["analytics"])
 
 
 @app.get("/")

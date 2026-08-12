@@ -133,6 +133,11 @@ class TestDatabase:
             "grades",
             "competition_projects",
             "competition_outputs",
+            "teaching_resources",
+            "course_archives",
+            "course_archive_resources",
+            "ai_usage_metrics",
+            "content_quality_metrics",
         }
 
         assert tables == expected_tables
