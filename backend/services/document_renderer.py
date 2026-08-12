@@ -42,6 +42,7 @@ class DocumentRenderer:
     _STRIKE_PATTERN = re.compile(r'~~([^~]+)~~')
     _INLINE_CODE_PATTERN = re.compile(r'`([^`]+)`')
     _WHITESPACE_CLEANUP_PATTERN = re.compile(r'[ \t]{2,}')
+    _BODY_FIRST_LINE_CHARACTERS = "200"
 
     def __init__(self):
         """Initialize the document renderer."""
@@ -220,6 +221,102 @@ class DocumentRenderer:
             for height in list(row_properties.findall(W + "trHeight")):
                 row_properties.remove(height)
 
+        def apply_body_first_line_indent(paragraph: etree._Element) -> None:
+            """Apply Word's native two-character first-line indent."""
+            if not has_visible_content(paragraph):
+                return
+
+            paragraph_properties = paragraph.find(W + "pPr")
+            if paragraph_properties is None:
+                paragraph_properties = etree.Element(W + "pPr")
+                paragraph.insert(0, paragraph_properties)
+
+            indentation = paragraph_properties.find(W + "ind")
+            if indentation is None:
+                indentation = etree.SubElement(paragraph_properties, W + "ind")
+
+            # ``firstLineChars`` is measured in hundredths of a character.
+            # Remove conflicting distance/hanging indents while preserving
+            # any existing left/right indentation from the fixed template.
+            for attribute in ("firstLine", "hanging", "hangingChars"):
+                indentation.attrib.pop(W + attribute, None)
+            indentation.set(
+                W + "firstLineChars",
+                DocumentRenderer._BODY_FIRST_LINE_CHARACTERS,
+            )
+
+        def split_paragraph_at_text_breaks(
+            paragraph: etree._Element,
+        ) -> List[etree._Element]:
+            """Turn authored line breaks into real body paragraphs.
+
+            A first-line indent applies only to the first visual line of a
+            Word paragraph. The fixed template and docxtpl often encode
+            teacher/student activities and homepage sections as ``w:br``
+            nodes inside one paragraph, so split those logical paragraphs
+            before applying the indentation.
+            """
+            if not paragraph.xpath(".//w:br", namespaces=NS):
+                return [paragraph]
+
+            parent = paragraph.getparent()
+            insertion_index = parent.index(paragraph)
+            paragraph_properties = paragraph.find(W + "pPr")
+            segments: List[etree._Element] = []
+
+            def start_segment() -> etree._Element:
+                segment = etree.Element(W + "p")
+                if paragraph_properties is not None:
+                    segment.append(deepcopy(paragraph_properties))
+                return segment
+
+            current = start_segment()
+
+            def finish_segment() -> None:
+                nonlocal current
+                if has_visible_content(current):
+                    segments.append(current)
+                current = start_segment()
+
+            for child in paragraph:
+                if child.tag == W + "pPr":
+                    continue
+                if child.tag != W + "r":
+                    current.append(deepcopy(child))
+                    continue
+
+                run_properties = child.find(W + "rPr")
+                current_run: Optional[etree._Element] = None
+                for run_child in child:
+                    if run_child.tag == W + "rPr":
+                        continue
+                    if (
+                        run_child.tag == W + "br"
+                        and run_child.get(W + "type") in {None, "textWrapping"}
+                    ):
+                        if current_run is not None and len(current_run):
+                            current.append(current_run)
+                        current_run = None
+                        finish_segment()
+                        continue
+                    if current_run is None:
+                        current_run = etree.Element(W + "r")
+                        if run_properties is not None:
+                            current_run.append(deepcopy(run_properties))
+                    current_run.append(deepcopy(run_child))
+                if current_run is not None and len(current_run):
+                    current.append(current_run)
+
+            if has_visible_content(current):
+                segments.append(current)
+            if not segments:
+                return [paragraph]
+
+            parent.remove(paragraph)
+            for offset, segment in enumerate(segments):
+                parent.insert(insertion_index + offset, segment)
+            return segments
+
         with zipfile.ZipFile(document_path, "r") as source:
             root = etree.fromstring(source.read("word/document.xml"))
             tables = root.xpath("/w:document/w:body/w:tbl", namespaces=NS)
@@ -277,6 +374,32 @@ class DocumentRenderer:
                             break
                         if child.tag == W + "p" and not has_visible_content(child):
                             body.remove(child)
+
+            # The fixed Yunlin lesson-plan template keeps its narrative body
+            # in homepage rows 7-11 and in the right-hand content column of
+            # the teaching-process table. Metadata, labels, and table headers
+            # deliberately retain their original alignment.
+            if tables:
+                homepage_rows = tables[0].xpath("./w:tr", namespaces=NS)
+                for row_index in range(7, min(12, len(homepage_rows))):
+                    for cell in homepage_rows[row_index].xpath("./w:tc", namespaces=NS):
+                        paragraphs: List[etree._Element] = []
+                        for paragraph in cell.xpath("./w:p", namespaces=NS):
+                            paragraphs.extend(split_paragraph_at_text_breaks(paragraph))
+                        for paragraph in paragraphs[1:]:
+                            apply_body_first_line_indent(paragraph)
+
+            if len(tables) > 1:
+                process_rows = tables[1].xpath("./w:tr", namespaces=NS)
+                for row in process_rows[1:]:
+                    cells = row.xpath("./w:tc", namespaces=NS)
+                    if len(cells) < 2:
+                        continue
+                    paragraphs: List[etree._Element] = []
+                    for paragraph in cells[-1].xpath("./w:p", namespaces=NS):
+                        paragraphs.extend(split_paragraph_at_text_breaks(paragraph))
+                    for paragraph in paragraphs:
+                        apply_body_first_line_indent(paragraph)
 
             patched_xml = etree.tostring(
                 root,

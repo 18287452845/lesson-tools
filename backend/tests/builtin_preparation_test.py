@@ -184,13 +184,32 @@ def test_yunlin_lesson_plan_renders(tmp_path: pathlib.Path, preparation_data):
     assert "{{" not in all_text
     assert "授课学时：  2 学时" in all_text
     objective_cell = document.tables[0].rows[7].cells[0]
-    assert len(objective_cell.paragraphs) == 1
     assert "\n\n" not in objective_cell.text
+    assert all(paragraph.text.strip() for paragraph in objective_cell.paragraphs)
     for row_index in range(7, 12):
         assert document.tables[0].rows[row_index]._tr.trPr.find(qn("w:cantSplit")) is None
     assert document.tables[1].rows[4]._tr.trPr.find(qn("w:cantSplit")) is not None
     assert document.tables[1].rows[5]._tr.trPr.find(qn("w:trHeight")) is None
     assert document.tables[1].rows[6]._tr.trPr.find(qn("w:trHeight")) is None
+
+    def first_line_characters(paragraph):
+        properties = paragraph._p.pPr
+        indentation = properties.find(qn("w:ind")) if properties is not None else None
+        return indentation.get(qn("w:firstLineChars")) if indentation is not None else None
+
+    assert first_line_characters(objective_cell.paragraphs[0]) is None
+    for paragraph in objective_cell.paragraphs[1:]:
+        assert first_line_characters(paragraph) == "200"
+    for row in document.tables[1].rows[1:]:
+        content_cell = row.cells[-1]
+        for paragraph in content_cell.paragraphs:
+            if paragraph.text.strip():
+                assert first_line_characters(paragraph) == "200"
+
+    # Homepage metadata and teaching-process headers keep the template's
+    # original alignment instead of receiving body-text indentation.
+    assert first_line_characters(document.tables[0].rows[0].cells[0].paragraphs[0]) is None
+    assert first_line_characters(document.tables[1].rows[0].cells[-1].paragraphs[0]) is None
 
 
 def test_batch_lesson_plan_compacts_each_homepage(tmp_path: pathlib.Path, preparation_data):
@@ -221,8 +240,8 @@ def test_batch_lesson_plan_compacts_each_homepage(tmp_path: pathlib.Path, prepar
     assert len(document.tables) == 4
     for table_index in (0, 2):
         objective_cell = document.tables[table_index].rows[7].cells[0]
-        assert len(objective_cell.paragraphs) == 1
         assert "\n\n" not in objective_cell.text
+        assert all(paragraph.text.strip() for paragraph in objective_cell.paragraphs)
 
     body = document.element.body
     assert body[-2].tag == qn("w:tbl")
