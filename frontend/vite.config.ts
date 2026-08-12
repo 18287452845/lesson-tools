@@ -18,7 +18,10 @@ export default defineConfig({
       },
     },
   },
-  base: './',
+  // Web deployments need root-relative assets so nested SPA routes such as
+  // /batch-tasks/:id can load the bundle after a direct navigation. The
+  // Electron packaging script overrides this with --base ./ for file:// URLs.
+  base: '/',
   build: {
     outDir: 'dist',
     emptyOutDir: true,
