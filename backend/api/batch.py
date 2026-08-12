@@ -1164,6 +1164,12 @@ async def get_task_lesson_plans(
         task_dict["chapters"] = json.loads(task_dict["chapters"])
         task_dict["class_ids"] = json.loads(task_dict.get("class_ids") or "[]")
         task_dict["generate_reflection"] = bool(task_dict.get("generate_reflection", 0))
+        task_dict["supplemental_artifacts"] = json.loads(
+            task_dict.get("supplemental_artifacts") or "[]"
+        )
+        task_dict["experiment_schedules"] = json.loads(
+            task_dict.get("experiment_schedules") or "[]"
+        )
         task = BatchTask(**task_dict)
 
         # Get total count of lesson plans for this task

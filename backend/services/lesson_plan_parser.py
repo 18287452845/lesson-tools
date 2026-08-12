@@ -61,7 +61,7 @@ class LessonPlanParser:
             r"Difficult\s+Points?\s*[：:]*",
         ],
         "teaching_tools": [
-            r"教具?\s*(?:准备)?\s*[：:]*",
+            r"教具\s*(?:准备)?\s*[：:]*",
             r"学具\s*(?:准备)?\s*[：:]*",
             r"教学准备\s*[：:]*",
             r"课前准备\s*[：:]*",

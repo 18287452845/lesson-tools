@@ -9,6 +9,8 @@ from copy import deepcopy
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.oxml import OxmlElement
+from docx.text.paragraph import Paragraph
 
 from ..services.lesson_plan_parser import SectionInfo
 
@@ -383,15 +385,18 @@ class DocumentModifier:
         # Paragraph spacing
         if para.paragraph_format:
             fmt.line_spacing = para.paragraph_format.line_spacing
-            fmt.space_before = para.paragraph_format.space_before
-            fmt.space_after = para.paragraph_format.space_after
+            if para.paragraph_format.space_before is not None:
+                fmt.space_before = para.paragraph_format.space_before.pt
+            if para.paragraph_format.space_after is not None:
+                fmt.space_after = para.paragraph_format.space_after.pt
 
         # Run formatting (from first run)
         if para.runs:
             run = para.runs[0]
             if run.font:
                 fmt.font_name = run.font.name
-                fmt.font_size = run.font.size
+                if run.font.size is not None:
+                    fmt.font_size = run.font.size.pt
                 fmt.bold = run.font.bold
                 fmt.italic = run.font.italic
                 fmt.underline = run.font.underline
@@ -477,10 +482,11 @@ class DocumentModifier:
             para = self.doc.add_paragraph(text)
         else:
             # Insert in the middle
-            new_para = self.doc.paragraphs[idx]._element.addnext(
-                self.doc.paragraphs[idx]._element.__class__()
-            )
-            para = self.doc.paragraphs[idx + 1]
+            target = self.doc.paragraphs[idx]
+            new_element = OxmlElement("w:p")
+            target._element.addnext(new_element)
+            para = Paragraph(new_element, target._parent)
+            para.add_run(text)
 
         if fmt:
             self._apply_paragraph_format(para, fmt)
@@ -490,12 +496,14 @@ class DocumentModifier:
     def _is_section_header(self, text: str) -> bool:
         """Check if text is a section header."""
         from ..services.lesson_plan_parser import LessonPlanParser
-        return LessonPlanParser._match_section_header(self, text) is not None
+        return LessonPlanParser(self.doc_path)._match_section_header(text) is not None
 
     def _extract_header_text(self, text: str) -> str:
         """Extract just the header portion of text."""
         # Match common section header patterns
         import re
+        from ..services.lesson_plan_parser import LessonPlanParser
+
         for patterns in LessonPlanParser.SECTION_PATTERNS.values():
             for pattern in patterns:
                 match = re.search(pattern, text)
