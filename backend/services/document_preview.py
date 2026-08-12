@@ -89,6 +89,19 @@ def _rgb(value, fallback: str) -> str:
         return fallback
 
 
+def _contrast_text_color(background: str) -> str:
+    """Choose a legible fallback for theme/inherited text colors."""
+    try:
+        red, green, blue = (
+            int(background[index:index + 2], 16) / 255
+            for index in (1, 3, 5)
+        )
+    except (TypeError, ValueError):
+        return "#20352f"
+    luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+    return "#ffffff" if luminance < 0.45 else "#20352f"
+
+
 def pptx_to_html(path: Path) -> str:
     presentation = Presentation(path)
     slide_width = float(presentation.slide_width)
@@ -99,6 +112,7 @@ def pptx_to_html(path: Path) -> str:
             background = _rgb(slide.background.fill.fore_color, "#ffffff")
         except (AttributeError, TypeError, ValueError):
             background = "#ffffff"
+        fallback_text_color = _contrast_text_color(background)
         shapes: list[str] = []
         for shape in slide.shapes:
             if not getattr(shape, "has_text_frame", False) or not shape.text.strip():
@@ -112,7 +126,7 @@ def pptx_to_html(path: Path) -> str:
                 runs = []
                 for run in paragraph.runs:
                     size = run.font.size.pt if run.font.size else 20
-                    color = _rgb(run.font.color, "#20352f")
+                    color = _rgb(run.font.color, fallback_text_color)
                     weight = "700" if run.font.bold else "400"
                     runs.append(
                         f'<span style="font-size:{max(10, min(size, 54))}px;color:{color};font-weight:{weight}">{escape(run.text)}</span>'

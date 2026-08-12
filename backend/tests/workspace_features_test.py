@@ -5,6 +5,7 @@ import pytest
 from docx import Document
 from fastapi import HTTPException
 from pptx import Presentation
+from pptx.dml.color import RGBColor
 from pptx.util import Inches
 
 from backend.api import analytics, batch, course_archives, resources
@@ -164,11 +165,14 @@ def test_docx_and_pptx_html_preview(tmp_path: Path):
     pptx_path = tmp_path / "preview.pptx"
     presentation = Presentation()
     slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = RGBColor(0x17, 0x4A, 0x3D)
     textbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(5), Inches(1))
     textbox.text_frame.paragraphs[0].text = "课堂演示"
     presentation.save(pptx_path)
     html = document_preview.render_document_preview(pptx_path)
     assert "课堂演示" in html and "aspect-ratio:16/9" in html
+    assert "background:#174A3D" in html and "color:#ffffff" in html
     with pytest.raises(ValueError):
         document_preview.render_document_preview(tmp_path / "other.pdf")
 
