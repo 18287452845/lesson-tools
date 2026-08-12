@@ -29,8 +29,12 @@ from .experiment_names import validate_experiment_chapters
 CoursePlanType = Literal["teaching_plan", "experiment_plan"]
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 NS = {"w": W_NS}
 W = f"{{{W_NS}}}"
+R = f"{{{R_NS}}}"
 
 
 @dataclass(frozen=True)
@@ -54,7 +58,7 @@ TEMPLATE_SPECS: dict[CoursePlanType, CoursePlanTemplateSpec] = {
         sha256="1e08531f22f93dc7cfa6a15d53a4f43829f1cb1feb8ce96aa1203920756607b8",
         title="云南林业职业技术学院教师授课计划表",
         table_shapes=((4, 9), (4, 9), (5, 9), (5, 9), (5, 9), (6, 9)),
-        capacity=16,
+        capacity=18,
     ),
     "experiment_plan": CoursePlanTemplateSpec(
         type="experiment_plan",
@@ -229,6 +233,15 @@ def _set_page_break_before(paragraph: etree._Element) -> None:
         etree.SubElement(paragraph_properties, W + "pageBreakBefore")
 
 
+def _remove_page_break_before(paragraph: etree._Element) -> None:
+    paragraph_properties = paragraph.find(W + "pPr")
+    if paragraph_properties is None:
+        return
+    page_break = paragraph_properties.find(W + "pageBreakBefore")
+    if page_break is not None:
+        paragraph_properties.remove(page_break)
+
+
 def _set_run_text(
     run: etree._Element,
     value: str,
@@ -354,6 +367,108 @@ def _table_cells(row: etree._Element) -> list[etree._Element]:
     return row.xpath("./w:tc", namespaces=NS)
 
 
+def _set_repeating_table_header(row: etree._Element, enabled: bool) -> None:
+    row_properties = row.find(W + "trPr")
+    if row_properties is None:
+        row_properties = etree.Element(W + "trPr")
+        row.insert(0, row_properties)
+    for existing in list(row_properties.findall(W + "tblHeader")):
+        row_properties.remove(existing)
+    if enabled:
+        etree.SubElement(row_properties, W + "tblHeader").set(W + "val", "true")
+
+
+def _set_row_cant_split(row: etree._Element) -> None:
+    row_properties = row.find(W + "trPr")
+    if row_properties is None:
+        row_properties = etree.Element(W + "trPr")
+        row.insert(0, row_properties)
+    if row_properties.find(W + "cantSplit") is None:
+        etree.SubElement(row_properties, W + "cantSplit")
+
+
+def _set_row_keep_with_next(row: etree._Element) -> None:
+    """Keep a table row with the following row to avoid orphaned totals."""
+    for paragraph in row.xpath("./w:tc/w:p", namespaces=NS):
+        paragraph_properties = paragraph.find(W + "pPr")
+        if paragraph_properties is None:
+            paragraph_properties = etree.Element(W + "pPr")
+            paragraph.insert(0, paragraph_properties)
+        keep_next = paragraph_properties.find(W + "keepNext")
+        if keep_next is None:
+            keep_next = etree.SubElement(paragraph_properties, W + "keepNext")
+        keep_next.set(W + "val", "true")
+
+
+def _replace_run_with_field(
+    run: etree._Element,
+    instruction: str,
+    display_value: str,
+) -> None:
+    parent = run.getparent()
+    field = etree.Element(W + "fldSimple")
+    field.set(W + "instr", f" {instruction} ")
+    display_run = deepcopy(run)
+    _set_run_text(display_run, display_value)
+    field.append(display_run)
+    parent.replace(run, field)
+
+
+def _clear_cell_borders(cell: etree._Element) -> None:
+    cell_properties = cell.find(W + "tcPr")
+    if cell_properties is None:
+        cell_properties = etree.Element(W + "tcPr")
+        cell.insert(0, cell_properties)
+    borders = cell_properties.find(W + "tcBorders")
+    if borders is None:
+        borders = etree.SubElement(cell_properties, W + "tcBorders")
+    for edge_name in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        edge = borders.find(W + edge_name)
+        if edge is None:
+            edge = etree.SubElement(borders, W + edge_name)
+        edge.set(W + "val", "nil")
+
+
+def _make_full_width_paragraph_row(
+    template_row: etree._Element,
+    paragraph: etree._Element,
+    table: etree._Element,
+) -> etree._Element:
+    row = deepcopy(template_row)
+    _set_repeating_table_header(row, False)
+    _set_row_cant_split(row)
+    cells = _table_cells(row)
+    if len(cells) != 9:
+        raise ValueError("授课计划签字行结构已改变")
+
+    first_cell = cells[0]
+    for cell in cells[1:]:
+        row.remove(cell)
+    for existing_paragraph in first_cell.xpath("./w:p", namespaces=NS):
+        first_cell.remove(existing_paragraph)
+    first_cell.append(deepcopy(paragraph))
+
+    cell_properties = first_cell.find(W + "tcPr")
+    if cell_properties is None:
+        cell_properties = etree.Element(W + "tcPr")
+        first_cell.insert(0, cell_properties)
+    grid_span = cell_properties.find(W + "gridSpan")
+    if grid_span is None:
+        grid_span = etree.SubElement(cell_properties, W + "gridSpan")
+    grid_span.set(W + "val", "9")
+    widths = [
+        int(column.get(W + "w"))
+        for column in table.xpath("./w:tblGrid/w:gridCol", namespaces=NS)
+        if column.get(W + "w")
+    ]
+    cell_width = cell_properties.find(W + "tcW")
+    if cell_width is not None and widths:
+        cell_width.set(W + "w", str(sum(widths)))
+        cell_width.set(W + "type", "dxa")
+    _clear_cell_borders(first_cell)
+    return row
+
+
 def _patch_docx(
     template_path: Path,
     output_path: Path,
@@ -376,6 +491,97 @@ def _patch_docx(
                 payload = patched_xml if item.filename == "word/document.xml" else source.read(item.filename)
                 copied = deepcopy(item)
                 target.writestr(copied, payload)
+    return output_path
+
+
+def _patch_teaching_docx(
+    template_path: Path,
+    output_path: Path,
+    patcher: Callable[[etree._Element], etree._Element],
+) -> Path:
+    """Patch the body and add a real repeating Word header for adaptive pages."""
+    with zipfile.ZipFile(template_path, "r") as source:
+        root = etree.fromstring(source.read("word/document.xml"))
+        header_root = patcher(root)
+
+        relationships = etree.fromstring(source.read("word/_rels/document.xml.rels"))
+        used_ids = {
+            relationship.get("Id")
+            for relationship in relationships.findall(f"{{{PACKAGE_REL_NS}}}Relationship")
+        }
+        next_number = 1
+        while f"rId{next_number}" in used_ids:
+            next_number += 1
+        relationship_id = f"rId{next_number}"
+
+        header_number = 1
+        while f"word/header{header_number}.xml" in source.namelist():
+            header_number += 1
+        header_name = f"header{header_number}.xml"
+        header_path = f"word/{header_name}"
+
+        relationship = etree.SubElement(
+            relationships,
+            f"{{{PACKAGE_REL_NS}}}Relationship",
+        )
+        relationship.set("Id", relationship_id)
+        relationship.set(
+            "Type",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+        )
+        relationship.set("Target", header_name)
+
+        content_types = etree.fromstring(source.read("[Content_Types].xml"))
+        override = etree.SubElement(content_types, f"{{{CONTENT_TYPES_NS}}}Override")
+        override.set("PartName", f"/{header_path}")
+        override.set(
+            "ContentType",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+        )
+
+        section_properties = root.find(".//" + W + "sectPr")
+        if section_properties is None:
+            raise ValueError("授课计划模板缺少页面设置")
+        for existing in list(section_properties.findall(W + "headerReference")):
+            section_properties.remove(existing)
+        header_reference = etree.Element(W + "headerReference")
+        header_reference.set(W + "type", "default")
+        header_reference.set(R + "id", relationship_id)
+        section_properties.insert(0, header_reference)
+
+        payloads = {
+            "word/document.xml": etree.tostring(
+                root,
+                encoding="UTF-8",
+                xml_declaration=True,
+                standalone=True,
+            ),
+            "word/_rels/document.xml.rels": etree.tostring(
+                relationships,
+                encoding="UTF-8",
+                xml_declaration=True,
+                standalone=True,
+            ),
+            "[Content_Types].xml": etree.tostring(
+                content_types,
+                encoding="UTF-8",
+                xml_declaration=True,
+                standalone=True,
+            ),
+            header_path: etree.tostring(
+                header_root,
+                encoding="UTF-8",
+                xml_declaration=True,
+                standalone=True,
+            ),
+        }
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(output_path, "w") as target:
+            for item in source.infolist():
+                payload = payloads.get(item.filename, source.read(item.filename))
+                target.writestr(deepcopy(item), payload)
+            target.writestr(header_path, payloads[header_path])
     return output_path
 
 
@@ -416,12 +622,75 @@ def _compact_topic_lines(topics: Sequence[str]) -> list[str]:
 class CoursePlanRenderer:
     """Create fixed teaching/experiment plan documents from a batch schedule."""
 
-    teaching_slots = ((0, 2), (0, 3), (1, 2), (1, 3), (2, 2), (2, 3), (2, 4),
-                      (3, 2), (3, 3), (3, 4), (4, 2), (4, 3), (4, 4),
-                      (5, 2), (5, 3), (5, 4))
-
     def __init__(self, output_dir: Path | None = None):
         self.output_dir = Path(output_dir or settings.output_dir)
+
+    @staticmethod
+    def _prepare_adaptive_teaching_layout(
+        root: etree._Element,
+        group_count: int,
+    ) -> tuple[etree._Element, list[etree._Element], etree._Element]:
+        """Build one flowing table whose header repeats on every physical page."""
+        paragraphs = _direct_paragraphs(root)
+        tables = _direct_tables(root)
+        if len(paragraphs) != 19 or len(tables) != 6:
+            raise ValueError("授课计划模板分页结构已改变")
+
+        header_root = etree.Element(W + "hdr", nsmap={"w": W_NS, "r": R_NS})
+        title_paragraph = deepcopy(paragraphs[0])
+        metadata_paragraph = deepcopy(paragraphs[1])
+        _remove_page_break_before(metadata_paragraph)
+        header_root.append(title_paragraph)
+        header_root.append(metadata_paragraph)
+
+        continuous_table = deepcopy(tables[0])
+        continuous_rows = continuous_table.xpath("./w:tr", namespaces=NS)
+        if len(continuous_rows) < 3:
+            raise ValueError("授课计划表头结构已改变")
+        for row in continuous_rows[2:]:
+            continuous_table.remove(row)
+        for row in continuous_rows[:2]:
+            _set_repeating_table_header(row, True)
+            _set_row_cant_split(row)
+
+        source_rows = tables[5].xpath("./w:tr", namespaces=NS)
+        if len(source_rows) != 6:
+            raise ValueError("授课计划末页表格结构已改变")
+        data_template = source_rows[2]
+        data_rows: list[etree._Element] = []
+        for _ in range(group_count):
+            row = deepcopy(data_template)
+            _set_repeating_table_header(row, False)
+            _set_row_cant_split(row)
+            continuous_table.append(row)
+            data_rows.append(row)
+
+        total_row = deepcopy(source_rows[-1])
+        _set_repeating_table_header(total_row, False)
+        _set_row_cant_split(total_row)
+        if data_rows:
+            _set_row_keep_with_next(data_rows[-1])
+        _set_row_keep_with_next(total_row)
+        continuous_table.append(total_row)
+        continuous_table.append(
+            _make_full_width_paragraph_row(
+                data_template,
+                paragraphs[18],
+                continuous_table,
+            )
+        )
+
+        body = root.find(W + "body")
+        if body is None:
+            raise ValueError("授课计划模板正文结构已改变")
+        section_properties = body.find(W + "sectPr")
+        if section_properties is None:
+            raise ValueError("授课计划模板缺少页面设置")
+        for child in list(body):
+            if child is not section_properties:
+                body.remove(child)
+        section_properties.addprevious(continuous_table)
+        return header_root, data_rows, total_row
 
     def render_teaching_plan(
         self,
@@ -454,33 +723,61 @@ class CoursePlanRenderer:
         )
         output_path = self.output_dir / f"{batch_task_id}_{output_name}"
 
-        def patch(root: etree._Element) -> None:
-            paragraphs = _direct_paragraphs(root)
-            for title_index in (4, 8, 10, 13, 16):
-                _set_page_break_before(paragraphs[title_index])
-            for paragraph_index in (1, 5, 9, 11, 14, 17):
-                runs = _direct_runs(paragraphs[paragraph_index])
-                if len(runs) < 14:
-                    raise ValueError("授课计划元数据段结构已改变")
-                _set_run_text(runs[1], f" {course_name}")
-                _set_run_text(runs[4], academic_year)
-                _set_run_text(runs[6], str(semester))
-                _set_run_text(runs[8], "")
-                _set_run_text(runs[9], "")
-                _set_run_text(runs[10], class_display)
-                _set_run_text(runs[11], "")
-                _set_run_text(runs[13], teacher_name)
+        def patch(root: etree._Element) -> etree._Element:
+            header_root, data_rows, total_row = self._prepare_adaptive_teaching_layout(
+                root,
+                len(groups),
+            )
+            header_paragraphs = header_root.xpath("./w:p", namespaces=NS)
+            if len(header_paragraphs) != 2:
+                raise ValueError("授课计划页眉结构已改变")
+            runs = _direct_runs(header_paragraphs[1])
+            if len(runs) < 14:
+                raise ValueError("授课计划元数据段结构已改变")
+            _set_run_text(runs[1], f" {course_name}")
+            _set_run_text(runs[4], academic_year)
+            _set_run_text(runs[6], str(semester))
+            _set_run_text(runs[8], "")
+            _set_run_text(runs[9], "")
+            _set_run_text(runs[10], class_display)
+            _set_run_text(runs[11], "")
+            _set_run_text(runs[13], teacher_name)
 
-            tables = _direct_tables(root)
-            for slot_index, (table_index, row_index) in enumerate(self.teaching_slots):
-                row = tables[table_index].xpath("./w:tr", namespaces=NS)[row_index]
+            marker_index = next(
+                (
+                    index
+                    for index, run in enumerate(runs)
+                    if "页第" in "".join(run.xpath(".//w:t/text()", namespaces=NS))
+                ),
+                None,
+            )
+            if marker_index is None:
+                raise ValueError("授课计划页码段结构已改变")
+            total_index = next(
+                (
+                    index
+                    for index in range(marker_index - 1, -1, -1)
+                    if "".join(runs[index].xpath(".//w:t/text()", namespaces=NS)).strip().isdigit()
+                ),
+                None,
+            )
+            current_index = next(
+                (
+                    index
+                    for index in range(marker_index + 1, len(runs))
+                    if "".join(runs[index].xpath(".//w:t/text()", namespaces=NS)).strip().isdigit()
+                ),
+                None,
+            )
+            if total_index is None or current_index is None:
+                raise ValueError("授课计划页码段结构已改变")
+            _replace_run_with_field(runs[total_index], "NUMPAGES", "1")
+            _replace_run_with_field(runs[current_index], "PAGE", "1")
+
+            for slot_index, row in enumerate(data_rows):
                 cells = _table_cells(row)
                 if len(cells) != 9:
                     raise ValueError("授课计划数据行结构已改变")
-                if slot_index >= len(groups):
-                    for cell in cells:
-                        _set_cell_text(cell, "")
-                    continue
 
                 group = groups[slot_index]
                 weekly_hours = len(group) * hours_per_lesson
@@ -521,15 +818,15 @@ class CoursePlanRenderer:
                 for cell, value in zip(cells, values):
                     _set_cell_text(cell, value)
 
-            total_row = tables[5].xpath("./w:tr", namespaces=NS)[5]
             total_cells = _table_cells(total_row)
             theory_total = total_hours // 2
             practice_total = total_hours - theory_total
             for index, value in ((1, "总课时"), (2, str(theory_total)),
                                  (3, str(practice_total)), (4, str(total_hours))):
                 _set_cell_text(total_cells[index], value)
+            return header_root
 
-        return str(_patch_docx(spec.path, output_path, patch))
+        return str(_patch_teaching_docx(spec.path, output_path, patch))
 
     def render_experiment_plans(
         self,

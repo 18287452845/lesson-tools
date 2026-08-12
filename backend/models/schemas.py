@@ -246,6 +246,16 @@ class TextbookInfo(BaseModel):
     edition: Optional[str] = None
     subject: Optional[str] = None
     grade: Optional[str] = None
+    total_hours: int = Field(
+        default=0,
+        ge=0,
+        description="教材章节建议课时汇总（层级章节不重复累计）",
+    )
+    main_chapter_count: int = Field(
+        default=0,
+        ge=0,
+        description="主要教学大章节数量，不包含篇级分组、子章节和附录",
+    )
     cover_image: Optional[str] = None
     description: Optional[str] = None
     status: str
@@ -900,8 +910,8 @@ class BatchTaskCreateRequest(BaseModel):
                 raise ValueError(f"{label}必须是 YYYY-MM-DD 格式") from exc
 
         week_count = (len(self.chapters) + 1) // 2
-        if "teaching_plan" in self.supplemental_artifacts and week_count > 16:
-            raise ValueError(f"授课计划固定模板最多 16 周，当前为 {week_count} 周")
+        if "teaching_plan" in self.supplemental_artifacts and week_count > 18:
+            raise ValueError(f"授课计划最多支持 18 周，当前为 {week_count} 周")
 
         if "experiment_plan" in self.supplemental_artifacts:
             has_explicit = any(chapter.experiment_name for chapter in self.chapters)

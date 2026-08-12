@@ -44,9 +44,10 @@ class TextbookChapterGenerator:
 ## 任务要求
 1. 如果是常见教材（如人教版、苏教版、高等教育出版社教材等），请根据真实章节结构生成
 2. 如果是不常见的教材，请根据学科特点和教学规律，合理推断章节结构
-3. 结构要完整，覆盖该教材所有主要章节
-4. 每个章节都要提供内容概述和核心概念
-5. 合理估算每个章节所需课时数
+3. 结构要完整，除一级大章节外，应尽量识别“节、任务、知识点”等子章节
+4. 使用扁平数组表达父子关系，最多支持5级；每项必须提供唯一 client_id，子章节通过 parent_chapter_id 指向父项
+5. 每个章节都要提供内容概述和核心概念
+6. 合理估算每个章节所需课时数；父子章节课时不要重复累计
 
 ## 输出格式要求
 请严格按照以下JSON数组格式返回，确保JSON格式正确可解析：
@@ -54,30 +55,35 @@ class TextbookChapterGenerator:
 ```json
 [
   {{
+    "client_id": "chapter-1",
+    "parent_chapter_id": null,
     "chapter_number": "第1章",
     "chapter_title": "章节标题",
     "content_summary": "内容概述（100-200字，说明本章主要内容和教学目标）",
     "key_concepts": ["核心概念1", "核心概念2", "核心概念3"],
-    "hours_required": 4
+    "hours_required": 8
   }},
   {{
-    "chapter_number": "第2章",
-    "chapter_title": "章节标题",
-    "content_summary": "内容概述...",
+    "client_id": "chapter-1-section-1",
+    "parent_chapter_id": "chapter-1",
+    "chapter_number": "1.1",
+    "chapter_title": "子章节标题",
+    "content_summary": "子章节内容概述...",
     "key_concepts": ["概念1", "概念2"],
-    "hours_required": 6
+    "hours_required": 2
   }}
 ]
 ```
 
 ## 注意事项
-1. chapter_number 格式示例："第1章"、"第2章"、"第一单元"、"Unit 1"等
+1. chapter_number 格式示例："第1章"、"1.1"、"1.1.1"、"第一单元"、"Unit 1"等
 2. chapter_title 要准确反映章节核心内容
 3. content_summary 要具体，包含教学重点和学习目标
 4. key_concepts 至少包含2-5个核心概念
 5. hours_required 根据章节内容复杂度合理估算（一般2-8课时）
 6. 请确保返回的是纯JSON数组格式，不要包含其他说明文字
-7. 章节数量一般在8-16章之间，根据教材实际情况决定
+7. 一级大章节数量一般在8-16章之间，数量不包含子章节；每个大章节应按真实目录补充下级结构
+8. parent_chapter_id 只能引用数组中已经出现的 client_id；一级章节必须为 null
 
 请直接输出JSON数组。
 """
@@ -123,14 +129,14 @@ class TextbookChapterGenerator:
             model=self.model,
         )
 
-        chapters_data = self._parse_json_response(content)
+        chapters_data = self._infer_missing_hierarchy(self._parse_json_response(content))
 
         # Convert to TextbookChapterCreateRequest objects
         chapters = []
         for idx, chapter_dict in enumerate(chapters_data, 1):
+            chapter_dict = dict(chapter_dict)
             # Ensure sort_order is set
-            if "sort_order" not in chapter_dict:
-                chapter_dict["sort_order"] = idx
+            chapter_dict["sort_order"] = idx
 
             # Ensure key_concepts is a list
             if "key_concepts" not in chapter_dict:
@@ -138,12 +144,97 @@ class TextbookChapterGenerator:
             elif isinstance(chapter_dict["key_concepts"], str):
                 # If key_concepts is a string, split by comma
                 chapter_dict["key_concepts"] = [
-                    k.strip() for k in chapter_dict["key_concepts"].split(",")
+                    k.strip()
+                    for k in re.split(r"[,，;；]", chapter_dict["key_concepts"])
+                    if k.strip()
                 ]
+
+            chapter_dict.setdefault("content_origin", "ai_inferred")
+            chapter_dict.setdefault("confidence", 0.7)
 
             chapters.append(TextbookChapterCreateRequest(**chapter_dict))
 
         return chapters
+
+    @staticmethod
+    def _chapter_number_level(chapter_number: str) -> int:
+        normalized = str(chapter_number or "").strip()
+        numeric = re.match(r"^(\d+(?:\.\d+){0,4})", normalized)
+        if numeric:
+            return min(5, numeric.group(1).count(".") + 1)
+        if re.match(r"^第.+节", normalized):
+            return 2
+        if re.match(r"^[一二三四五六七八九十百]+[、.]", normalized):
+            return 3
+        if re.match(r"^[（(][一二三四五六七八九十百零〇]+[）)]", normalized):
+            return 4
+        if re.match(r"^(?:[（(]\d+[）)]|\d+[）)])", normalized):
+            return 5
+        if re.match(r"^任务", normalized):
+            return 2
+        if re.match(r"^(?:活动|知识点)", normalized):
+            return 3
+        return 1
+
+    @staticmethod
+    def _flatten_chapter_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        flattened: List[Dict[str, Any]] = []
+        used_ids: set[str] = set()
+
+        def walk(nodes: List[Dict[str, Any]], parent_id: Optional[str] = None) -> None:
+            for raw_item in nodes:
+                if not isinstance(raw_item, dict):
+                    raise ValueError(f"Invalid chapter item: {raw_item}")
+                item = dict(raw_item)
+                children = (
+                    item.pop("children", None)
+                    or item.pop("subchapters", None)
+                    or item.pop("sections", None)
+                    or []
+                )
+                base_id = str(item.get("client_id") or f"ai-chapter-{len(flattened) + 1}")
+                client_id = base_id
+                suffix = 2
+                while client_id in used_ids:
+                    client_id = f"{base_id}-{suffix}"
+                    suffix += 1
+                used_ids.add(client_id)
+                item["client_id"] = client_id
+                if not item.get("parent_chapter_id") and parent_id:
+                    item["parent_chapter_id"] = parent_id
+                flattened.append(item)
+                if isinstance(children, list):
+                    walk(children, client_id)
+
+        walk(items)
+        return flattened
+
+    def _infer_missing_hierarchy(
+        self,
+        items: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        valid_ids = {str(item.get("client_id")) for item in items if item.get("client_id")}
+        last_at_level: Dict[int, str] = {}
+        normalized: List[Dict[str, Any]] = []
+
+        for item in items:
+            current = dict(item)
+            client_id = str(current["client_id"])
+            level = self._chapter_number_level(str(current.get("chapter_number") or ""))
+            parent_id = current.get("parent_chapter_id")
+            if parent_id not in valid_ids or parent_id == client_id:
+                parent_id = None
+            if not parent_id and level > 1:
+                available_levels = [known for known in last_at_level if known < level]
+                if available_levels:
+                    parent_id = last_at_level[max(available_levels)]
+            current["parent_chapter_id"] = parent_id
+            normalized.append(current)
+            last_at_level[level] = client_id
+            for stale_level in range(level + 1, 6):
+                last_at_level.pop(stale_level, None)
+
+        return normalized
 
     def _build_generation_prompt(
         self,
@@ -235,15 +326,14 @@ class TextbookChapterGenerator:
                 result = attempt(content)
                 # Validate the result is a list
                 if isinstance(result, list):
+                    flattened = self._flatten_chapter_items(result)
                     # Validate each item has required fields
-                    for item in result:
-                        if not isinstance(item, dict):
-                            raise ValueError(f"Invalid chapter item: {item}")
+                    for item in flattened:
                         if "chapter_number" not in item or "chapter_title" not in item:
                             raise ValueError(
                                 f"Chapter missing required fields: {item}"
                             )
-                    return result
+                    return flattened
             except (json.JSONDecodeError, ValueError) as e:
                 last_error = e
                 continue

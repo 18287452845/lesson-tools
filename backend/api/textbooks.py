@@ -4,6 +4,7 @@ Handles textbook CRUD, AI chapter generation, and chapter management.
 """
 import json
 import re
+import unicodedata
 from datetime import datetime
 from typing import Optional, List
 from uuid import uuid4
@@ -49,6 +50,149 @@ async def _get_textbook_sources(textbook_id: str) -> List[TextbookSourceInfo]:
 # ============================================================================
 # Textbook CRUD Operations
 # ============================================================================
+
+
+def _calculate_textbook_total_hours(chapters: List[TextbookChapterInfo]) -> int:
+    """Sum configured chapter hours without double-counting parent/child totals."""
+    if not chapters:
+        return 0
+
+    chapter_by_id = {chapter.id: chapter for chapter in chapters}
+    children_by_parent: dict[str, list[TextbookChapterInfo]] = {}
+    roots: list[TextbookChapterInfo] = []
+
+    for chapter in chapters:
+        parent_id = chapter.parent_chapter_id
+        if parent_id and parent_id in chapter_by_id:
+            children_by_parent.setdefault(parent_id, []).append(chapter)
+        else:
+            roots.append(chapter)
+
+    def subtree_hours(chapter: TextbookChapterInfo) -> int:
+        own_hours = max(0, int(chapter.hours_required or 0))
+        child_hours = sum(
+            subtree_hours(child)
+            for child in children_by_parent.get(chapter.id, [])
+        )
+        return max(own_hours, child_hours)
+
+    return sum(subtree_hours(chapter) for chapter in roots)
+
+
+def _chapter_number_level(chapter_number: str) -> int:
+    """Infer a catalog level from common Chinese and numeric numbering."""
+    normalized = unicodedata.normalize("NFKC", str(chapter_number or "")).strip()
+    if re.match(r"^第.+节", normalized):
+        return 2
+    if re.match(r"^任务", normalized):
+        return 2
+    if re.match(r"^(?:活动|知识点)", normalized):
+        return 3
+    if re.match(r"^[一二三四五六七八九十百]+[、.]", normalized):
+        return 3
+    if re.match(r"^\([一二三四五六七八九十百零〇]+\)", normalized):
+        return 4
+    if re.match(r"^(?:\(\d+\)|\d+\))", normalized):
+        return 5
+    numeric = re.match(r"^(\d+(?:\.\d+){0,4})(?:\s|$)", normalized)
+    if numeric:
+        return min(5, numeric.group(1).count(".") + 1)
+    return 1
+
+
+def _normalized_chapter_marker(value: str) -> str:
+    return unicodedata.normalize("NFKC", str(value or "")).strip()
+
+
+def _is_part_heading_values(chapter_number: str, chapter_title: str = "") -> bool:
+    number = _normalized_chapter_marker(chapter_number)
+    return bool(
+        re.match(r"^第\s*[一二三四五六七八九十百零〇\d]+\s*(?:篇|部分)\s*$", number)
+        or re.match(r"^part\s+[\w一二三四五六七八九十]+\s*$", number, re.I)
+    )
+
+
+def _is_numbered_chapter_values(chapter_number: str, chapter_title: str = "") -> bool:
+    number = _normalized_chapter_marker(chapter_number)
+    return bool(
+        re.match(r"^第\s*[一二三四五六七八九十百零〇\d]+\s*章\s*$", number)
+        or re.match(r"^chapter\s+[\w一二三四五六七八九十]+\s*$", number, re.I)
+    )
+
+
+def _is_appendix_values(chapter_number: str, chapter_title: str = "") -> bool:
+    for value in (chapter_number, chapter_title):
+        normalized = _normalized_chapter_marker(value)
+        if normalized.startswith("附录") or re.match(r"^appendix(?:\s|$)", normalized, re.I):
+            return True
+    return False
+
+
+def _normalize_chapter_hierarchy(
+    chapters: List[TextbookChapterInfo],
+) -> List[TextbookChapterInfo]:
+    """Repair missing legacy parent links while preserving explicit valid links."""
+    chapter_ids = {chapter.id for chapter in chapters}
+    last_at_level: dict[int, str] = {}
+    normalized: list[TextbookChapterInfo] = []
+    current_part_id: Optional[str] = None
+
+    for chapter in chapters:
+        level = _chapter_number_level(chapter.chapter_number)
+        parent_id = chapter.parent_chapter_id
+        if parent_id not in chapter_ids or parent_id == chapter.id:
+            parent_id = None
+        if (
+            not parent_id
+            and current_part_id
+            and _is_numbered_chapter_values(
+                chapter.chapter_number,
+                chapter.chapter_title,
+            )
+        ):
+            parent_id = current_part_id
+        elif not parent_id and level > 1:
+            available_parent_levels = [known for known in last_at_level if known < level]
+            if available_parent_levels:
+                parent_id = last_at_level[max(available_parent_levels)]
+
+        if parent_id != chapter.parent_chapter_id:
+            chapter = chapter.model_copy(update={"parent_chapter_id": parent_id})
+        normalized.append(chapter)
+
+        last_at_level[level] = chapter.id
+        for stale_level in range(level + 1, 6):
+            last_at_level.pop(stale_level, None)
+        if _is_part_heading_values(chapter.chapter_number, chapter.chapter_title):
+            current_part_id = chapter.id
+
+    return normalized
+
+
+def _is_appendix_chapter(chapter: TextbookChapterInfo) -> bool:
+    return _is_appendix_values(chapter.chapter_number, chapter.chapter_title)
+
+
+def _count_main_chapters(chapters: List[TextbookChapterInfo]) -> int:
+    """Count teaching chapters, excluding part headings, children and appendices."""
+    eligible = [chapter for chapter in chapters if not _is_appendix_chapter(chapter)]
+    numbered_chapters = [
+        chapter
+        for chapter in eligible
+        if _is_numbered_chapter_values(
+            chapter.chapter_number,
+            chapter.chapter_title,
+        )
+    ]
+    if numbered_chapters:
+        return len(numbered_chapters)
+
+    chapter_ids = {chapter.id for chapter in chapters}
+    return sum(
+        1
+        for chapter in eligible
+        if not chapter.parent_chapter_id or chapter.parent_chapter_id not in chapter_ids
+    )
 
 
 @router.post("", response_model=TextbookInfo)
@@ -102,6 +246,8 @@ async def create_textbook(request: TextbookCreateRequest):
         edition=request.edition,
         subject=request.subject,
         grade=request.grade,
+        total_hours=0,
+        main_chapter_count=0,
         cover_image=request.cover_image,
         description=request.description,
         status="active",
@@ -204,7 +350,10 @@ async def list_textbooks(
 
             chapters.append(TextbookChapterInfo(**chapter_dict))
 
+        chapters = _normalize_chapter_hierarchy(chapters)
         textbook_dict["chapters"] = chapters
+        textbook_dict["total_hours"] = _calculate_textbook_total_hours(chapters)
+        textbook_dict["main_chapter_count"] = _count_main_chapters(chapters)
         textbook_dict["sources"] = await _get_textbook_sources(textbook_id)
         textbooks.append(TextbookInfo(**textbook_dict))
 
@@ -256,7 +405,10 @@ async def get_textbook(textbook_id: str):
 
         chapters.append(TextbookChapterInfo(**chapter_dict))
 
+    chapters = _normalize_chapter_hierarchy(chapters)
     textbook_dict["chapters"] = chapters
+    textbook_dict["total_hours"] = _calculate_textbook_total_hours(chapters)
+    textbook_dict["main_chapter_count"] = _count_main_chapters(chapters)
     textbook_dict["sources"] = await _get_textbook_sources(textbook_id)
     return TextbookInfo(**textbook_dict)
 
@@ -387,9 +539,28 @@ async def generate_chapters(
         generator = TextbookChapterGenerator()
         chapters = await generator.generate_chapters(request)
 
+        eligible_chapters = [
+            chapter
+            for chapter in chapters
+            if not _is_appendix_values(
+                chapter.chapter_number,
+                chapter.chapter_title,
+            )
+        ]
+        numbered_chapters = [
+            chapter
+            for chapter in eligible_chapters
+            if _is_numbered_chapter_values(
+                chapter.chapter_number,
+                chapter.chapter_title,
+            )
+        ]
+        main_chapter_count = len(numbered_chapters) if numbered_chapters else sum(
+            1 for chapter in eligible_chapters if not chapter.parent_chapter_id
+        )
         return TextbookChapterGenerateResponse(
             chapters=chapters,
-            message=f"成功生成 {len(chapters)} 个章节",
+            message=f"成功生成 {main_chapter_count} 个大章节",
         )
     except Exception as e:
         raise HTTPException(

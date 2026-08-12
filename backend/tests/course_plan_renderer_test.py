@@ -33,6 +33,11 @@ def _all_text(path: str | pathlib.Path) -> str:
     return "\n".join(
         [paragraph.text for paragraph in document.paragraphs]
         + [
+            paragraph.text
+            for section in document.sections
+            for paragraph in section.header.paragraphs
+        ]
+        + [
             cell.text
             for table in document.tables
             for row in table.rows
@@ -41,12 +46,48 @@ def _all_text(path: str | pathlib.Path) -> str:
     )
 
 
-def _assert_preserved_parts(reference: pathlib.Path, generated: pathlib.Path):
+def _assert_preserved_parts(
+    reference: pathlib.Path,
+    generated: pathlib.Path,
+    *,
+    changed_parts: set[str] | None = None,
+    added_parts: set[str] | None = None,
+):
+    changed = changed_parts or {"word/document.xml"}
+    added = added_parts or set()
     with zipfile.ZipFile(reference) as source, zipfile.ZipFile(generated) as output:
-        assert set(source.namelist()) == set(output.namelist())
+        assert set(source.namelist()) | added == set(output.namelist())
         for name in source.namelist():
-            if name != "word/document.xml":
+            if name not in changed:
                 assert output.read(name) == source.read(name), name
+
+
+def _assert_adaptive_teaching_structure(path: pathlib.Path, week_count: int):
+    document = Document(path)
+    assert len(document.tables) == 1
+    table = document.tables[0]
+    assert len(table.rows) == week_count + 4
+    assert all(
+        row._tr.trPr.find(qn("w:tblHeader")) is not None
+        for row in table.rows[:2]
+    )
+    assert all(
+        row._tr.trPr.find(qn("w:tblHeader")) is None
+        and row._tr.trPr.find(qn("w:cantSplit")) is not None
+        for row in table.rows[2:]
+    )
+    assert all(
+        row.cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is not None
+        for row in table.rows[-3:-1]
+    )
+    header = document.sections[0].header
+    assert len(header.paragraphs) == 2
+    assert header.paragraphs[0].text == "云南林业职业技术学院教师授课计划表"
+    field_instructions = header._element.xpath(".//w:fldSimple/@w:instr")
+    assert {instruction.strip() for instruction in field_instructions} == {
+        "PAGE",
+        "NUMPAGES",
+    }
 
 
 def test_fixed_course_plan_templates_are_valid():
@@ -119,10 +160,10 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     assert teaching_path.is_file()
     assert len(experiment_paths) == 2
     teaching = Document(teaching_path)
-    assert len(teaching.tables) == 6
-    assert teaching.tables[-1].rows[-1].cells[2].text == "32"
-    assert teaching.tables[-1].rows[-1].cells[3].text == "32"
-    assert teaching.tables[-1].rows[-1].cells[4].text == "64"
+    _assert_adaptive_teaching_structure(teaching_path, 16)
+    assert teaching.tables[0].rows[-2].cells[2].text == "32"
+    assert teaching.tables[0].rows[-2].cells[3].text == "32"
+    assert teaching.tables[0].rows[-2].cells[4].text == "64"
     teaching_text = _all_text(teaching_path)
     assert "24级信息安全技术应用1、2班" in teaching_text
     assert "慧心楼3516，实训楼204" in teaching_text
@@ -172,8 +213,124 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
                 ("日", False),
             ]
 
-    _assert_preserved_parts(settings.teaching_plan_template_path, teaching_path)
+    _assert_preserved_parts(
+        settings.teaching_plan_template_path,
+        teaching_path,
+        changed_parts={
+            "word/document.xml",
+            "word/_rels/document.xml.rels",
+            "[Content_Types].xml",
+        },
+        added_parts={"word/header1.xml"},
+    )
     _assert_preserved_parts(settings.experiment_plan_template_path, experiment_paths[0])
+
+
+def test_render_18_week_teaching_and_experiment_plans(tmp_path: pathlib.Path):
+    chapters = _chapters(36)
+    request = schemas.BatchTaskCreateRequest(
+        course_name="Windows服务器安全配置",
+        subject="信息安全技术",
+        grade="2024级",
+        template_id="yunlin-standard",
+        total_hours=72,
+        hours_per_lesson=2,
+        chapters=chapters,
+        start_week=1,
+        class_ids=["class-1"],
+        location="慧心楼3516",
+        supplemental_artifacts=["teaching_plan", "experiment_plan"],
+        academic_year="2025-2026",
+        semester=2,
+        teacher_name="李阳",
+        plan_date="2026-02-25",
+        first_class_date="2026-03-02",
+        class_periods="3-4",
+    )
+    renderer = course_plan_renderer.CoursePlanRenderer(tmp_path)
+
+    teaching_path = pathlib.Path(
+        renderer.render_teaching_plan(
+            batch_task_id="batch-18-week",
+            course_name=request.course_name,
+            grade=request.grade,
+            class_names=["24级信息安全技术应用1班"],
+            academic_year=request.academic_year or "",
+            semester=request.semester or 1,
+            teacher_name=request.teacher_name or "",
+            total_hours=request.total_hours,
+            hours_per_lesson=request.hours_per_lesson,
+            start_week=request.start_week,
+            chapters=request.chapters,
+            location=request.location,
+        )
+    )
+    experiment_path = pathlib.Path(
+        renderer.render_experiment_plans(
+            batch_task_id="batch-18-week",
+            course_name=request.course_name,
+            grade=request.grade,
+            class_names=["24级信息安全技术应用1班"],
+            academic_year=request.academic_year or "",
+            semester=request.semester or 1,
+            teacher_name=request.teacher_name or "",
+            plan_date=request.plan_date or "",
+            first_class_date=request.first_class_date or "",
+            class_periods=request.class_periods or "",
+            hours_per_lesson=request.hours_per_lesson,
+            start_week=request.start_week,
+            chapters=request.chapters,
+            location=request.location or "",
+        )[0]
+    )
+
+    teaching = Document(teaching_path)
+    _assert_adaptive_teaching_structure(teaching_path, 18)
+    assert teaching.tables[0].rows[18].cells[0].text == "17"
+    assert teaching.tables[0].rows[19].cells[0].text == "18"
+    assert teaching.tables[0].rows[-2].cells[1].text == "总课时"
+    assert teaching.tables[0].rows[-2].cells[4].text == "72"
+    header_text = "\n".join(
+        paragraph.text for paragraph in teaching.sections[0].header.paragraphs
+    )
+    assert "网络安全" not in header_text
+    assert "Windows服务器安全配置" in header_text
+    assert "24级信息安全技术应用1班" in header_text
+
+    experiment = Document(experiment_path)
+    assert len(experiment.tables[0].rows) == 20
+    assert experiment.tables[0].rows[18].cells[0].text == "实验18"
+    assert "第 18 周" in experiment.tables[0].rows[18].cells[2].text
+    assert "36    学时" in experiment.tables[0].rows[-1].cells[2].text
+
+    _assert_preserved_parts(
+        settings.teaching_plan_template_path,
+        teaching_path,
+        changed_parts={
+            "word/document.xml",
+            "word/_rels/document.xml.rels",
+            "[Content_Types].xml",
+        },
+        added_parts={"word/header1.xml"},
+    )
+    _assert_preserved_parts(settings.experiment_plan_template_path, experiment_path)
+
+
+def test_batch_plan_request_rejects_more_than_18_weeks():
+    with pytest.raises(pydantic.ValidationError, match="最多支持 18 周"):
+        schemas.BatchTaskCreateRequest(
+            course_name="网络安全",
+            subject="信息安全技术",
+            grade="2024级",
+            template_id="yunlin-standard",
+            total_hours=76,
+            chapters=_chapters(38),
+            class_ids=["class-1"],
+            supplemental_artifacts=["teaching_plan"],
+            academic_year="2025-2026",
+            semester=2,
+            teacher_name="李阳",
+        )
 
 
 def test_explicit_experiment_names_filter_non_experiment_weeks(tmp_path: pathlib.Path):

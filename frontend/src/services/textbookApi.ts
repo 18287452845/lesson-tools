@@ -63,6 +63,42 @@ export const textbookApi = {
   },
 
   /**
+   * List every textbook matching the filters, across all API pages.
+   * Selection controls use this so newly added books cannot fall off page one.
+   */
+  listAllTextbooks: async (params?: {
+    subject?: string;
+    grade?: string;
+    status?: 'active' | 'inactive';
+  }): Promise<TextbookInfo[]> => {
+    const limit = 100;
+    const firstResponse = await api.get<TextbookListResponse>('/textbooks', {
+      params: { ...params, page: 1, limit },
+    });
+    const firstPage = firstResponse.data;
+    const pageCount = Math.ceil(firstPage.total / limit);
+    const remainingPages = pageCount > 1
+      ? await Promise.all(
+        Array.from({ length: pageCount - 1 }, (_, index) => (
+          api.get<TextbookListResponse>('/textbooks', {
+            params: { ...params, page: index + 2, limit },
+          })
+        ))
+      )
+      : [];
+
+    const byId = new Map<string, TextbookInfo>();
+    [firstPage, ...remainingPages.map((response) => response.data)]
+      .flatMap((page) => page.textbooks)
+      .forEach((textbook) => byId.set(textbook.id, textbook));
+
+    return Array.from(byId.values()).sort((left, right) => {
+      const createdDifference = Date.parse(right.created_at) - Date.parse(left.created_at);
+      return createdDifference || left.name.localeCompare(right.name, 'zh-CN');
+    });
+  },
+
+  /**
    * Get a specific textbook with chapters
    */
   getTextbook: async (id: string): Promise<TextbookInfo> => {

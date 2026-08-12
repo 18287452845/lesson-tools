@@ -118,6 +118,49 @@ def test_html_catalog_extraction_and_three_level_hierarchy():
 
 
 @pytest.mark.unit
+def test_catalog_recognition_supports_five_level_hierarchy():
+    chapters = discovery.parse_catalog_lines(
+        [
+            "第1章 Python基础",
+            "第1节 开发环境",
+            "一、环境准备",
+            "（一）安装解释器",
+            "（1）配置环境变量",
+        ],
+        confidence=0.96,
+    )
+
+    assert len(chapters) == 5
+    assert [chapter.chapter_number for chapter in chapters] == [
+        "第1章",
+        "第1节",
+        "一、",
+        "（一）",
+        "（1）",
+    ]
+    for index in range(1, len(chapters)):
+        assert chapters[index].parent_chapter_id == chapters[index - 1].client_id
+
+
+@pytest.mark.unit
+def test_catalog_items_attach_to_project_when_task_level_is_absent():
+    chapters = discovery.parse_catalog_lines(
+        [
+            "项目7 绘制奥运五环标志",
+            "一、模块",
+            "二、Python标准库中常用的模块",
+            "项目8 统计词频",
+            "一、文件的基本操作",
+        ],
+        confidence=0.96,
+    )
+
+    assert chapters[1].parent_chapter_id == chapters[0].client_id
+    assert chapters[2].parent_chapter_id == chapters[0].client_id
+    assert chapters[4].parent_chapter_id == chapters[3].client_id
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_source_failure_does_not_hide_successful_results():
     candidate = discovery.BookCandidate(

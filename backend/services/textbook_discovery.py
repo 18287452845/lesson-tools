@@ -24,6 +24,8 @@ from .ai_provider import generate_with_ai
 
 logger = logging.getLogger(__name__)
 
+MAX_CATALOG_LEVEL = 5
+
 
 class BookDiscoveryError(Exception):
     """Base error for expected textbook discovery failures."""
@@ -474,11 +476,13 @@ class _HTMLTextExtractor(HTMLParser):
 def _looks_like_catalog_entry(line: str) -> bool:
     normalized = unicodedata.normalize("NFKC", line)
     return bool(
-        re.match(r"^第\s*[一二三四五六七八九十百零〇\d]+\s*(?:篇|章|单元|部分)", normalized)
-        or re.match(r"^(?:项目|任务)\s*\d+", normalized)
+        re.match(r"^第\s*[一二三四五六七八九十百零〇\d]+\s*(?:篇|章|单元|部分|节)", normalized)
+        or re.match(r"^(?:项目|模块|专题|学习情境|任务|活动|知识点)\s*[一二三四五六七八九十百零〇\d]+", normalized)
         or re.match(r"^[一二三四五六七八九十百]+[、.]\s*\S+", normalized)
+        or re.match(r"^[（(][一二三四五六七八九十百零〇\d]+[）)]\s*\S+", normalized)
+        or re.match(r"^\d+[）)]\s*\S+", normalized)
         or re.match(r"^附录\s*[A-Z\d一二三四五六七八九十]+", normalized, re.I)
-        or re.match(r"^\d+(?:\.\d+){0,2}\s*\S+", normalized)
+        or re.match(r"^\d+(?:\.\d+){0,4}\s*\S+", normalized)
         or re.match(r"^(?:Chapter|Unit|Part)\s+[\w一二三四五六七八九十]+", normalized, re.I)
     )
 
@@ -506,17 +510,30 @@ def extract_catalog_lines_from_html(content: str) -> list[str]:
 
 
 def parse_catalog_lines(lines: Iterable[str], confidence: float = 0.9) -> list[CatalogChapter]:
-    """Normalize common Chinese and English catalog numbering into a 3-level tree."""
+    """Normalize common Chinese and English catalog numbering into a 5-level tree."""
     chapters: list[CatalogChapter] = []
     last_at_level: dict[int, str] = {}
     chinese_pattern = re.compile(
         r"^(第\s*[一二三四五六七八九十百零〇\d]+\s*(?:篇|章|单元|部分))\s*(.*)$"
     )
-    numeric_pattern = re.compile(r"^(\d+(?:\.\d+){0,2})\s*[、.．-]?\s*(.+)$")
+    section_pattern = re.compile(
+        r"^(第\s*[一二三四五六七八九十百零〇\d]+\s*节)\s*(.*)$"
+    )
+    numeric_pattern = re.compile(r"^(\d+(?:\.\d+){0,4})\s*[、.．-]?\s*(.+)$")
     english_pattern = re.compile(r"^((?:Chapter|Unit|Part)\s+[\w一二三四五六七八九十]+)\s*[:：.-]?\s*(.*)$", re.I)
-    project_pattern = re.compile(r"^(项目\s*\d+)\s*(.*)$")
-    task_pattern = re.compile(r"^(任务\s*\d+)\s*(.*)$")
+    number_token = r"[一二三四五六七八九十百零〇\d]+"
+    project_pattern = re.compile(
+        rf"^((?:项目|模块|专题|学习情境)\s*{number_token})\s*(.*)$"
+    )
+    task_pattern = re.compile(rf"^(任务\s*{number_token})\s*(.*)$")
+    activity_pattern = re.compile(rf"^((?:活动|知识点)\s*{number_token})\s*(.*)$")
     chinese_item_pattern = re.compile(r"^([一二三四五六七八九十百]+)[、.]\s*(.+)$")
+    parenthesized_chinese_pattern = re.compile(
+        r"^[（(]([一二三四五六七八九十百零〇]+)[）)]\s*[、.]?\s*(.+)$"
+    )
+    parenthesized_number_pattern = re.compile(
+        r"^(?:[（(](\d+)[）)]|(\d+)[）)])\s*[、.]?\s*(.+)$"
+    )
     appendix_pattern = re.compile(
         r"^(附录\s*[A-Z\d一二三四五六七八九十]+)\s*(.*)$",
         re.I,
@@ -533,20 +550,37 @@ def parse_catalog_lines(lines: Iterable[str], confidence: float = 0.9) -> list[C
         chapter_number = ""
         chapter_title = ""
         chinese_match = chinese_pattern.match(line)
+        section_match = section_pattern.match(line)
+        parenthesized_chinese_match = parenthesized_chinese_pattern.match(line)
+        parenthesized_number_match = parenthesized_number_pattern.match(line)
         numeric_match = numeric_pattern.match(line)
         english_match = english_pattern.match(line)
         project_match = project_pattern.match(line)
         task_match = task_pattern.match(line)
+        activity_match = activity_pattern.match(line)
         chinese_item_match = chinese_item_pattern.match(line)
         appendix_match = appendix_pattern.match(line)
         if chinese_match:
             chapter_number = re.sub(r"\s+", "", chinese_match.group(1))
             chapter_title = chinese_match.group(2).strip() or chapter_number
             level = 1
+        elif section_match:
+            chapter_number = re.sub(r"\s+", "", section_match.group(1))
+            chapter_title = section_match.group(2).strip() or chapter_number
+            level = 2
+        elif parenthesized_chinese_match:
+            chapter_number = f"（{parenthesized_chinese_match.group(1)}）"
+            chapter_title = parenthesized_chinese_match.group(2).strip()
+            level = 4
+        elif parenthesized_number_match:
+            item_number = parenthesized_number_match.group(1) or parenthesized_number_match.group(2)
+            chapter_number = f"（{item_number}）"
+            chapter_title = parenthesized_number_match.group(3).strip()
+            level = 5
         elif numeric_match:
             chapter_number = numeric_match.group(1)
             chapter_title = numeric_match.group(2).strip()
-            level = min(3, chapter_number.count(".") + 1)
+            level = min(MAX_CATALOG_LEVEL, chapter_number.count(".") + 1)
         elif english_match:
             chapter_number = english_match.group(1).strip()
             chapter_title = english_match.group(2).strip() or chapter_number
@@ -559,6 +593,10 @@ def parse_catalog_lines(lines: Iterable[str], confidence: float = 0.9) -> list[C
             chapter_number = re.sub(r"\s+", "", task_match.group(1))
             chapter_title = task_match.group(2).strip() or chapter_number
             level = 2
+        elif activity_match:
+            chapter_number = re.sub(r"\s+", "", activity_match.group(1))
+            chapter_title = activity_match.group(2).strip() or chapter_number
+            level = 3
         elif chinese_item_match:
             chapter_number = f"{chinese_item_match.group(1)}、"
             chapter_title = chinese_item_match.group(2).strip()
@@ -571,9 +609,14 @@ def parse_catalog_lines(lines: Iterable[str], confidence: float = 0.9) -> list[C
             continue
 
         client_id = f"source-{len(chapters) + 1}"
-        parent_id = last_at_level.get(level - 1) if level > 1 else None
-        if level > 1 and not parent_id:
-            level = 1
+        parent_id = None
+        if level > 1:
+            available_parent_levels = [known for known in last_at_level if known < level]
+            if available_parent_levels:
+                parent_level = max(available_parent_levels)
+                parent_id = last_at_level[parent_level]
+            else:
+                level = 1
         chapter = CatalogChapter(
             client_id=client_id,
             chapter_number=chapter_number,
@@ -584,7 +627,7 @@ def parse_catalog_lines(lines: Iterable[str], confidence: float = 0.9) -> list[C
         )
         chapters.append(chapter)
         last_at_level[level] = client_id
-        for stale_level in range(level + 1, 4):
+        for stale_level in range(level + 1, MAX_CATALOG_LEVEL + 1):
             last_at_level.pop(stale_level, None)
     return chapters
 

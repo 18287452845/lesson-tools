@@ -105,7 +105,10 @@ async def preview_textbook_catalog(request: TextbookCatalogRequest):
         source_url=preview.source_url,
         confidence=preview.confidence,
         warnings=preview.warnings,
-        message=f"已识别 {len(preview.chapters)} 个目录节点",
+        message=(
+            f"已识别 {sum(1 for chapter in preview.chapters if not chapter.parent_chapter_id)} "
+            f"个大章节（共 {len(preview.chapters)} 个目录节点）"
+        ),
     )
 
 

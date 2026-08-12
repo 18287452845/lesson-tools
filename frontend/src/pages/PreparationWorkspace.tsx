@@ -106,8 +106,8 @@ function PreparationWorkspace() {
     void loadTemplateValidation();
     void classApi.listClasses().then((data) => setClasses(data.classes)).catch(() => setClasses([]));
     void textbookApi
-      .listTextbooks({ status: 'active' })
-      .then((data) => setTextbooks(data.textbooks))
+      .listAllTextbooks({ status: 'active' })
+      .then(setTextbooks)
       .catch(() => setTextbooks([]));
   }, [form, initialArtifact]);
 

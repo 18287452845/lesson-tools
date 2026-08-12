@@ -746,6 +746,7 @@ export interface TextbookInfo {
   subject?: string;
   grade?: string;
   total_hours?: number;
+  main_chapter_count: number;
   cover_image?: string;
   description?: string;
   status: TextbookStatus;

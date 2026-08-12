@@ -45,6 +45,7 @@ import {
   BookOutlined,
   PlusOutlined,
 } from '@ant-design/icons';
+import ChapterOutlineEditor from '@/components/ChapterOutlineEditor';
 import type {
   ChapterInfo,
   ChapterSplitRequest,
@@ -115,6 +116,39 @@ const splitMultiValueText = (value?: string): string[] => (
   value ? cleanMultiValues(value.split(/[，,]/)) : []
 );
 
+const calculateLessonCount = (totalHours: number, hoursPerLesson: number): number => (
+  totalHours > 0 && hoursPerLesson > 0
+    ? Math.max(1, Math.floor(totalHours / hoursPerLesson))
+    : 0
+);
+
+const isAppendixChapter = (chapter: TextbookInfo['chapters'][number]): boolean => (
+  [chapter.chapter_number, chapter.chapter_title].some(
+    (value) => /^(附录|appendix(?:\s|$))/i.test(String(value || '').trim())
+  )
+);
+
+const isNumberedChapter = (chapter: TextbookInfo['chapters'][number]): boolean => (
+  /^(?:第\s*[一二三四五六七八九十百零〇\d]+\s*章|chapter\s+[\w一二三四五六七八九十]+)\s*$/i.test(
+    String(chapter.chapter_number || '').normalize('NFKC').trim()
+  )
+);
+
+const getMainTextbookChapters = (
+  chapters: TextbookInfo['chapters']
+): TextbookInfo['chapters'] => {
+  const eligible = chapters.filter((chapter) => !isAppendixChapter(chapter));
+  const numberedChapters = eligible.filter(isNumberedChapter);
+  return numberedChapters.length > 0
+    ? numberedChapters
+    : eligible.filter((chapter) => !chapter.parent_chapter_id);
+};
+
+const countMainTextbookChapters = (textbook: TextbookInfo): number => (
+  textbook.main_chapter_count
+    ?? getMainTextbookChapters(textbook.chapters).length
+);
+
 type OutlineNode = {
   title: string;
   level: number;
@@ -166,6 +200,15 @@ const BatchGenerate: React.FC = () => {
   const selectedSupplementalArtifacts = (
     Form.useWatch('supplemental_artifacts', form) || []
   ) as CoursePlanArtifactType[];
+  const watchedTotalHours = Number(Form.useWatch('total_hours', form) ?? 64);
+  const watchedHoursPerLesson = Number(Form.useWatch('hours_per_lesson', form) ?? 2);
+  const watchedStartWeek = Number(Form.useWatch('start_week', form) ?? 1);
+  const plannedLessonCount = calculateLessonCount(watchedTotalHours, watchedHoursPerLesson);
+  const plannedDocumentCount = Math.ceil(plannedLessonCount / 2);
+  const plannedEndWeek = watchedStartWeek + Math.max(0, plannedDocumentCount - 1);
+  const uncoveredHours = watchedHoursPerLesson > 0
+    ? watchedTotalHours % watchedHoursPerLesson
+    : 0;
   const selectedMajors = cleanMultiValues(Form.useWatch('majors', form) || []);
   const selectedGrade = String(Form.useWatch('grade', form) || '').trim();
   const classNumbersByMajor = (
@@ -266,8 +309,8 @@ const BatchGenerate: React.FC = () => {
 
   const loadTextbooks = async () => {
     try {
-      const data = await textbookApi.listTextbooks({ status: 'active' });
-      setTextbooks(data.textbooks);
+      const data = await textbookApi.listAllTextbooks({ status: 'active' });
+      setTextbooks(data);
     } catch (error) {
       console.error('Failed to load textbooks:', error);
     }
@@ -283,6 +326,7 @@ const BatchGenerate: React.FC = () => {
     const selected = cachedTemplates.find((t) => t.id === templateId);
     if (selected) {
       setSelectedCachedTemplateId(templateId);
+      setSelectedTextbookId(undefined);
 
       // Get current template_id to preserve it
       const currentTemplateId = form.getFieldValue('template_id');
@@ -347,6 +391,19 @@ const BatchGenerate: React.FC = () => {
         textbook_name: textbook.name,
       };
 
+      if (textbook.subject) {
+        formValues.majors = splitMultiValueText(textbook.subject);
+      }
+      if (textbook.grade) {
+        formValues.grade = textbook.grade;
+      }
+      if (textbook.total_hours && textbook.total_hours >= 2) {
+        formValues.total_hours = textbook.total_hours;
+      }
+      if (textbook.description) {
+        formValues.additional_info = textbook.description;
+      }
+
       // Only include template_id if it has a value
       if (currentTemplateId) {
         formValues.template_id = currentTemplateId;
@@ -359,8 +416,9 @@ const BatchGenerate: React.FC = () => {
       const sortedChapters = [...textbook.chapters].sort(
         (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
       );
-      const outline = buildOutlineFromTextbook(sortedChapters);
-      const rootChapters = sortedChapters.filter((ch) => !ch.parent_chapter_id);
+      const teachingChapters = sortedChapters.filter((chapter) => !isAppendixChapter(chapter));
+      const outline = buildOutlineFromTextbook(teachingChapters);
+      const rootChapters = getMainTextbookChapters(teachingChapters);
       const chapterTitles = flattenOutlineToLines(outline).join('\n');
       form.setFieldValue('chapters_input', chapterTitles);
 
@@ -373,7 +431,11 @@ const BatchGenerate: React.FC = () => {
 
       applyChapters(chapters);
 
-      message.success(`已加载 ${textbook.name} 的 ${chapters.length} 个章节参考`);
+      message.success(
+        `已同步 ${textbook.name} 的课程信息、${chapters.length} 个章节参考${
+          textbook.total_hours ? `和 ${textbook.total_hours} 课时配置` : ''
+        }`,
+      );
     } catch (error: any) {
       message.error(error.message || '加载教材失败');
     }
@@ -384,6 +446,11 @@ const BatchGenerate: React.FC = () => {
     const totalHours = Number(values.total_hours ?? form.getFieldValue('total_hours') ?? 0);
     const hoursPerLesson = Number(values.hours_per_lesson ?? form.getFieldValue('hours_per_lesson') ?? 2);
     const chaptersInput = values.chapters_input?.trim();
+
+    if (totalHours % hoursPerLesson !== 0) {
+      message.error(`总课时数必须能被每份教案课时整除，当前还有 ${totalHours % hoursPerLesson} 课时未分配`);
+      return;
+    }
 
     const majors = cleanMultiValues(values.majors);
     const locations = cleanMultiValues(values.locations);
@@ -450,7 +517,7 @@ const BatchGenerate: React.FC = () => {
         },
         // onComplete callback
         (response: ChapterSplitResponse) => {
-          const expectedCount = Math.max(1, Math.floor(totalHours / hoursPerLesson));
+          const expectedCount = calculateLessonCount(totalHours, hoursPerLesson);
           if (response.chapters.length !== expectedCount) {
             message.error(`AI生成章节数量为 ${response.chapters.length}，应为 ${expectedCount}。请重试。`);
             setSplittingChapters(false);
@@ -504,9 +571,9 @@ const BatchGenerate: React.FC = () => {
       return;
     }
 
-    const expectedCount = Math.max(
-      1,
-      Math.floor(Number(values.total_hours) / Number(values.hours_per_lesson ?? 2)),
+    const expectedCount = calculateLessonCount(
+      Number(values.total_hours),
+      Number(values.hours_per_lesson ?? 2),
     );
     if (chapters.length !== expectedCount) {
       message.error(`章节数量为 ${chapters.length}，应为 ${expectedCount}。请返回上一步重新生成。`);
@@ -989,7 +1056,7 @@ const BatchGenerate: React.FC = () => {
                         (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                       }
                       options={textbooks.map((t) => ({
-                        label: `${t.name}${t.author ? ' - ' + t.author : ''}${t.chapters?.length ? ` (${t.chapters.length}章节)` : ''}`,
+                        label: `${t.name}${t.author ? ' - ' + t.author : ''}${countMainTextbookChapters(t) ? ` (${countMainTextbookChapters(t)}个大章节)` : ''}`,
                         value: t.id,
                       }))}
                     />
@@ -1078,14 +1145,11 @@ const BatchGenerate: React.FC = () => {
               </Row>
 
               <Alert
-                message={(() => {
-                  const totalHours = form.getFieldValue('total_hours') || 64;
-                  const hoursPerLesson = form.getFieldValue('hours_per_lesson') || 2;
-                  const numLessons = Math.max(1, Math.floor(totalHours / hoursPerLesson));
-                  const numDocs = Math.ceil(numLessons / 2);
-                  return `预计生成 ${numLessons} 份教案，共 ${numDocs} 个文档`;
-                })()}
-                type="info"
+                message={`预计生成 ${plannedLessonCount} 份教案，共 ${plannedDocumentCount} 个文档；授课周次：第 ${watchedStartWeek}-${plannedEndWeek} 周`}
+                description={uncoveredHours > 0
+                  ? `当前还有 ${uncoveredHours} 课时未分配，请调整总课时数或每份教案课时。`
+                  : undefined}
+                type={uncoveredHours > 0 ? 'warning' : 'info'}
                 showIcon
               />
             </Card>
@@ -1210,7 +1274,7 @@ const BatchGenerate: React.FC = () => {
                     type="info"
                     showIcon
                     message="计划将与批量教案一起打包"
-                    description="系统以每两份教案作为一周课表：授课计划最多 16 周，实验计划最多 18 条。实验名称最多18字且不得换行或使用省略号；不合规时会在合并前自动重新生成。"
+                    description="系统以每两份教案作为一周课表：授课计划和实验计划均支持最多 18 周。实验名称最多18字且不得换行或使用省略号；不合规时会在合并前自动重新生成。"
                     style={{ marginBottom: 16 }}
                   />
                   <Space wrap style={{ marginBottom: 16 }}>
@@ -1382,15 +1446,12 @@ const BatchGenerate: React.FC = () => {
               {(chapterInputMode === 'manual' || selectedTextbookId || selectedCachedTemplateId) && (
                 <Form.Item
                   name="chapters_input"
-                  label={selectedTextbookId || selectedCachedTemplateId ? "章节标题（参考，可编辑）" : "章节标题（参考，每行一个）"}
+                  label="章节目录（参考，可编辑）"
                   extra={selectedTextbookId || selectedCachedTemplateId
                     ? "已从教材/模板加载章节，AI将根据总课时重新划分"
-                    : "可选填写，AI将根据总课时重新划分；支持用空格缩进表示子章节"}
+                    : "可选填写，AI将根据总课时重新划分；可直接编辑标题并调整章节层级"}
                 >
-                  <TextArea
-                    rows={10}
-                    placeholder={`第一章：Java语言概述\n  1.1 发展历史\n  1.2 生态与应用\n第二章：Java基本语法\n  2.1 数据类型\n  2.2 流程控制\n第三章：面向对象编程基础\n...`}
-                  />
+                  <ChapterOutlineEditor />
                 </Form.Item>
               )}
 

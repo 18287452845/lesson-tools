@@ -54,7 +54,72 @@ import { textbookApi } from '@/services/textbookApi';
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 
-const MAX_LEVEL = 3;
+const MAX_LEVEL = 5;
+
+const isAppendixChapter = (
+  chapter: TextbookChapterInfo | TextbookChapterCreateRequest
+): boolean => [chapter.chapter_number, chapter.chapter_title].some(
+  (value) => /^(附录|appendix(?:\s|$))/i.test(String(value || '').trim())
+);
+
+const isNumberedChapter = (
+  chapter: TextbookChapterInfo | TextbookChapterCreateRequest
+): boolean => /^(?:第\s*[一二三四五六七八九十百零〇\d]+\s*章|chapter\s+[\w一二三四五六七八九十]+)\s*$/i.test(
+  String(chapter.chapter_number || '').normalize('NFKC').trim()
+);
+
+const countMainChapters = (
+  chapters: Array<TextbookChapterInfo | TextbookChapterCreateRequest> = []
+): number => {
+  const eligible = chapters.filter((chapter) => !isAppendixChapter(chapter));
+  const numberedChapters = eligible.filter(isNumberedChapter);
+  if (numberedChapters.length > 0) {
+    return numberedChapters.length;
+  }
+  return eligible.filter((chapter) => !chapter.parent_chapter_id).length;
+};
+
+const getMainChapterCount = (textbook: TextbookInfo): number => (
+  textbook.main_chapter_count ?? countMainChapters(textbook.chapters)
+);
+
+const buildChapterDepthMap = (
+  chapters: TextbookChapterCreateRequest[]
+): Map<string, number> => {
+  const byId = new Map(
+    chapters
+      .filter((chapter) => chapter.client_id)
+      .map((chapter) => [chapter.client_id as string, chapter]),
+  );
+  const depths = new Map<string, number>();
+
+  const resolveDepth = (chapter: TextbookChapterCreateRequest, visited = new Set<string>()): number => {
+    const id = chapter.client_id;
+    if (!id || !chapter.parent_chapter_id || visited.has(id)) {
+      return 1;
+    }
+    const cached = depths.get(id);
+    if (cached) {
+      return cached;
+    }
+    const parent = byId.get(chapter.parent_chapter_id);
+    if (!parent) {
+      return 1;
+    }
+    const nextVisited = new Set(visited);
+    nextVisited.add(id);
+    const depth = Math.min(MAX_LEVEL, resolveDepth(parent, nextVisited) + 1);
+    depths.set(id, depth);
+    return depth;
+  };
+
+  chapters.forEach((chapter) => {
+    if (chapter.client_id) {
+      depths.set(chapter.client_id, resolveDepth(chapter));
+    }
+  });
+  return depths;
+};
 
 interface ChapterNode extends TextbookChapterCreateRequest {
   client_id: string;
@@ -220,23 +285,20 @@ const parseChapterLines = (input: string, startIndex: number): ChapterNode[] => 
   const indentUnit = positiveIndents.length > 0 ? Math.min(...positiveIndents) : 2;
   const roots: ChapterNode[] = [];
   const stack: Array<{ level: number; node: ChapterNode }> = [];
-  const counters = [0, Math.max(0, startIndex - 1), 0, 0]; // level-based counters
+  const counters = Array.from({ length: MAX_LEVEL + 1 }, () => 0);
+  counters[1] = Math.max(0, startIndex - 1);
 
   const buildChapterNumber = (level: number, provided?: string) => {
     if (provided) {
       return provided;
     }
-    const l1 = counters[1];
-    const l2 = counters[2];
-    const l3 = counters[3];
-    if (level === 1) return `第${l1}章`;
-    if (level === 2) return `第${l1}-${l2}节`;
-    return `第${l1}-${l2}-${l3}小节`;
+    if (level === 1) return `第${counters[1]}章`;
+    return counters.slice(1, level + 1).join('.');
   };
 
   const parseLine = (text: string, level: number): ChapterNode => {
-    const fullMatch = text.match(/^(第?\s*\d+(?:\.\d+)?\s*章)\s*(.*)$/);
-    const numberMatch = text.match(/^(\d+(?:\.\d+)?)\s*[\\.、-]?\s*(.+)$/);
+    const fullMatch = text.match(/^(第?\s*\d+(?:\.\d+){0,4}\s*章)\s*(.*)$/);
+    const numberMatch = text.match(/^(\d+(?:\.\d+){0,4})\s*[\\.、-]?\s*(.+)$/);
 
     counters[level] = (counters[level] || 0) + 1;
     for (let i = level + 1; i < counters.length; i += 1) {
@@ -248,7 +310,7 @@ const parseChapterLines = (input: string, startIndex: number): ChapterNode[] => 
       fullMatch
         ? fullMatch[1].replace(/\s+/g, '')
         : numberMatch
-        ? `第${numberMatch[1]}章`
+        ? numberMatch[1]
         : undefined
     );
 
@@ -487,7 +549,7 @@ const TextbookManager: React.FC = () => {
         status: 'active',
       });
       setDiscoveryVisible(false);
-      message.success(`《${imported.name}》及 ${imported.chapters.length} 个目录节点已导入`);
+      message.success(`《${imported.name}》及 ${getMainChapterCount(imported)} 个大章节已导入`);
     } catch (error) {
       if (error instanceof Error) {
         message.error(error.message);
@@ -712,7 +774,7 @@ const TextbookManager: React.FC = () => {
       const parentLevel = parent?.level ?? 0;
       const targetLevel = parentLevel + 1;
       if (targetLevel > MAX_LEVEL) {
-        message.warning('目前最多支持三级章节');
+        message.warning('目前最多支持五级章节');
         return prev;
       }
 
@@ -991,12 +1053,12 @@ const TextbookManager: React.FC = () => {
       render: (text: string) => (text ? <Tag color="green">{text}</Tag> : '-'),
     },
     {
-      title: '章节数',
+      title: '大章节数',
       key: 'chapters_count',
       width: 100,
       align: 'center' as const,
       render: (_: any, record: TextbookInfo) => (
-        <Badge count={record.chapters?.length || 0} showZero color="blue" />
+        <Badge count={getMainChapterCount(record)} showZero color="blue" />
       ),
     },
     {
@@ -1319,7 +1381,7 @@ const TextbookManager: React.FC = () => {
               showIcon
               message={`${catalogPreview.source_name} · 可信度 ${Math.round(
                 catalogPreview.confidence * 100
-              )}% · ${catalogPreview.chapters.length} 个目录节点`}
+              )}% · ${countMainChapters(catalogPreview.chapters)} 个大章节`}
               description={catalogPreview.warnings.join('；') || '目录已准备好，请确认后导入。'}
               style={{ marginBottom: 12 }}
             />
@@ -1332,7 +1394,15 @@ const TextbookManager: React.FC = () => {
               columns={[
                 { title: '序号', dataIndex: 'sort_order', width: 70 },
                 { title: '章节编号', dataIndex: 'chapter_number', width: 130 },
-                { title: '章节标题', dataIndex: 'chapter_title' },
+                {
+                  title: '章节标题',
+                  dataIndex: 'chapter_title',
+                  render: (title: string, record: TextbookChapterCreateRequest) => {
+                    const depth = buildChapterDepthMap(catalogPreview.chapters)
+                      .get(record.client_id || '') || 1;
+                    return <span style={{ paddingLeft: (depth - 1) * 18 }}>{title}</span>;
+                  },
+                },
                 {
                   title: '处理方式',
                   dataIndex: 'content_origin',
@@ -1518,7 +1588,7 @@ const TextbookManager: React.FC = () => {
               </Space>
 
               <Text type="secondary">
-                支持三级层级，批量导入时可通过空格/Tab 缩进控制父子章节。保存后将覆盖当前教材的章节配置。
+                支持五级层级，批量导入时可通过空格/Tab 缩进控制父子章节。章节数量仅统计一级大章节。
               </Text>
 
               <Divider />
@@ -1564,7 +1634,7 @@ const TextbookManager: React.FC = () => {
             rows={8}
             value={batchImportText}
             onChange={(e) => setBatchImportText(e.target.value)}
-            placeholder="支持缩进控制层级：&#10;第1章 计算机基础&#10;  1.1 计算机发展史&#10;  1.2 计算机组成与性能&#10;    1.2.1 CPU 与内存"
+            placeholder="支持最多五级缩进：&#10;第1章 计算机基础&#10;  1.1 计算机发展史&#10;    1.1.1 计算机演进&#10;      （一）电子计算机&#10;        （1）第一代计算机"
           />
           <div style={{ marginTop: 8 }}>
             <Text type="secondary">
