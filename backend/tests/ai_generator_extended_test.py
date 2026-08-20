@@ -33,6 +33,8 @@ def _valid_content():
             "ability": ["操作列表"],
             "quality": ["严谨编码"],
         },
+        "key_points": "掌握列表索引切片增删改查方法并能准确验证程序运行结果",
+        "difficult_points": "综合运用列表操作解决实际任务并定位修复常见程序错误",
         "teaching_steps": [
             {
                 "stage": "新课预热",
@@ -76,19 +78,11 @@ def _valid_content():
 @pytest.mark.service
 async def test_generation_retries_sparse_output_then_normalizes_valid_steps(monkeypatch):
     generator = generator_module.AIGenerator("deepseek", "key", "model")
+    missing_focus = _valid_content()
+    missing_focus.pop("key_points")
+    missing_focus.pop("difficult_points")
     responses = [
-        json.dumps(
-            {
-                "teaching_steps": [
-                    {
-                        "stage": "讲授新课",
-                        "teacher_activity": "太短",
-                        "student_activity": "太短",
-                    }
-                ]
-            },
-            ensure_ascii=False,
-        ),
+        json.dumps(missing_focus, ensure_ascii=False),
         json.dumps(_valid_content(), ensure_ascii=False),
     ]
     prompts = []
@@ -109,14 +103,31 @@ async def test_generation_retries_sparse_output_then_normalizes_valid_steps(monk
     assert result.teaching_steps[2].duration == "30分钟"
     assert result.teaching_steps[2].teacher_activity.startswith("【教师】")
     assert "上一次输出未达到" in prompts[1]
+    assert "教学重点不能为空" in prompts[1]
 
 
 @pytest.mark.service
 async def test_generation_and_field_convenience_methods(monkeypatch):
     calls = []
+    valid_focus = _valid_content()["key_points"]
 
     async def generate_with_ai(**kwargs):
         calls.append(kwargs)
+        if "教学步骤数组" in kwargs["prompt"]:
+            return json.dumps(
+                [
+                    {
+                        "stage": "课堂实践",
+                        "duration": "30分钟",
+                        "teacher_activity": "组织任务",
+                        "student_activity": "完成任务",
+                        "design_intent": "实践应用",
+                    }
+                ],
+                ensure_ascii=False,
+            )
+        if "20-40" in kwargs["prompt"]:
+            return valid_focus
         return "field result"
 
     monkeypatch.setattr(generator_module, "generate_with_ai", generate_with_ai)
@@ -129,16 +140,20 @@ async def test_generation_and_field_convenience_methods(monkeypatch):
         }
     }
 
-    for field_name in ("teaching_steps", "teaching_goals", "homework", "other"):
+    for field_name in ("teaching_goals", "homework", "other"):
         value = await generator.regenerate_field(
             _input(), field_name, current, "结合岗位"
         )
         assert value == "field result"
+    steps = await generator.regenerate_field(
+        _input(), "teaching_steps", current, "结合岗位"
+    )
+    assert json.loads(steps)[0]["stage"] == "课堂实践"
     for optimization in ("detailed", "concise", "professional", "engaging", "other"):
         value = await generator.optimize_field(
             _input(), "key_points", "原内容", optimization
         )
-        assert value == "field result"
+        assert value == valid_focus
 
     async def fake_generate(self, input_data, field_configs=None, generate_reflection=False):
         return generator_module.GeneratedContent(key_points="便捷生成")
@@ -148,6 +163,40 @@ async def test_generation_and_field_convenience_methods(monkeypatch):
         _input(), "deepseek", "key", "model", generate_reflection=True
     )
     assert generated.key_points == "便捷生成"
+
+
+@pytest.mark.service
+async def test_single_field_retries_length_ellipsis_and_experiment_alignment(monkeypatch):
+    valid_focus = _valid_content()["key_points"]
+    project = "列表综合应用实验"
+    missing_project_steps = json.dumps(
+        [{"stage": "课堂实践", "teacher_activity": "组织练习"}],
+        ensure_ascii=False,
+    )
+    aligned_steps = json.dumps(
+        [{"stage": "课堂实践", "teacher_activity": f"组织{project}"}],
+        ensure_ascii=False,
+    )
+    responses = iter(["太短", valid_focus, "内容使用了省略号…", valid_focus, missing_project_steps, aligned_steps])
+    prompts = []
+
+    async def generate_with_ai(**kwargs):
+        prompts.append(kwargs["prompt"])
+        return next(responses)
+
+    async def no_sleep(*args):
+        return None
+
+    monkeypatch.setattr(generator_module, "generate_with_ai", generate_with_ai)
+    monkeypatch.setattr(generator_module.asyncio, "sleep", no_sleep)
+    generator = generator_module.AIGenerator("deepseek", "key", "model")
+
+    assert await generator.regenerate_field(_input(), "key_points", {}) == valid_focus
+    assert await generator.optimize_field(_input(), "difficult_points", "原内容") == valid_focus
+    experiment_input = _input().model_copy(update={"experiment_name": project})
+    steps = await generator.regenerate_field(experiment_input, "teaching_steps", {})
+    assert project in json.dumps(json.loads(steps), ensure_ascii=False)
+    assert sum("上一次输出不符合要求" in prompt for prompt in prompts) == 3
 
 
 def test_dynamic_templates_notes_required_fields_and_hint_inference():
@@ -211,6 +260,19 @@ def test_dynamic_templates_notes_required_fields_and_hint_inference():
     default_prompt = generator._build_generation_prompt(default_input)
     assert "无特殊说明" in default_prompt
     assert "待课后填写" in default_prompt
+    assert "教学重点和教学难点各写20-40个汉字" in default_prompt
+    assert "禁止使用中文或英文省略号" in default_prompt
+    aligned_prompt = generator._build_generation_prompt(
+        default_input.model_copy(
+            update={
+                "focus_areas": "函数定义、参数传递",
+                "experiment_name": "函数综合应用实验",
+            }
+        )
+    )
+    assert "核心内容：函数定义、参数传递" in aligned_prompt
+    assert "对应实验项目：函数综合应用实验" in aligned_prompt
+    assert "课堂实践中必须原样写出该实验项目名称" in aligned_prompt
 
     cases = {
         "course_name": "名称",
@@ -291,6 +353,24 @@ def test_field_prompts_json_parsing_sanitizing_and_validation_errors():
     generator._normalize_teaching_steps(sparse)
     with pytest.raises(ValueError, match="传授新知教师活动"):
         generator._validate_teaching_step_detail(sparse)
+
+    with pytest.raises(ValueError, match="教学重点不能包含省略号"):
+        generator._validate_key_difficult_points(
+            {"key_points": "这是一个包含省略号且不允许被接受的教学重点内容…"}
+        )
+    with pytest.raises(ValueError, match="教学难点为2字"):
+        generator._validate_key_difficult_points({"difficult_points": "太短"})
+    with pytest.raises(ValueError, match="教学难点不能为空"):
+        generator._validate_key_difficult_points(
+            {}, required_fields={"difficult_points"}
+        )
+
+    aligned = _valid_content()
+    generator._normalize_teaching_steps(aligned)
+    aligned["teaching_steps"][3]["teacher_activity"] += "，完成列表综合应用实验"
+    generator._validate_experiment_alignment(aligned, "列表综合应用实验")
+    with pytest.raises(ValueError, match="课堂实践必须原样包含实验项目名称"):
+        generator._validate_experiment_alignment(aligned, "另一个实验")
 
     untouched = {"teaching_steps": "not-list"}
     generator._normalize_teaching_steps(untouched)

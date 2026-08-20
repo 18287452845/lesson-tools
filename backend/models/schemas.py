@@ -527,6 +527,7 @@ class LessonPlanInput(BaseModel):
     focus_areas: Optional[str] = None
     teaching_style: Optional[str] = None
     additional_requirements: Optional[str] = None
+    experiment_name: Optional[str] = None
     class_ids: List[str] = Field(default_factory=list, description="授课班级ID列表")
     class_name: Optional[str] = None
 

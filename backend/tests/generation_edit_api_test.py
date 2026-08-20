@@ -81,6 +81,7 @@ async def test_generation_crud_regeneration_update_export_and_stream(api_db, tmp
             return _content()
 
         async def regenerate_field(self, input_data, field_name, current_content, instruction):
+            assert isinstance(input_data, generate_api.LessonPlanInput)
             if field_name == "teaching_steps":
                 return '说明 [{"stage":"新步骤"}] 结束'
             if field_name == "teaching_goals":
@@ -134,12 +135,66 @@ async def test_generation_crud_regeneration_update_export_and_stream(api_db, tmp
     row = await api_db.fetch_one("SELECT final_content FROM lesson_plans WHERE id=?", (plan_id,))
     assert json.loads(row["final_content"])["key_points"] == "最终重点"
 
+    await api_db.execute(
+        """INSERT INTO batch_tasks
+        (id, course_name, subject, grade, template_id, total_hours, chapters,
+         status, total_count)
+        VALUES ('processing-task', 'Python', 'Python', '大学', 'yunlin-standard',
+                2, '[]', 'processing', 1)""",
+        commit=True,
+    )
+    await api_db.execute(
+        "UPDATE lesson_plans SET batch_task_id='processing-task' WHERE id=?",
+        (plan_id,),
+        commit=True,
+    )
+    with pytest.raises(HTTPException) as update_error:
+        await generate_api.update_field(
+            plan_id,
+            FieldEditRequest(
+                lesson_plan_id=plan_id,
+                field_name="key_points",
+                content="处理中不可编辑",
+            ),
+        )
+    assert update_error.value.status_code == 409
+    with pytest.raises(HTTPException) as regenerate_error:
+        await generate_api.regenerate_field(plan_id, "key_points")
+    assert regenerate_error.value.status_code == 409
+    await api_db.execute(
+        "UPDATE batch_tasks SET status='completed' WHERE id='processing-task'",
+        commit=True,
+    )
+
+    original_regenerate = generator.regenerate_field
+
+    async def race_with_batch_resume(input_data, field_name, current_content, instruction):
+        await api_db.execute(
+            "UPDATE batch_tasks SET status='pending' WHERE id='processing-task'",
+            commit=True,
+        )
+        return "竞态更新不应写入"
+
+    generator.regenerate_field = race_with_batch_resume
+    with pytest.raises(HTTPException) as race_error:
+        await generate_api.regenerate_field(plan_id, "key_points")
+    assert race_error.value.status_code == 409
+    row = await api_db.fetch_one("SELECT final_content FROM lesson_plans WHERE id=?", (plan_id,))
+    assert json.loads(row["final_content"])["key_points"] == "最终重点"
+    generator.regenerate_field = original_regenerate
+    await api_db.execute(
+        "UPDATE batch_tasks SET status='completed' WHERE id='processing-task'",
+        commit=True,
+    )
+
     output = tmp_path / "export.docx"
 
     class FakeRenderer:
         def render_lesson_plan(self, template_path, render_data):
             assert render_data["class_name"] == "计应1班"
             assert render_data["references"] == "《Python教材》\n在线课程"
+            assert render_data["key_points"] == "最终重点"
+            assert render_data["homework"]["required"] == "完成练习"
             output.write_bytes(b"docx")
             return str(output)
 
@@ -150,6 +205,8 @@ async def test_generation_crud_regeneration_update_export_and_stream(api_db, tmp
 
     details = await generate_api.get_lesson_plan(plan_id)
     assert details["final_content"]["key_points"] == "最终重点"
+    assert details["generated_content"]["key_points"] == "最终重点"
+    assert details["generated_content"]["homework"]["required"] == "完成练习"
     listing = await generate_api.list_lesson_plans(
         limit=10, offset=0, subject="Python", grade="大学", status="completed"
     )

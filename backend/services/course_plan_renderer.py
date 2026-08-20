@@ -200,6 +200,8 @@ def _normalize_chapters(chapters: Iterable[Any]) -> list[dict[str, Any]]:
             item = dict(chapter)
         item["topic"] = str(item.get("topic") or "").strip()
         item["content_summary"] = str(item.get("content_summary") or "").strip()
+        item["key_points"] = str(item.get("key_points") or "").strip()
+        item["difficult_points"] = str(item.get("difficult_points") or "").strip()
         concepts = item.get("key_concepts") or []
         item["key_concepts"] = [str(value).strip() for value in concepts if str(value).strip()]
         item["experiment_name"] = str(item.get("experiment_name") or "").strip()
@@ -598,27 +600,6 @@ def _format_classes(class_names: Sequence[str]) -> str:
     return format_class_names(class_names)
 
 
-def _compact_topic_lines(topics: Sequence[str]) -> list[str]:
-    if len(topics) == 2:
-        for separator in ("：", ":"):
-            if separator in topics[0] and separator in topics[1]:
-                first_prefix, first_suffix = topics[0].rsplit(separator, 1)
-                second_prefix, second_suffix = topics[1].rsplit(separator, 1)
-                if first_prefix.strip() == second_prefix.strip():
-                    first_suffix = first_suffix.strip()
-                    second_suffix = second_suffix.strip()
-                    if second_suffix == f"{first_suffix}实训":
-                        second_suffix = f"{first_suffix}（含实训）"
-                        summary = second_suffix
-                    else:
-                        summary = f"{first_suffix}、{second_suffix}"
-                    return [
-                        _fit_text(first_prefix.strip(), 55),
-                        _fit_text(summary, 55),
-                    ]
-    return [_fit_text(topic, 55) for topic in topics[:2]]
-
-
 class CoursePlanRenderer:
     """Create fixed teaching/experiment plan documents from a batch schedule."""
 
@@ -661,15 +642,12 @@ class CoursePlanRenderer:
         for _ in range(group_count):
             row = deepcopy(data_template)
             _set_repeating_table_header(row, False)
-            _set_row_cant_split(row)
             continuous_table.append(row)
             data_rows.append(row)
 
         total_row = deepcopy(source_rows[-1])
         _set_repeating_table_header(total_row, False)
         _set_row_cant_split(total_row)
-        if data_rows:
-            _set_row_keep_with_next(data_rows[-1])
         _set_row_keep_with_next(total_row)
         continuous_table.append(total_row)
         continuous_table.append(
@@ -791,28 +769,47 @@ class CoursePlanRenderer:
                     item["content_summary"] for item in group if item.get("content_summary")
                 ]
 
-                focus = "、".join(dict.fromkeys(concepts))
+                focus_values = [item["key_points"] for item in group if item["key_points"]]
+                focus = "\n".join(dict.fromkeys(focus_values))
+                if not focus:
+                    focus = "、".join(dict.fromkeys(concepts))
                 if not focus:
                     focus = summaries[0] if summaries else f"掌握{'、'.join(topics)}"
-                difficulty = "、".join(dict.fromkeys(concepts[-2:]))
-                if difficulty:
-                    difficulty = f"{difficulty}的综合运用"
-                else:
+                difficulty_values = [
+                    item["difficult_points"] for item in group if item["difficult_points"]
+                ]
+                difficulty = "\n".join(dict.fromkeys(difficulty_values))
+                if not difficulty:
+                    difficulty = "、".join(dict.fromkeys(concepts[-2:]))
+                    if difficulty:
+                        difficulty = f"{difficulty}的综合运用"
+                if not difficulty:
                     difficulty = summaries[-1] if summaries else f"综合运用{'、'.join(topics)}"
-                assignment_lines = [
-                    "1. 课后练习",
-                    "2. 实验评估",
+                assignment_lines: list[str] = []
+                for item in group:
+                    homework = item.get("homework")
+                    if isinstance(homework, Mapping):
+                        assignment_lines.extend(
+                            str(homework.get(field_name) or "").strip()
+                            for field_name in ("required", "optional")
+                            if str(homework.get(field_name) or "").strip()
+                        )
+                    elif str(homework or "").strip():
+                        assignment_lines.append(str(homework).strip())
+                assignment_lines = list(dict.fromkeys(assignment_lines)) or [
+                    "课后练习",
+                    "实验评估",
                 ]
 
                 values = (
                     str(start_week + slot_index),
-                    "\n".join(_compact_topic_lines(topics)),
+                    "\n".join(topics),
                     str(theory_hours),
                     str(practice_hours),
                     str(weekly_hours),
-                    _fit_text(focus, 44),
-                    _fit_text(difficulty, 40),
-                    location or "机房",
+                    focus,
+                    difficulty,
+                    "机房、计算机",
                     "\n".join(assignment_lines),
                 )
                 for cell, value in zip(cells, values):

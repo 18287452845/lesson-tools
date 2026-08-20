@@ -76,7 +76,8 @@ async def test_lesson_generator_requests_deepseek_json_output(monkeypatch):
         request.update(kwargs)
         return json.dumps(
             {
-                "key_points": "A key point",
+                "key_points": "掌握测试课题核心原理并能够准确完成对应操作验证",
+                "difficult_points": "综合运用测试方法分析问题并定位修复常见操作错误",
                 "teaching_steps": _detailed_teaching_steps(),
             }
         )
@@ -102,7 +103,7 @@ async def test_lesson_generator_requests_deepseek_json_output(monkeypatch):
         )
     )
 
-    assert result.key_points == "A key point"
+    assert result.key_points == "掌握测试课题核心原理并能够准确完成对应操作验证"
     assert request["response_format"] == {"type": "json_object"}
 
 

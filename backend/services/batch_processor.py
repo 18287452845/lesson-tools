@@ -34,10 +34,19 @@ from .builtin_template import get_builtin_template_path, require_valid_builtin_t
 from .course_plan_renderer import CoursePlanRenderer
 from .batch_context import format_class_names
 from .experiment_names import ensure_experiment_names
+from .lesson_content import merge_lesson_content
 from .teaching_resource_service import get_resource_context
 from .ai_metrics import record_quality
 
 logger = logging.getLogger(__name__)
+
+_REQUIRED_LESSON_CONTENT_FIELDS = (
+    "teaching_goals",
+    "key_points",
+    "difficult_points",
+    "teaching_steps",
+    "homework",
+)
 
 
 def _flatten_key_concepts(key_concepts: List[Any]) -> List[str]:
@@ -63,6 +72,40 @@ def _flatten_key_concepts(key_concepts: List[Any]) -> List[str]:
             # Convert other types to string
             result.append(str(item))
     return result
+
+
+def _validate_required_lesson_content(
+    content: Dict[str, Any],
+    *,
+    lesson_number: int,
+) -> None:
+    missing_fields = [
+        field_name
+        for field_name in _REQUIRED_LESSON_CONTENT_FIELDS
+        if not content.get(field_name)
+    ]
+    homework = content.get("homework")
+    if (
+        "homework" not in missing_fields
+        and (
+            not isinstance(homework, dict)
+            or not str(homework.get("required") or "").strip()
+        )
+    ):
+        missing_fields.append("homework.required")
+    if missing_fields:
+        raise ValueError(
+            f"第 {lesson_number} 份教案缺少必要内容：{', '.join(missing_fields)}"
+        )
+
+
+def _experiment_project(chapters: List[Dict[str, Any]]) -> str:
+    names = dict.fromkeys(
+        str(chapter.get("experiment_name") or "").strip()
+        for chapter in chapters
+        if str(chapter.get("experiment_name") or "").strip()
+    )
+    return "、".join(names)
 
 
 class BatchTaskProcessor:
@@ -112,6 +155,37 @@ class BatchTaskProcessor:
         self.max_concurrent_documents = max_concurrent_documents or settings.batch_max_concurrent_documents
         self.max_concurrent_lessons = max_concurrent_lessons or settings.batch_max_concurrent_lessons
 
+    async def _prepare_experiment_chapters(
+        self,
+        batch_task_id: str,
+        chapters: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Freeze valid experiment names before lesson and plan generation."""
+        prepared, regenerated = await ensure_experiment_names(
+            chapters,
+            provider=self.provider,
+            api_key=self.api_key,
+            model=self.model,
+            require_every_group=False,
+        )
+        if regenerated:
+            db = await get_db()
+            stored = [ChapterInfo(**chapter).model_dump() for chapter in prepared]
+            await db.execute(
+                "UPDATE batch_tasks SET chapters = ?, updated_at = ? WHERE id = ?",
+                (
+                    json.dumps(stored, ensure_ascii=False),
+                    datetime.now().isoformat(),
+                    batch_task_id,
+                ),
+                commit=True,
+            )
+            logger.info(
+                "Validated and froze experiment names before generating task %s",
+                batch_task_id,
+            )
+        return prepared
+
     async def process_batch_task(self, batch_task_id: str, is_draft_mode: bool = False) -> None:
         """
         Process a batch task - main entry point with parallel document generation.
@@ -150,6 +224,9 @@ class BatchTaskProcessor:
 
             # Parse chapters
             chapters = json.loads(task["chapters"])
+            selected_artifacts = json.loads(task.get("supplemental_artifacts") or "[]")
+            if "experiment_plan" in selected_artifacts:
+                chapters = await self._prepare_experiment_chapters(batch_task_id, chapters)
 
             # Group lessons by document (2 lessons per document)
             document_groups = self._group_lessons_by_document(chapters)
@@ -198,6 +275,7 @@ class BatchTaskProcessor:
                         resource_ids=resource_ids,
                         course_archive_id=task.get("course_archive_id"),
                         is_draft_mode=is_draft_mode,
+                        align_experiment_plan="experiment_plan" in selected_artifacts,
                     )
 
                     file_info = None
@@ -280,6 +358,10 @@ class BatchTaskProcessor:
                     f"All lesson plans saved as drafts (no documents rendered)."
                 )
             elif generated_files:
+                if failed_lessons and selected_artifacts:
+                    raise ValueError(
+                        "教案未全部成功生成，无法创建内容一致的授课计划或实验计划"
+                    )
                 supplemental_files = await self._generate_course_plan_files(
                     batch_task_id=batch_task_id,
                     task=task,
@@ -343,28 +425,63 @@ class BatchTaskProcessor:
             if value.strip()
         ]
         if "experiment_plan" in selected:
-            chapters, regenerated = await ensure_experiment_names(
-                chapters,
-                provider=self.provider,
-                api_key=self.api_key,
-                model=self.model,
-                require_every_group=False,
+            chapters = await self._prepare_experiment_chapters(batch_task_id, chapters)
+
+        db = await get_db()
+        lesson_rows = await db.fetch_all(
+            """
+            SELECT blp.lesson_number, lp.topic,
+                   lp.generated_content, lp.final_content
+            FROM batch_lesson_plans blp
+            JOIN lesson_plans lp ON lp.id = blp.lesson_plan_id
+            WHERE blp.batch_task_id = ? AND blp.status = 'completed'
+            ORDER BY blp.lesson_number, blp.created_at
+            """,
+            (batch_task_id,),
+        )
+        experiment_by_lesson: Dict[int, str] = {}
+        if "experiment_plan" in selected:
+            for start in range(0, len(chapters), 2):
+                group = chapters[start:start + 2]
+                project = _experiment_project(group)
+                for chapter in group:
+                    experiment_by_lesson[int(chapter.get("lesson_number") or 0)] = project
+
+        content_by_lesson: Dict[int, Dict[str, Any]] = {}
+        for row in lesson_rows:
+            lesson_number = int(row["lesson_number"])
+            content = merge_lesson_content(
+                row["generated_content"],
+                row["final_content"],
+                label=f"第 {lesson_number} 份教案",
             )
-            if regenerated:
-                db = await get_db()
-                await db.execute(
-                    "UPDATE batch_tasks SET chapters = ?, updated_at = ? WHERE id = ?",
-                    (
-                        json.dumps(chapters, ensure_ascii=False),
-                        datetime.now().isoformat(),
-                        batch_task_id,
-                    ),
-                    commit=True,
-                )
-                logger.info(
-                    "Revalidated and regenerated experiment names before merging task %s",
-                    batch_task_id,
-                )
+            _validate_required_lesson_content(content, lesson_number=lesson_number)
+            AIGenerator._validate_experiment_alignment(
+                content,
+                experiment_by_lesson.get(lesson_number),
+            )
+            content_by_lesson[lesson_number] = {
+                "topic": row["topic"],
+                **{
+                    field_name: content.get(field_name)
+                    for field_name in (
+                        "key_points",
+                        "difficult_points",
+                        "homework",
+                        "teaching_steps",
+                    )
+                },
+            }
+
+        if len(lesson_rows) != len(chapters) or len(content_by_lesson) != len(chapters):
+            raise ValueError("教案未全部成功生成，无法创建内容一致的授课计划或实验计划")
+        chapters = [
+            {
+                **chapter,
+                **content_by_lesson.get(int(chapter.get("lesson_number") or 0), {}),
+            }
+            for chapter in chapters
+        ]
         common = {
             "batch_task_id": batch_task_id,
             "course_name": task["course_name"],
@@ -451,6 +568,7 @@ class BatchTaskProcessor:
         resource_ids: Optional[List[str]] = None,
         course_archive_id: Optional[str] = None,
         is_draft_mode: bool = False,
+        align_experiment_plan: bool = False,
     ) -> Tuple[str, int, int, List[int]]:
         """
         Generate a document containing lesson plans with parallel lesson generation.
@@ -473,6 +591,7 @@ class BatchTaskProcessor:
             online_resources: Optional online resources
             class_names: Optional class names (comma-separated)
             is_draft_mode: If True, only save content without rendering document (default False)
+            align_experiment_plan: Include the frozen experiment project in lesson generation
 
         Returns:
             Tuple of (file_path, success_count, failed_count, successful_lesson_numbers)
@@ -483,6 +602,7 @@ class BatchTaskProcessor:
         require_valid_builtin_template(template_id)
         template_path = str(get_builtin_template_path())
         db = await get_db()
+        experiment_project = _experiment_project(chapters_data) if align_experiment_plan else ""
 
         # Create semaphore for lesson-level concurrency
         lesson_semaphore = asyncio.Semaphore(self.max_concurrent_lessons)
@@ -505,6 +625,7 @@ class BatchTaskProcessor:
                     textbook_name=textbook_name,
                     online_resources=online_resources,
                     class_name=class_names,
+                    experiment_name=experiment_project or None,
                     additional_requirements=(
                         f"请优先融合以下已审核教学资源：\n{resource_context}"
                         if resource_context else None
@@ -514,7 +635,8 @@ class BatchTaskProcessor:
                 existing = await db.fetch_one(
                     """
                     SELECT blp.id AS batch_lesson_plan_id, blp.status AS batch_status,
-                           lp.id AS lesson_plan_id, lp.generated_content
+                           lp.id AS lesson_plan_id,
+                           lp.generated_content, lp.final_content
                     FROM batch_lesson_plans blp
                     JOIN lesson_plans lp ON lp.id = blp.lesson_plan_id
                     WHERE blp.batch_task_id = ? AND blp.lesson_number = ?
@@ -527,43 +649,65 @@ class BatchTaskProcessor:
                     if (
                         existing
                         and existing["batch_status"] == "completed"
-                        and existing["generated_content"]
+                        and (existing["generated_content"] or existing["final_content"])
                     ):
-                        generated_content = GeneratedContent(
-                            **json.loads(existing["generated_content"])
-                        )
-                        online_res_raw = (
-                            online_resources
-                            or getattr(generated_content, "online_resources", None)
-                            or ""
-                        )
-                        online_res = (
-                            "\n".join(str(item) for item in online_res_raw)
-                            if isinstance(online_res_raw, list)
-                            else str(online_res_raw or "")
-                        )
-                        references = "\n".join(
-                            value for value in (
-                                f"《{textbook_name}》" if textbook_name else "",
-                                online_res,
-                            ) if value
-                        )
-                        return {
-                            "chapter": chapter,
-                            "lesson_input": lesson_input,
-                            "generated_content": generated_content,
-                            "lesson_plan_data": {
-                                **lesson_input.model_dump(),
-                                **generated_content.model_dump(),
-                                "lesson_number": chapter.lesson_number,
-                                "week_number": week_number,
-                                "week_display": f"第{week_number}周",
-                                "references": references,
-                                "online_resources": online_res,
-                            },
-                            "existing": dict(existing),
-                            "reused": True,
-                        }
+                        try:
+                            cached_content = merge_lesson_content(
+                                existing["generated_content"],
+                                existing["final_content"],
+                                label=f"第 {chapter.lesson_number} 份教案",
+                            )
+                            generated_content = GeneratedContent(**cached_content)
+                            normalized_content = generated_content.model_dump()
+                            _validate_required_lesson_content(
+                                normalized_content,
+                                lesson_number=chapter.lesson_number,
+                            )
+                            AIGenerator._validate_experiment_alignment(
+                                normalized_content,
+                                lesson_input.experiment_name,
+                            )
+                        except Exception as checkpoint_exc:
+                            if existing["final_content"]:
+                                raise
+                            logger.info(
+                                "Regenerating invalid generated checkpoint for lesson %s: %s",
+                                chapter.lesson_number,
+                                checkpoint_exc,
+                            )
+                        else:
+                            online_res_raw = (
+                                online_resources
+                                or getattr(generated_content, "online_resources", None)
+                                or ""
+                            )
+                            online_res = (
+                                "\n".join(str(item) for item in online_res_raw)
+                                if isinstance(online_res_raw, list)
+                                else str(online_res_raw or "")
+                            )
+                            references = "\n".join(
+                                value for value in (
+                                    f"《{textbook_name}》" if textbook_name else "",
+                                    online_res,
+                                ) if value
+                            )
+                            return {
+                                "chapter": chapter,
+                                "lesson_input": lesson_input,
+                                "generated_content": generated_content,
+                                "lesson_plan_data": {
+                                    **lesson_input.model_dump(),
+                                    **normalized_content,
+                                    "lesson_number": chapter.lesson_number,
+                                    "week_number": week_number,
+                                    "week_display": f"第{week_number}周",
+                                    "references": references,
+                                    "online_resources": online_res,
+                                },
+                                "existing": dict(existing),
+                                "reused": True,
+                            }
 
                     # Generate content using AI
                     logger.debug(f"Generating AI content for: {chapter.topic}")
@@ -616,6 +760,11 @@ class BatchTaskProcessor:
                         "lesson_input": lesson_input,
                         "existing": dict(existing) if existing else None,
                         "error": str(exc),
+                        "preserve_existing": bool(
+                            existing
+                            and existing["batch_status"] == "completed"
+                            and existing["final_content"]
+                        ),
                     }
 
         # Generate all lesson plans concurrently
@@ -643,6 +792,16 @@ class BatchTaskProcessor:
             if result.get("reused"):
                 lesson_plans_data.append(lesson_plan_data)
                 successful_lesson_numbers.append(chapter.lesson_number)
+                continue
+
+            if result.get("preserve_existing"):
+                failed_count += 1
+                logger.error(
+                    "Cannot reuse lesson %s (%s): %s",
+                    chapter.lesson_number,
+                    chapter.topic,
+                    error_message,
+                )
                 continue
 
             # Replace one failed checkpoint in place conceptually, keeping one
@@ -674,7 +833,13 @@ class BatchTaskProcessor:
                 )
             else:
                 # Validate lesson plan data completeness before appending
-                required_fields = ["teaching_goals", "key_points", "teaching_steps"]
+                required_fields = [
+                    "teaching_goals",
+                    "key_points",
+                    "difficult_points",
+                    "teaching_steps",
+                    "homework",
+                ]
                 missing_fields = [
                     f for f in required_fields
                     if f not in lesson_plan_data or not lesson_plan_data[f]

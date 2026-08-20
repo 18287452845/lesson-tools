@@ -146,15 +146,23 @@ export function downloadBlob(blob: Blob, filename: string) {
 }
 
 /**
- * Helper: Parse generated_content JSON from lesson plan
+ * Helper: Parse canonical content (partial final fields override generated fields)
  */
 export function parseGeneratedContent(lessonPlan: LessonPlan): any {
-  if (!lessonPlan.generated_content) return {};
+  let generated: Record<string, unknown> = {};
   try {
-    return JSON.parse(lessonPlan.generated_content);
+    generated = lessonPlan.generated_content
+      ? JSON.parse(lessonPlan.generated_content)
+      : {};
   } catch (e) {
     console.error('Failed to parse generated_content:', e);
-    return {};
+  }
+  if (!lessonPlan.final_content) return generated;
+  try {
+    return { ...generated, ...JSON.parse(lessonPlan.final_content) };
+  } catch (e) {
+    console.error('Failed to parse final_content:', e);
+    return generated;
   }
 }
 

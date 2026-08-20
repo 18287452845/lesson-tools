@@ -165,6 +165,41 @@ async def test_lesson_plan_query_update_and_regeneration(
     persisted = await lesson_service.get_lesson_plan("plan-1")
     assert json.loads(persisted.generated_content)["key_points"] == regenerated
 
+    await test_db.execute(
+        "UPDATE lesson_plans SET final_content=? WHERE id='plan-1'",
+        (json.dumps({"key_points": "最终重点"}, ensure_ascii=False),),
+        commit=True,
+    )
+    await lesson_service.update_field("plan-1", "teaching_methods", "项目教学")
+    regenerated_final = await lesson_service.regenerate_field("plan-1", "key_points")
+    persisted = await lesson_service.get_lesson_plan("plan-1")
+    final_content = json.loads(persisted.final_content)
+    assert final_content == {
+        "key_points": regenerated_final,
+        "teaching_methods": "项目教学",
+    }
+
+    await test_db.execute(
+        """INSERT INTO batch_tasks
+        (id, course_name, subject, grade, template_id, total_hours, chapters,
+         status, total_count)
+        VALUES ('processing-service', 'Python', 'Python', '大学', 'yunlin-standard',
+                2, '[]', 'processing', 1)""",
+        commit=True,
+    )
+    await test_db.execute(
+        "UPDATE lesson_plans SET batch_task_id='processing-service' WHERE id='plan-1'",
+        commit=True,
+    )
+    with pytest.raises(ValueError, match="任务完成后"):
+        await lesson_service.update_field("plan-1", "key_points", "处理中不可编辑")
+    with pytest.raises(ValueError, match="任务完成后"):
+        await lesson_service.regenerate_field("plan-1", "key_points")
+    await test_db.execute(
+        "UPDATE batch_tasks SET status='completed' WHERE id='processing-service'",
+        commit=True,
+    )
+
     with pytest.raises(ValueError, match="not found"):
         await lesson_service.update_field("missing", "key_points", "内容")
     with pytest.raises(ValueError, match="not found"):
@@ -187,6 +222,11 @@ async def test_publish_lesson_plan_persists_document_metadata(
         input_data=json.dumps({**VALID_INPUT, "location": "实训楼"}, ensure_ascii=False),
         generated_content=json.dumps({"key_points": "安全配置"}, ensure_ascii=False),
     )
+    await test_db.execute(
+        "UPDATE lesson_plans SET final_content=? WHERE id='publish-12345678'",
+        (json.dumps({"key_points": "最终安全配置"}, ensure_ascii=False),),
+        commit=True,
+    )
 
     output_path, download_url = await lesson_service.publish_lesson_plan(
         "publish-12345678"
@@ -196,7 +236,7 @@ async def test_publish_lesson_plan_persists_document_metadata(
     assert pathlib.Path(output_path).name == "网络_安全_基础_publish-.docx"
     assert download_url == "/api/documents/download/网络_安全_基础_publish-.docx"
     assert lesson_service.rendered[-1]["data"]["location"] == "实训楼"
-    assert lesson_service.rendered[-1]["data"]["key_points"] == "安全配置"
+    assert lesson_service.rendered[-1]["data"]["key_points"] == "最终安全配置"
 
     stored = await lesson_service.get_lesson_plan("publish-12345678")
     assert stored.status == "published"
@@ -222,6 +262,11 @@ async def test_batch_publish_groups_documents_and_skips_missing_plans(
             title=f"批量教案 {index}",
             topic=f"主题 {index}",
         )
+    await test_db.execute(
+        "UPDATE lesson_plans SET final_content=? WHERE id='batch-1'",
+        (json.dumps({"key_points": "选中导出最终重点"}, ensure_ascii=False),),
+        commit=True,
+    )
 
     zip_path = await lesson_service.batch_publish(
         ["batch-1", "missing", "batch-2", "batch-3"],
@@ -229,6 +274,7 @@ async def test_batch_publish_groups_documents_and_skips_missing_plans(
     )
 
     assert pathlib.Path(zip_path).is_file()
+    assert lesson_service.rendered[0]["data"]["key_points"] == "选中导出最终重点"
     with zipfile.ZipFile(zip_path) as archive:
         assert sorted(archive.namelist()) == ["主题 1_01.docx", "主题 3_02.docx"]
 

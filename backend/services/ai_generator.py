@@ -51,6 +51,8 @@ class AIGenerator:
         "传授新知": {"teacher_activity": 120, "student_activity": 80},
         "课堂实践": {"teacher_activity": 80, "student_activity": 120},
     }
+    _KEY_DIFFICULT_MIN_CHARS = 20
+    _KEY_DIFFICULT_MAX_CHARS = 40
 
     # Generation prompt template
     GENERATION_PROMPT = """你是一位资深的{subject}学科教研专家，拥有20年教学经验。
@@ -79,8 +81,8 @@ class AIGenerator:
     "ability": ["具体的能力目标1（至少2-3条）", "能力目标2"],
     "quality": ["具体的素质目标1（至少2条）", "素质目标2"]
   }},
-  "key_points": "教学重点内容，要具体明确",
-  "difficult_points": "教学难点内容，说明难在哪里",
+  "key_points": "20-40个汉字的教学重点，表述完整且不使用省略号",
+  "difficult_points": "20-40个汉字的教学难点，表述完整且不使用省略号",
   "ideological_political": "结合本节课内容，挖掘课程思政元素，如：工匠精神、生态意识、家国情怀等",
   "teaching_tools": "教具和学具准备清单",
   "teaching_methods": "采用的教学方法",
@@ -139,7 +141,8 @@ class AIGenerator:
 3. 时间分配要合理，总时长匹配课时
 4. 语言要专业但不晦涩
 5. 要体现新课标理念和学生主体地位
-6. 请确保返回的是纯JSON格式，不要包含其他说明文字
+6. 教学重点和教学难点各写20-40个汉字，禁止使用中文或英文省略号
+7. 请确保返回的是纯JSON格式，不要包含其他说明文字
 """
 
     def __init__(
@@ -187,6 +190,11 @@ class AIGenerator:
 
         max_attempts = settings.ai_max_retries + 1
         last_error: Optional[Exception] = None
+        key_difficult_fields = {
+            field_name
+            for field_name in ("key_points", "difficult_points")
+            if field_configs is None or any(config.name == field_name for config in field_configs)
+        }
 
         for attempt in range(max_attempts):
             prompt = base_prompt
@@ -206,8 +214,18 @@ class AIGenerator:
             try:
                 parsed_data = self._parse_json_response(content)
                 self._normalize_teaching_steps(parsed_data)
-                self._validate_teaching_step_detail(parsed_data)
-                return GeneratedContent(**parsed_data)
+                generated_content = GeneratedContent(**parsed_data)
+                normalized_data = generated_content.model_dump()
+                self._validate_key_difficult_points(
+                    normalized_data,
+                    required_fields=key_difficult_fields,
+                )
+                self._validate_teaching_step_detail(normalized_data)
+                self._validate_experiment_alignment(
+                    normalized_data,
+                    input_data.experiment_name,
+                )
+                return generated_content
             except ValueError as e:
                 last_error = e
                 cleaned_content = self._clean_ai_response(content)
@@ -215,8 +233,18 @@ class AIGenerator:
                     try:
                         parsed_data = self._parse_json_response(cleaned_content)
                         self._normalize_teaching_steps(parsed_data)
-                        self._validate_teaching_step_detail(parsed_data)
-                        return GeneratedContent(**parsed_data)
+                        generated_content = GeneratedContent(**parsed_data)
+                        normalized_data = generated_content.model_dump()
+                        self._validate_key_difficult_points(
+                            normalized_data,
+                            required_fields=key_difficult_fields,
+                        )
+                        self._validate_teaching_step_detail(normalized_data)
+                        self._validate_experiment_alignment(
+                            normalized_data,
+                            input_data.experiment_name,
+                        )
+                        return generated_content
                     except ValueError as cleaned_error:
                         last_error = cleaned_error
 
@@ -260,12 +288,11 @@ class AIGenerator:
             input_data, field_name, current_content, additional_instruction
         )
 
-        return await generate_with_ai(
+        return await self._generate_validated_field(
             prompt=prompt,
             system_prompt="你是一位专业的教案设计专家。",
-            provider=self.provider,
-            api_key=self.api_key,
-            model=self.model,
+            input_data=input_data,
+            field_name=field_name,
         )
 
     async def optimize_field(
@@ -291,13 +318,70 @@ class AIGenerator:
             input_data, field_name, content, optimization_type
         )
 
-        return await generate_with_ai(
+        return await self._generate_validated_field(
             prompt=prompt,
             system_prompt="你是一位专业的教学设计专家。",
-            provider=self.provider,
-            api_key=self.api_key,
-            model=self.model,
+            input_data=input_data,
+            field_name=field_name,
         )
+
+    async def _generate_validated_field(
+        self,
+        *,
+        prompt: str,
+        system_prompt: str,
+        input_data: LessonPlanInput,
+        field_name: str,
+    ) -> str:
+        """Retry a single-field response when it breaks shared plan constraints."""
+        max_attempts = settings.ai_max_retries + 1
+        last_error: Optional[ValueError] = None
+        for attempt in range(max_attempts):
+            attempt_prompt = prompt
+            if last_error:
+                attempt_prompt += (
+                    "\n\n上一次输出不符合要求："
+                    f"{last_error}\n请修正后重新输出完整结果。"
+                )
+            content = await generate_with_ai(
+                prompt=attempt_prompt,
+                system_prompt=system_prompt,
+                provider=self.provider,
+                api_key=self.api_key,
+                model=self.model,
+            )
+            try:
+                if field_name in {"key_points", "difficult_points"}:
+                    normalized = GeneratedContent(**{field_name: content}).model_dump()[field_name]
+                    self._validate_key_difficult_points(
+                        {field_name: normalized},
+                        required_fields={field_name},
+                    )
+                    return str(normalized)
+                if field_name == "teaching_steps":
+                    steps = self._parse_json_array_response(content)
+                    data = {"teaching_steps": steps}
+                    self._normalize_teaching_steps(data)
+                    self._validate_experiment_alignment(data, input_data.experiment_name)
+                    return json.dumps(data["teaching_steps"], ensure_ascii=False)
+                return content
+            except ValueError as exc:
+                last_error = exc
+                if attempt >= max_attempts - 1:
+                    break
+                delay = settings.ai_retry_delay * (settings.ai_retry_backoff ** attempt)
+                logger.warning(
+                    "AI field response failed validation on attempt %s/%s: %s. "
+                    "Retrying in %.1fs.",
+                    attempt + 1,
+                    max_attempts,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        if last_error:
+            raise last_error
+        raise ValueError("单字段生成失败")
 
     def _build_generation_prompt(
         self,
@@ -313,6 +397,10 @@ class AIGenerator:
             extra_info += f"- 单元：{input_data.unit_name}\n"
         if input_data.location:
             extra_info += f"- 授课地点：{input_data.location}\n"
+        if input_data.focus_areas:
+            extra_info += f"- 核心内容：{input_data.focus_areas}\n"
+        if input_data.experiment_name:
+            extra_info += f"- 对应实验项目：{input_data.experiment_name}\n"
 
         prior_knowledge = input_data.prior_knowledge or "无特殊说明"
         additional_requirements = input_data.additional_requirements or "无特殊要求"
@@ -381,6 +469,8 @@ class AIGenerator:
 8. 请确保返回的是纯JSON格式，不要包含其他说明文字
 9. 对于每个字段都要提供有价值的具体内容，不要使用"待补充"、"根据实际情况"等占位符
 10. 所有字段的内容要相互关联、逻辑一致
+11. 教学重点和教学难点各写20-40个汉字，使用完整表述，禁止使用中文或英文省略号
+12. 如有“对应实验项目”，课堂实践中必须原样写出该实验项目名称并围绕它安排任务
 """
 
     def _build_field_prompt(
@@ -415,6 +505,7 @@ class AIGenerator:
 - 年级：{input_data.grade}
 - 课题：{input_data.topic}
 - 课时：{input_data.duration}
+- 对应实验项目：{input_data.experiment_name or "无"}
 
 ## 任务
 请重新生成教案的"{display_name}"部分。
@@ -440,7 +531,12 @@ class AIGenerator:
                     prompt += f"- 情感态度价值观：{'、'.join(goals['emotion'])}\n"
 
         # Add specific instructions based on field
-        if field_name == "teaching_steps":
+        if field_name in {"key_points", "difficult_points"}:
+            prompt += """
+## 字数与格式要求
+请写20-40个汉字，使用完整表述，禁止使用中文省略号或三个连续英文句点。
+"""
+        elif field_name == "teaching_steps":
             prompt += """
 ## 教学过程要求
 请返回JSON格式的教学步骤数组：
@@ -456,6 +552,11 @@ class AIGenerator:
 ]
 ```
 """
+            if input_data.experiment_name:
+                prompt += (
+                    "课堂实践必须原样包含实验项目名称“"
+                    f"{input_data.experiment_name}”。\n"
+                )
         elif field_name == "teaching_goals":
             prompt += """
 ## 教学目标要求
@@ -503,13 +604,25 @@ class AIGenerator:
             optimization_type, "请优化以下内容。"
         )
 
+        key_difficult_requirement = ""
+        if field_name in {"key_points", "difficult_points"}:
+            key_difficult_requirement = (
+                "\n- 修改后的内容必须为20-40个汉字，使用完整表述，禁止使用省略号"
+            )
+        experiment_requirement = ""
+        if field_name == "teaching_steps" and input_data.experiment_name:
+            experiment_requirement = (
+                "\n- 课堂实践必须原样包含实验项目名称“"
+                f"{input_data.experiment_name}”"
+            )
+
         return f"""你是一位教学设计专家。
 
 ## 原始内容
 {content}
 
 ## 优化要求
-{instruction}
+{instruction}{key_difficult_requirement}{experiment_requirement}
 
 ## 背景
 - 学科：{input_data.subject}
@@ -534,6 +647,8 @@ class AIGenerator:
     "ability": ["具体的能力目标1（至少2-3条）", "能力目标2"],
     "quality": ["具体的素质目标1（至少2条）", "素质目标2"]
   }"""
+            elif field_name in {"key_points", "difficult_points"}:
+                sample = '"20-40个汉字的完整表述，禁止使用省略号"'
             elif field_name == "reflection":
                 # Use different reflection description based on generate_reflection
                 if generate_reflection:
@@ -718,8 +833,8 @@ class AIGenerator:
     "ability": ["具体的能力目标1（至少2-3条）", "能力目标2"],
     "quality": ["具体的素质目标1（至少2条）", "素质目标2"]
   }},
-  "key_points": "教学重点内容，要具体明确",
-  "difficult_points": "教学难点内容，说明难在哪里",
+  "key_points": "20-40个汉字的教学重点，表述完整且不使用省略号",
+  "difficult_points": "20-40个汉字的教学难点，表述完整且不使用省略号",
   "ideological_political": "结合本节课内容，挖掘课程思政元素，如：工匠精神、生态意识、家国情怀等",
   "teaching_tools": "教具和学具准备清单",
   "teaching_methods": "采用的教学方法",
@@ -806,6 +921,81 @@ class AIGenerator:
                 if value and not value.startswith(marker):
                     value = f"{marker}{value}"
                 step[field_name] = value
+
+    @classmethod
+    def _validate_key_difficult_points(
+        cls,
+        data: Dict[str, Any],
+        *,
+        required_fields: Optional[set[str]] = None,
+    ) -> None:
+        """Keep complete teaching-plan text within the requested generation size."""
+        issues: list[str] = []
+        for field_name, label in (
+            ("key_points", "教学重点"),
+            ("difficult_points", "教学难点"),
+        ):
+            is_required = field_name in (required_fields or set())
+            if field_name not in data and not is_required:
+                continue
+            value = str(data.get(field_name) or "").strip()
+            if not value:
+                if is_required:
+                    issues.append(f"{label}不能为空")
+                continue
+            if "…" in value or re.search(r"\.{3,}", value):
+                issues.append(f"{label}不能包含省略号")
+                continue
+            length = len(re.sub(r"\s", "", value))
+            if not cls._KEY_DIFFICULT_MIN_CHARS <= length <= cls._KEY_DIFFICULT_MAX_CHARS:
+                issues.append(
+                    f"{label}为{length}字，必须为"
+                    f"{cls._KEY_DIFFICULT_MIN_CHARS}-{cls._KEY_DIFFICULT_MAX_CHARS}字"
+                )
+        if issues:
+            raise ValueError("；".join(issues))
+
+    @staticmethod
+    def _parse_json_array_response(content: str) -> List[Any]:
+        """Extract the JSON array returned by a teaching-steps field request."""
+        match = re.search(r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL)
+        candidate = match.group(1) if match else content
+        start = candidate.find("[")
+        end = candidate.rfind("]")
+        if start >= 0 and end >= start:
+            candidate = candidate[start:end + 1]
+        try:
+            result = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            raise ValueError("教学过程必须返回有效的JSON数组") from exc
+        if not isinstance(result, list):
+            raise ValueError("教学过程必须返回JSON数组")
+        return AIGenerator._sanitize_control_chars(result)
+
+    @staticmethod
+    def _validate_experiment_alignment(
+        data: Dict[str, Any],
+        experiment_name: Optional[str],
+    ) -> None:
+        """Require the frozen experiment project to appear in classroom practice."""
+        project = str(experiment_name or "").strip()
+        if not project:
+            return
+        steps = data.get("teaching_steps")
+        practice = next(
+            (
+                step
+                for step in steps or []
+                if isinstance(step, dict) and str(step.get("stage") or "").strip() == "课堂实践"
+            ),
+            None,
+        )
+        content = "".join(
+            str(practice.get(field_name) or "")
+            for field_name in ("teacher_activity", "student_activity", "design_intent")
+        ) if practice else ""
+        if project not in content:
+            raise ValueError(f"课堂实践必须原样包含实验项目名称“{project}”")
 
     @classmethod
     def _validate_teaching_step_detail(cls, data: Dict[str, Any]) -> None:

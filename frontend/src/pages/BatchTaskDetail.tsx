@@ -112,6 +112,14 @@ const BatchTaskDetail: React.FC = () => {
         if (plan.id === planId) {
           const content = lessonPlanApi.parseGeneratedContent(plan);
           content[fieldName] = response.field_value;
+          if (plan.final_content) {
+            const finalContent = JSON.parse(plan.final_content);
+            finalContent[fieldName] = response.field_value;
+            return {
+              ...plan,
+              final_content: JSON.stringify(finalContent),
+            };
+          }
           return {
             ...plan,
             generated_content: JSON.stringify(content),

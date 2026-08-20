@@ -25,6 +25,7 @@ from ..models.schemas import (
 from .ai_generator import AIGenerator
 from .document_renderer import DocumentRenderer
 from .builtin_template import get_builtin_template_path, require_valid_builtin_template
+from .lesson_content import merge_lesson_content, parse_content_layer
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,49 @@ class LessonPlanService:
             model=settings.get_active_model(),
         )
         self.document_renderer = DocumentRenderer()
+
+    @staticmethod
+    async def _ensure_batch_editable(lesson_plan: LessonPlan) -> None:
+        """Prevent edits between lesson and semester-plan snapshot rendering."""
+        if not lesson_plan.batch_task_id:
+            return
+        db = await get_db()
+        task = await db.fetch_one(
+            "SELECT status FROM batch_tasks WHERE id = ?",
+            (lesson_plan.batch_task_id,),
+        )
+        if task and task["status"] in {"pending", "processing"}:
+            raise ValueError("批处理任务正在生成文档，请在任务完成后编辑教案")
+
+    @staticmethod
+    async def _save_content_layer_if_editable(
+        db,
+        *,
+        lesson_plan_id: str,
+        column: str,
+        content: Dict[str, Any],
+    ) -> None:
+        """Atomically reject a write if its batch entered generation meanwhile."""
+        cursor = await db.execute(
+            f"""
+            UPDATE lesson_plans
+            SET {column} = ?, updated_at = ?
+            WHERE id = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM batch_tasks
+                  WHERE batch_tasks.id = lesson_plans.batch_task_id
+                    AND batch_tasks.status IN ('pending', 'processing')
+              )
+            """,
+            (
+                json.dumps(content, ensure_ascii=False),
+                datetime.now().isoformat(),
+                lesson_plan_id,
+            ),
+            commit=True,
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("批处理任务正在生成文档，请在任务完成后编辑教案")
 
     async def get_lesson_plan(self, lesson_plan_id: str) -> Optional[LessonPlan]:
         """
@@ -135,7 +179,7 @@ class LessonPlanService:
         field_value: Any
     ) -> LessonPlan:
         """
-        Update a single field in a lesson plan's generated_content.
+        Update a single field in the lesson plan's canonical content layer.
 
         Args:
             lesson_plan_id: Lesson plan ID
@@ -151,25 +195,25 @@ class LessonPlanService:
         lesson_plan = await self.get_lesson_plan(lesson_plan_id)
         if not lesson_plan:
             raise ValueError(f"Lesson plan {lesson_plan_id} not found")
+        await self._ensure_batch_editable(lesson_plan)
 
-        # Parse generated_content
+        # Update the canonical writable layer: final overrides when it exists.
         try:
-            content = json.loads(lesson_plan.generated_content) if lesson_plan.generated_content else {}
-        except json.JSONDecodeError:
+            column = "final_content" if lesson_plan.final_content else "generated_content"
+            raw_content = getattr(lesson_plan, column)
+            content = parse_content_layer(raw_content, label="教案内容")
+        except ValueError:
             content = {}
 
         # Update the field
         content[field_name] = field_value
 
         # Save back to database
-        await db.execute(
-            """
-            UPDATE lesson_plans
-            SET generated_content = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (json.dumps(content, ensure_ascii=False), datetime.now().isoformat(), lesson_plan_id),
-            commit=True
+        await self._save_content_layer_if_editable(
+            db,
+            lesson_plan_id=lesson_plan_id,
+            column=column,
+            content=content,
         )
 
         # Return updated lesson plan
@@ -196,12 +240,16 @@ class LessonPlanService:
         lesson_plan = await self.get_lesson_plan(lesson_plan_id)
         if not lesson_plan:
             raise ValueError(f"Lesson plan {lesson_plan_id} not found")
+        await self._ensure_batch_editable(lesson_plan)
 
-        # Parse input_data and generated_content
+        # Parse the field-regeneration context from the same canonical content.
         try:
             input_data = json.loads(lesson_plan.input_data) if lesson_plan.input_data else {}
-            content = json.loads(lesson_plan.generated_content) if lesson_plan.generated_content else {}
-        except json.JSONDecodeError:
+            content = merge_lesson_content(
+                lesson_plan.generated_content,
+                lesson_plan.final_content,
+            )
+        except (json.JSONDecodeError, ValueError):
             raise ValueError("Invalid JSON in lesson plan data")
 
         # Convert input_data dict to LessonPlanInput object
@@ -217,18 +265,19 @@ class LessonPlanService:
             current_content=generated_content,
             additional_instruction=additional_instruction
         )
+        if field_name == "teaching_steps" and isinstance(field_value, str):
+            field_value = AIGenerator._parse_json_array_response(field_value)
 
-        # Update the field in database
-        content[field_name] = field_value
+        # Persist only the writable layer while keeping other final overrides partial.
+        column = "final_content" if lesson_plan.final_content else "generated_content"
+        layer = parse_content_layer(getattr(lesson_plan, column), label="教案内容")
+        layer[field_name] = field_value
         db = await get_db()
-        await db.execute(
-            """
-            UPDATE lesson_plans
-            SET generated_content = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (json.dumps(content, ensure_ascii=False), datetime.now().isoformat(), lesson_plan_id),
-            commit=True
+        await self._save_content_layer_if_editable(
+            db,
+            lesson_plan_id=lesson_plan_id,
+            column=column,
+            content=layer,
         )
 
         return field_value
@@ -253,11 +302,14 @@ class LessonPlanService:
         require_valid_builtin_template(lesson_plan.template_id)
         template_path = str(get_builtin_template_path())
 
-        # Parse input_data and generated_content
+        # Parse input data and canonical content.
         try:
             input_data = json.loads(lesson_plan.input_data) if lesson_plan.input_data else {}
-            content_data = json.loads(lesson_plan.generated_content) if lesson_plan.generated_content else {}
-        except json.JSONDecodeError:
+            content_data = merge_lesson_content(
+                lesson_plan.generated_content,
+                lesson_plan.final_content,
+            )
+        except (json.JSONDecodeError, ValueError):
             raise ValueError("Invalid JSON in lesson plan data")
 
         # Prepare data for template rendering
@@ -394,9 +446,12 @@ class LessonPlanService:
         for plan in lesson_plans:
             try:
                 input_data = json.loads(plan.input_data) if plan.input_data else {}
-                content_data = json.loads(plan.generated_content) if plan.generated_content else {}
+                content_data = merge_lesson_content(
+                    plan.generated_content,
+                    plan.final_content,
+                )
                 combined_data.append({**input_data, **content_data})
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, ValueError):
                 logger.error(f"Invalid JSON in lesson plan {plan.id}")
                 continue
 

@@ -73,13 +73,15 @@ def _assert_adaptive_teaching_structure(path: pathlib.Path, week_count: int):
     )
     assert all(
         row._tr.trPr.find(qn("w:tblHeader")) is None
-        and row._tr.trPr.find(qn("w:cantSplit")) is not None
-        for row in table.rows[2:]
+        and row._tr.trPr.find(qn("w:cantSplit")) is None
+        for row in table.rows[2:-2]
     )
     assert all(
-        row.cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is not None
-        for row in table.rows[-3:-1]
+        row._tr.trPr.find(qn("w:cantSplit")) is not None
+        for row in (*table.rows[:2], *table.rows[-2:])
     )
+    assert table.rows[-3].cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is None
+    assert table.rows[-2].cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is not None
     header = document.sections[0].header
     assert len(header.paragraphs) == 2
     assert header.paragraphs[0].text == "云南林业职业技术学院教师授课计划表"
@@ -103,7 +105,16 @@ def test_fixed_course_plan_templates_are_valid():
 
 def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     renderer = course_plan_renderer.CoursePlanRenderer(tmp_path)
-    chapters = _chapters()
+    chapters = [chapter.model_dump() for chapter in _chapters()]
+    for index, chapter in enumerate(chapters, start=1):
+        chapter.update(
+            key_points=f"准确完成第{index}项服务器配置并依据验证结果判断安全状态",
+            difficult_points=f"综合分析第{index}项配置异常并选择合适方法完成故障排查",
+            homework={
+                "required": f"完成第{index}项配置验证记录",
+                "optional": f"分析第{index}项安全加固方案",
+            },
+        )
 
     teaching_path = pathlib.Path(
         renderer.render_teaching_plan(
@@ -166,8 +177,24 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     assert teaching.tables[0].rows[-2].cells[4].text == "64"
     teaching_text = _all_text(teaching_path)
     assert "24级信息安全技术应用1、2班" in teaching_text
-    assert "慧心楼3516，实训楼204" in teaching_text
+    assert "机房、计算机" in teaching_text
     assert "任务32 Windows服务器安全配置" in teaching_text
+    first_week = teaching.tables[0].rows[2].cells
+    assert first_week[1].text == "任务1 Windows服务器安全配置\n任务2 Windows服务器安全配置"
+    assert first_week[5].text == (
+        "准确完成第1项服务器配置并依据验证结果判断安全状态\n"
+        "准确完成第2项服务器配置并依据验证结果判断安全状态"
+    )
+    assert first_week[6].text == (
+        "综合分析第1项配置异常并选择合适方法完成故障排查\n"
+        "综合分析第2项配置异常并选择合适方法完成故障排查"
+    )
+    assert "…" not in first_week[5].text + first_week[6].text
+    assert first_week[7].text == "机房、计算机"
+    assert first_week[8].text == (
+        "完成第1项配置验证记录\n分析第1项安全加固方案\n"
+        "完成第2项配置验证记录\n分析第2项安全加固方案"
+    )
 
     expectations = (
         ("24级信息安全技术应用1班", "四", "3-4", "05", "12", "慧心楼3516"),

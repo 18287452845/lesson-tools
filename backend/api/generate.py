@@ -13,6 +13,7 @@ from datetime import datetime
 from ..models.database import db
 from ..models.schemas import (
     LessonPlanGenerateRequest,
+    LessonPlanInput,
     LessonPlanResponse,
     FieldRegenerateRequest,
     FieldEditRequest,
@@ -27,9 +28,54 @@ from ..services.builtin_template import (
     get_builtin_template_path,
     require_valid_builtin_template,
 )
+from ..services.lesson_content import merge_lesson_content, parse_content_layer
 from ..utils.ai_config import get_ai_generator
 
 router = APIRouter(prefix="/generate", tags=["generate"])
+
+
+async def _ensure_batch_editable(row) -> None:
+    """Keep batch artifacts on one immutable content snapshot while rendering."""
+    batch_task_id = dict(row).get("batch_task_id")
+    if not batch_task_id:
+        return
+    task = await db.fetch_one(
+        "SELECT status FROM batch_tasks WHERE id = ?",
+        (batch_task_id,),
+    )
+    if task and task["status"] in {"pending", "processing"}:
+        raise HTTPException(
+            status_code=409,
+            detail="批处理任务正在生成文档，请在任务完成后编辑教案",
+        )
+
+
+async def _save_content_layer_if_editable(
+    *,
+    lesson_plan_id: str,
+    column: str,
+    content: dict,
+) -> None:
+    """Atomically reject writes that race with batch document generation."""
+    cursor = await db.execute(
+        f"""
+        UPDATE lesson_plans
+        SET {column} = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND NOT EXISTS (
+              SELECT 1 FROM batch_tasks
+              WHERE batch_tasks.id = lesson_plans.batch_task_id
+                AND batch_tasks.status IN ('pending', 'processing')
+          )
+        """,
+        (json.dumps(content, ensure_ascii=False), lesson_plan_id),
+        commit=True,
+    )
+    if cursor.rowcount != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="批处理任务正在生成文档，请在任务完成后编辑教案",
+        )
 
 
 def extract_json_from_content(content: str, is_array: bool = False) -> any:
@@ -280,13 +326,15 @@ async def regenerate_field(
 
     if not row:
         raise HTTPException(status_code=404, detail="Lesson plan not found")
-
-    # Parse current content
-    input_data = json.loads(row["input_data"])
-    current_content = json.loads(row["generated_content"])
+    await _ensure_batch_editable(row)
 
     # Regenerate field
     try:
+        input_data = LessonPlanInput(**json.loads(row["input_data"]))
+        current_content = merge_lesson_content(
+            row["generated_content"],
+            row["final_content"],
+        )
         generator = await get_ai_generator()
         new_content = await generator.regenerate_field(
             input_data,
@@ -301,23 +349,27 @@ async def regenerate_field(
     # Handle different field types
     if field_name == "teaching_steps":
         # Parse JSON array
-        current_content[field_name] = extract_json_from_content(new_content, is_array=True)
+        field_value = extract_json_from_content(new_content, is_array=True)
     elif field_name in ("teaching_goals", "homework"):
         # Parse JSON object
-        current_content[field_name] = extract_json_from_content(new_content, is_array=False)
+        field_value = extract_json_from_content(new_content, is_array=False)
     else:
-        current_content[field_name] = new_content
+        field_value = new_content
+
+    column = "final_content" if row["final_content"] else "generated_content"
+    layer = parse_content_layer(row[column], label="教案内容")
+    layer[field_name] = field_value
 
     # Update database
-    await db.execute(
-        "UPDATE lesson_plans SET generated_content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (json.dumps(current_content), lesson_plan_id),
-        commit=True,
+    await _save_content_layer_if_editable(
+        lesson_plan_id=lesson_plan_id,
+        column=column,
+        content=layer,
     )
 
     return {
         "field_name": field_name,
-        "new_content": current_content[field_name],
+        "new_content": field_value,
         "message": f"Field '{field_name}' regenerated successfully",
     }
 
@@ -338,29 +390,17 @@ async def update_field(
 
     if not row:
         raise HTTPException(status_code=404, detail="Lesson plan not found")
-
-    # Parse current content
-    current_content = json.loads(row["generated_content"])
-
-    # Update field
-    current_content[request.field_name] = request.content
+    await _ensure_batch_editable(row)
 
     # Update final content if exists, otherwise update generated
-    final_content = row["final_content"]
-    if final_content:
-        final = json.loads(final_content)
-        final[request.field_name] = request.content
-        await db.execute(
-            "UPDATE lesson_plans SET final_content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (json.dumps(final), lesson_plan_id),
-            commit=True,
-        )
-    else:
-        await db.execute(
-            "UPDATE lesson_plans SET generated_content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (json.dumps(current_content), lesson_plan_id),
-            commit=True,
-        )
+    column = "final_content" if row["final_content"] else "generated_content"
+    layer = parse_content_layer(row[column], label="教案内容")
+    layer[request.field_name] = request.content
+    await _save_content_layer_if_editable(
+        lesson_plan_id=lesson_plan_id,
+        column=column,
+        content=layer,
+    )
 
     return {"message": "Field updated successfully"}
 
@@ -384,9 +424,10 @@ async def export_lesson_plan(lesson_plan_id: str):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Use final content if available, otherwise use generated
-    content_data = row["final_content"] or row["generated_content"]
-    content = json.loads(content_data)
+    content = merge_lesson_content(
+        row["generated_content"],
+        row["final_content"],
+    )
     input_data = json.loads(row["input_data"])
 
     # Prepare data for rendering
@@ -472,7 +513,10 @@ async def get_lesson_plan(lesson_plan_id: str):
         raise HTTPException(status_code=404, detail="Lesson plan not found")
 
     input_data = json.loads(row["input_data"])
-    generated_content = json.loads(row["generated_content"])
+    generated_content = merge_lesson_content(
+        row["generated_content"],
+        row["final_content"],
+    )
     final_content = json.loads(row["final_content"]) if row["final_content"] else None
 
     return {

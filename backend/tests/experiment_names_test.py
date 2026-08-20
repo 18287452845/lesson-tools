@@ -122,6 +122,34 @@ async def test_batch_merge_revalidates_regenerates_and_persists_names(
             captured["params"] = params
             captured["commit"] = commit
 
+        async def fetch_all(self, sql, params=()):
+            content = json.dumps(
+                {
+                    "teaching_goals": {"knowledge": ["目标"]},
+                    "key_points": "教学重点内容",
+                    "difficult_points": "教学难点内容",
+                    "teaching_steps": [
+                        {
+                            "stage": "课堂实践",
+                            "teacher_activity": "组织Python环境配置实验",
+                            "student_activity": "完成Python环境配置实验",
+                            "design_intent": "实践",
+                        }
+                    ],
+                    "homework": {"required": "练习"},
+                },
+                ensure_ascii=False,
+            )
+            return [
+                {
+                    "lesson_number": number,
+                    "topic": f"Python教学主题{number}",
+                    "generated_content": content,
+                    "final_content": None,
+                }
+                for number in (1, 2)
+            ]
+
     async def fake_get_db():
         return FakeDatabase()
 
@@ -163,7 +191,10 @@ async def test_batch_merge_revalidates_regenerates_and_persists_names(
     )
 
     assert captured["ensure_kwargs"]["require_every_group"] is False
-    assert captured["render_kwargs"]["chapters"] == corrected
+    assert [
+        chapter["experiment_name"]
+        for chapter in captured["render_kwargs"]["chapters"]
+    ] == ["Python环境配置", ""]
     assert "UPDATE batch_tasks SET chapters" in captured["sql"]
     assert json.loads(captured["params"][0])[0]["experiment_name"] == "Python环境配置"
     assert captured["commit"] is True

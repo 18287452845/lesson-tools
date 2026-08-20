@@ -23,6 +23,7 @@ def _content(online_resources=None, complete=True):
     return GeneratedContent(
         teaching_goals={"knowledge": ["掌握知识"]} if complete else None,
         key_points="教学重点" if complete else None,
+        difficult_points="教学难点" if complete else None,
         teaching_steps=[
             {
                 "stage": "课堂实践",
@@ -32,6 +33,7 @@ def _content(online_resources=None, complete=True):
                 "design_intent": "实践应用",
             }
         ] if complete else [],
+        homework={"required": "完成练习", "optional": "拓展练习"} if complete else None,
         online_resources=online_resources,
     )
 
@@ -158,6 +160,47 @@ async def test_parallel_document_generation_success_failure_draft_and_render(
 
 
 @pytest.mark.asyncio
+async def test_parallel_generation_propagates_one_frozen_project_to_each_lesson(
+    processor_db, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(module, "require_valid_builtin_template", lambda _id: None)
+    monkeypatch.setattr(module, "get_builtin_template_path", lambda: tmp_path / "template.docx")
+    chapters = [_chapter(1), _chapter(2)]
+    chapters[1]["experiment_name"] = ""
+    await _insert_task(processor_db, "aligned-project", chapters)
+    captured = {}
+
+    class FakeAI:
+        async def generate_lesson_plan(self, request, generate_reflection=False):
+            captured[request.topic] = request.experiment_name
+            return _content()
+
+    rendered = tmp_path / "aligned.docx"
+
+    class FakeRenderer:
+        def render_lesson_plans_document(self, **kwargs):
+            rendered.write_bytes(b"aligned")
+            return str(rendered)
+
+    processor = BatchTaskProcessor(max_concurrent_lessons=2)
+    processor.ai_generator = FakeAI()
+    processor.document_renderer = FakeRenderer()
+    result = await processor._generate_document_parallel(
+        "aligned-project",
+        1,
+        chapters,
+        "yunlin-standard",
+        "计算机",
+        "大学",
+        "Python",
+        align_experiment_plan=True,
+    )
+
+    assert result == (str(rendered), 2, 0, [1, 2])
+    assert captured == {"主题1": "实验1", "主题2": "实验1"}
+
+
+@pytest.mark.asyncio
 async def test_parallel_generation_reuses_completed_checkpoint_and_replaces_failed(
     processor_db, tmp_path, monkeypatch
 ):
@@ -222,6 +265,30 @@ async def test_parallel_generation_reuses_completed_checkpoint_and_replaces_fail
     assert links[0]["lesson_plan_id"] == "plan-1"
     assert links[1]["lesson_plan_id"] != "plan-2"
 
+    await processor_db.execute(
+        "UPDATE lesson_plans SET final_content=generated_content WHERE batch_task_id=?",
+        (task_id,),
+        commit=True,
+    )
+
+    misaligned = await processor._generate_document_parallel(
+        task_id,
+        1,
+        chapters,
+        "yunlin-standard",
+        "计算机",
+        "大学",
+        "Python",
+        align_experiment_plan=True,
+    )
+    assert misaligned == ("", 0, 2, [])
+    preserved_links = await processor_db.fetch_all(
+        "SELECT lesson_number, lesson_plan_id, status FROM batch_lesson_plans "
+        "WHERE batch_task_id=? ORDER BY lesson_number",
+        (task_id,),
+    )
+    assert [dict(row) for row in preserved_links] == [dict(row) for row in links]
+
 
 @pytest.mark.asyncio
 async def test_sequential_generation_course_plans_zip_and_database_helpers(
@@ -258,13 +325,16 @@ async def test_sequential_generation_course_plans_zip_and_database_helpers(
     experiment_file = tmp_path / "sequential_experiment.docx"
     teaching_file.write_bytes(b"teaching")
     experiment_file.write_bytes(b"experiment")
+    captured_plan_chapters = []
 
     class FakeCourseRenderer:
         def render_teaching_plan(self, **kwargs):
+            captured_plan_chapters.append(kwargs["chapters"])
             return str(teaching_file)
 
         def render_experiment_plans(self, **kwargs):
             assert kwargs["class_schedules"] == [{"class_name": "一班"}]
+            captured_plan_chapters.append(kwargs["chapters"])
             return [str(experiment_file)]
 
     async def regenerated(chapters, **kwargs):
@@ -274,6 +344,31 @@ async def test_sequential_generation_course_plans_zip_and_database_helpers(
     processor.course_plan_renderer = FakeCourseRenderer()
     monkeypatch.setattr(module, "ensure_experiment_names", regenerated)
     await _insert_task(processor_db, "plans", [_chapter(1)], supplemental=["teaching_plan", "experiment_plan"])
+    generated_content = _content().model_dump()
+    generated_content["teaching_steps"][0]["teacher_activity"] += "合规实验"
+    final_content = {"key_points": "教案最终教学重点"}
+    await processor_db.execute(
+        """
+        INSERT INTO lesson_plans
+          (id, template_id, title, subject, grade, topic, generated_content, final_content,
+           status, batch_task_id, lesson_number)
+        VALUES ('plans-lesson', 'yunlin-standard', '教案1', '计算机', '大学',
+                '教案最终课题', ?, ?, 'generated', 'plans', 1)
+        """,
+        (
+            json.dumps(generated_content, ensure_ascii=False),
+            json.dumps(final_content, ensure_ascii=False),
+        ),
+        commit=True,
+    )
+    await processor_db.execute(
+        """
+        INSERT INTO batch_lesson_plans
+          (id, batch_task_id, lesson_plan_id, lesson_number, topic, status)
+        VALUES ('plans-link', 'plans', 'plans-lesson', 1, '教案最终课题', 'completed')
+        """,
+        commit=True,
+    )
     task = dict(await processor_db.fetch_one("SELECT * FROM batch_tasks WHERE id='plans'"))
     task.update(
         academic_year="2025-2026",
@@ -289,11 +384,57 @@ async def test_sequential_generation_course_plans_zip_and_database_helpers(
         batch_task_id="plans", task=task, chapters=[_chapter(1)]
     )
     assert len(files) == 2
+    assert all(chapters[0]["topic"] == "教案最终课题" for chapters in captured_plan_chapters)
+    assert all(chapters[0]["key_points"] == "教案最终教学重点" for chapters in captured_plan_chapters)
+    assert all(chapters[0]["difficult_points"] == "教学难点" for chapters in captured_plan_chapters)
+    assert all(chapters[0]["homework"]["required"] == "完成练习" for chapters in captured_plan_chapters)
     saved_task = await processor_db.fetch_one("SELECT chapters FROM batch_tasks WHERE id='plans'")
     assert json.loads(saved_task["chapters"])[0]["experiment_name"] == "合规实验"
     assert await processor._generate_course_plan_files(
         batch_task_id="plans", task={**task, "supplemental_artifacts": "[]"}, chapters=[]
     ) == []
+
+    await _insert_task(
+        processor_db,
+        "incomplete-plans",
+        [_chapter(1), _chapter(2)],
+        supplemental=["teaching_plan"],
+    )
+    await processor_db.execute(
+        """
+        INSERT INTO lesson_plans
+          (id, template_id, title, subject, grade, topic, generated_content,
+           status, batch_task_id, lesson_number)
+        VALUES ('incomplete-lesson', 'yunlin-standard', '教案1', '计算机', '大学',
+                '主题1', ?, 'generated', 'incomplete-plans', 1)
+        """,
+        (json.dumps(generated_content, ensure_ascii=False),),
+        commit=True,
+    )
+    await processor_db.execute(
+        """
+        INSERT INTO batch_lesson_plans
+          (id, batch_task_id, lesson_plan_id, lesson_number, topic, status)
+        VALUES ('incomplete-link', 'incomplete-plans', 'incomplete-lesson', 1,
+                '主题1', 'completed')
+        """,
+        commit=True,
+    )
+    incomplete_task = dict(
+        await processor_db.fetch_one("SELECT * FROM batch_tasks WHERE id='incomplete-plans'")
+    )
+    incomplete_task.update(
+        academic_year="2025-2026",
+        semester=2,
+        teacher_name="教师",
+        location="实训室",
+    )
+    with pytest.raises(ValueError, match="教案未全部成功生成"):
+        await processor._generate_course_plan_files(
+            batch_task_id="incomplete-plans",
+            task=incomplete_task,
+            chapters=[_chapter(1), _chapter(2)],
+        )
 
     missing = tmp_path / "missing.docx"
     monkeypatch.setattr(module.settings, "output_dir", tmp_path)
@@ -361,6 +502,23 @@ async def test_process_batch_task_success_draft_failure_cancel_and_wrapper(
     await processor.process_batch_task("workflow-failed")
     failed = await processor_db.fetch_one("SELECT status, failed_count FROM batch_tasks WHERE id='workflow-failed'")
     assert failed["status"] == "failed" and failed["failed_count"] == 1
+
+    async def partial_generate(**kwargs):
+        return str(generated), 0, 1, []
+
+    monkeypatch.setattr(processor, "_generate_document_parallel", partial_generate)
+    await _insert_task(
+        processor_db,
+        "workflow-plan-failed",
+        [_chapter(1)],
+        supplemental=["teaching_plan"],
+    )
+    await processor.process_batch_task("workflow-plan-failed")
+    plan_failed = await processor_db.fetch_one(
+        "SELECT status, error_message FROM batch_tasks WHERE id='workflow-plan-failed'"
+    )
+    assert plan_failed["status"] == "failed"
+    assert "无法创建内容一致" in plan_failed["error_message"]
 
     async def always_cancelled(_):
         return True
