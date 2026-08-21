@@ -248,6 +248,17 @@ class DocumentRenderer:
             if row_properties.find(W + "cantSplit") is None:
                 etree.SubElement(row_properties, W + "cantSplit")
 
+        def keep_row_with_next(row: etree._Element) -> None:
+            """Prevent a process-table header from being orphaned at page end."""
+            keep_row_together(row)
+            for paragraph in row.xpath("./w:tc/w:p", namespaces=NS):
+                paragraph_properties = paragraph.find(W + "pPr")
+                if paragraph_properties is None:
+                    paragraph_properties = etree.Element(W + "pPr")
+                    paragraph.insert(0, paragraph_properties)
+                if paragraph_properties.find(W + "keepNext") is None:
+                    etree.SubElement(paragraph_properties, W + "keepNext")
+
         def allow_row_split(row: etree._Element) -> None:
             row_properties = row.find(W + "trPr")
             if row_properties is None:
@@ -261,6 +272,27 @@ class DocumentRenderer:
                 return
             for height in list(row_properties.findall(W + "trHeight")):
                 row_properties.remove(height)
+
+        def add_tiny_terminal_paragraph(body: etree._Element) -> None:
+            """Keep Word's required document-end paragraph on the final page."""
+            section_properties = body.find(W + "sectPr")
+            if section_properties is None:
+                return
+            previous = section_properties.getprevious()
+            if previous is None or previous.tag != W + "tbl":
+                return
+
+            paragraph = etree.Element(W + "p")
+            paragraph_properties = etree.SubElement(paragraph, W + "pPr")
+            spacing = etree.SubElement(paragraph_properties, W + "spacing")
+            spacing.set(W + "before", "0")
+            spacing.set(W + "after", "0")
+            spacing.set(W + "line", "20")
+            spacing.set(W + "lineRule", "exact")
+            run_properties = etree.SubElement(paragraph_properties, W + "rPr")
+            etree.SubElement(run_properties, W + "sz").set(W + "val", "2")
+            etree.SubElement(run_properties, W + "szCs").set(W + "val", "2")
+            body.insert(body.index(section_properties), paragraph)
 
         def use_fixed_table_layout(table: etree._Element) -> None:
             """Keep long URLs from expanding the homepage past page bounds."""
@@ -412,6 +444,11 @@ class DocumentRenderer:
 
             if len(tables) > 1:
                 process_rows = tables[1].xpath("./w:tr", namespaces=NS)
+                if process_rows:
+                    keep_row_with_next(process_rows[0])
+                    # A large template minimum on the final homework row can
+                    # push only the document-end marker onto a blank page.
+                    remove_minimum_height(process_rows[-1])
                 for row_index in (1, 2, 3, 4, 7, 8):
                     if row_index < len(process_rows):
                         keep_row_together(process_rows[row_index])
@@ -470,6 +507,10 @@ class DocumentRenderer:
 
             if tables:
                 use_fixed_table_layout(tables[0])
+
+            body = root.find(W + "body")
+            if body is not None:
+                add_tiny_terminal_paragraph(body)
 
             patched_xml = etree.tostring(
                 root,
@@ -658,14 +699,48 @@ class DocumentRenderer:
         body = combined_doc.element.body
         section_properties = body.sectPr
 
+        def is_tiny_terminal_paragraph(element: Optional[etree._Element]) -> bool:
+            if element is None or element.tag != W + "p":
+                return False
+            paragraph_properties = element.find(W + "pPr")
+            if paragraph_properties is None:
+                return False
+            spacing = paragraph_properties.find(W + "spacing")
+            run_properties = paragraph_properties.find(W + "rPr")
+            size = run_properties.find(W + "sz") if run_properties is not None else None
+            return bool(
+                spacing is not None
+                and spacing.get(W + "before") == "0"
+                and spacing.get(W + "after") == "0"
+                and spacing.get(W + "line") == "20"
+                and spacing.get(W + "lineRule") == "exact"
+                and size is not None
+                and size.get(W + "val") == "2"
+                and not any(
+                    node.tag in {W + "t", W + "br", W + "drawing"}
+                    for node in element.iter()
+                )
+            )
+
+        # Only the final lesson needs the tiny document-end paragraph. Keeping
+        # one before an explicit page break can create an intermediate blank
+        # page when the preceding table already reaches the page boundary.
+        if section_properties is not None:
+            first_terminal = section_properties.getprevious()
+            if is_tiny_terminal_paragraph(first_terminal):
+                body.remove(first_terminal)
+
         # Append remaining documents after a page break. Insert copied elements
         # before sectPr so the resulting WordprocessingML remains valid.
-        for doc_path in doc_paths[1:]:
+        for document_index, doc_path in enumerate(doc_paths[1:], start=1):
             combined_doc.add_page_break()
             sub_doc = Document(doc_path)
+            is_final_document = document_index == len(doc_paths) - 1
 
             for element in sub_doc.element.body:
                 if element.tag.endswith('sectPr'):
+                    continue
+                if not is_final_document and is_tiny_terminal_paragraph(element):
                     continue
                 insert_at = body.index(section_properties) if section_properties is not None else len(body)
                 body.insert(insert_at, deepcopy(element))

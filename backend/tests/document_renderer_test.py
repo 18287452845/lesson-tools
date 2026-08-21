@@ -96,10 +96,19 @@ def test_combined_render_autoescapes_each_lesson(tmp_path):
     assert "教案2：位运算：x << 1 & y >> 1" in rendered_text
 
 
-def test_compact_homepage_uses_fixed_table_layout(tmp_path):
+def test_compact_homepage_controls_table_pagination(tmp_path):
     path = tmp_path / "homepage.docx"
     document = Document()
     document.add_table(rows=1, cols=1).cell(0, 0).text = "https://example.com/" + "x" * 200
+    process_table = document.add_table(rows=3, cols=2)
+    process_table.cell(0, 0).text = "教学过程"
+    process_table.cell(0, 1).text = "主要教学内容及步骤"
+    process_table.cell(2, 0).text = "作业布置"
+    process_table.cell(2, 1).text = "完成课后作业"
+    last_row_properties = process_table.rows[-1]._tr.get_or_add_trPr()
+    height = etree.SubElement(last_row_properties, qn("w:trHeight"))
+    height.set(qn("w:val"), "2809")
+    height.set(qn("w:hRule"), "atLeast")
     document.save(path)
 
     document_renderer.DocumentRenderer._compact_rendered_homepage(str(path))
@@ -108,6 +117,20 @@ def test_compact_homepage_uses_fixed_table_layout(tmp_path):
     layout = rendered.tables[0]._tbl.tblPr.find(qn("w:tblLayout"))
     assert layout is not None
     assert layout.get(qn("w:type")) == "fixed"
+    for cell in rendered.tables[1].rows[0].cells:
+        for paragraph in cell.paragraphs:
+            assert paragraph._p.pPr.find(qn("w:keepNext")) is not None
+    assert rendered.tables[1].rows[-1]._tr.trPr.find(qn("w:trHeight")) is None
+    section_properties = rendered._element.body.sectPr
+    terminal_paragraph = section_properties.getprevious()
+    assert terminal_paragraph.tag == qn("w:p")
+    spacing = terminal_paragraph.pPr.find(qn("w:spacing"))
+    assert spacing.get(qn("w:before")) == "0"
+    assert spacing.get(qn("w:after")) == "0"
+    assert spacing.get(qn("w:line")) == "20"
+    assert spacing.get(qn("w:lineRule")) == "exact"
+    size = terminal_paragraph.pPr.find("w:rPr/w:sz", terminal_paragraph.nsmap)
+    assert size.get(qn("w:val")) == "2"
 
 
 def test_process_data_adds_role_markers_and_numeric_template_duration():

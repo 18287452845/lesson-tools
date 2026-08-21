@@ -244,7 +244,8 @@ def test_batch_lesson_plan_compacts_each_homepage(tmp_path: pathlib.Path, prepar
         assert all(paragraph.text.strip() for paragraph in objective_cell.paragraphs)
 
     body = document.element.body
-    assert body[-2].tag == qn("w:tbl")
+    assert body[-2].tag == qn("w:p")
+    assert body[-3].tag == qn("w:tbl")
     empty_body_paragraphs = [
         element
         for element in body
@@ -255,4 +256,6 @@ def test_batch_lesson_plan_compacts_each_homepage(tmp_path: pathlib.Path, prepar
             for node in element.iter()
         )
     ]
-    assert len(empty_body_paragraphs) == 2
+    # One compact separator remains between each homepage/process-table pair,
+    # plus one tiny paragraph after the final table for stable Word pagination.
+    assert len(empty_body_paragraphs) == 3
