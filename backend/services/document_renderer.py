@@ -32,16 +32,28 @@ class DocumentRenderer:
     the original document structure, including tables and formatting.
     """
     _MARKDOWN_TOKENS = ("[", "](", "![", "**", "__", "`", "~~", "*", "_", "#")
-    _LINK_PATTERN = re.compile(r'\[([^\]]+)\]\([^)]+\)')
+    _LINK_PATTERN = re.compile(r'(?<!!)\[([^\]]+)\]\([^)]+\)')
     _IMAGE_PATTERN = re.compile(r'!\[([^\]]*)\]\([^)]+\)')
-    _BOLD_ASTERISK_PATTERN = re.compile(r'\*\*([^*]+)\*\*')
-    _BOLD_UNDERSCORE_PATTERN = re.compile(r'__([^_]+)__')
-    _ITALIC_ASTERISK_PATTERN = re.compile(r'(?<!\*)\*([^*]+)\*(?!\*)')
-    _ITALIC_UNDERSCORE_PATTERN = re.compile(r'(?<!_)_([^_]+)_(?!_)')
+    _BOLD_ASTERISK_PATTERN = re.compile(
+        r'(?<![\w*])\*\*(?=\S)([^*\r\n]*?\S)\*\*(?![\w*])'
+    )
+    _BOLD_UNDERSCORE_PATTERN = re.compile(
+        r'(?<![\w_])__(?=\S)([^_\r\n]*?\S)__(?![\w_])'
+    )
+    _ITALIC_ASTERISK_PATTERN = re.compile(
+        r'(?<![\w*])\*(?=\S)([^*\r\n]*?\S)\*(?![\w*])'
+    )
+    _ITALIC_UNDERSCORE_PATTERN = re.compile(
+        r'(?<![\w_])_(?=\S)([^_\r\n]*?\S)_(?![\w_])'
+    )
     _HEADER_PATTERN = re.compile(r'^#+\s+', flags=re.MULTILINE)
     _STRIKE_PATTERN = re.compile(r'~~([^~]+)~~')
     _INLINE_CODE_PATTERN = re.compile(r'`([^`]+)`')
     _WHITESPACE_CLEANUP_PATTERN = re.compile(r'[ \t]{2,}')
+    _ADJACENT_RESOURCE_URL_PATTERN = re.compile(
+        r'(?<=[A-Za-z0-9/#?=&._%+-])(?=https?://)'
+    )
+    _NUMBERED_RESOURCE_LIST_PATTERN = re.compile(r'(?:^|\n)\s*1[.、)]')
     _BODY_FIRST_LINE_CHARACTERS = "200"
 
     def __init__(self):
@@ -91,19 +103,31 @@ class DocumentRenderer:
 
         # Cleaning order matters - from complex to simple patterns
 
-        # 1. Clean links [text](url) → text
-        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+        # 1. Clean images before links so the generic link pattern does not
+        # leave the image marker behind: ![alt](url) → alt.
+        text = self._IMAGE_PATTERN.sub(r'\1', text)
 
-        # 2. Clean images ![alt](url) → alt
-        text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', text)
+        # 2. Clean links [text](url) → text
+        text = self._LINK_PATTERN.sub(r'\1', text)
 
-        # 3. Clean bold **text** or __text__
-        text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
-        text = re.sub(r'__([^_]+)__', r'\1', text)
+        # 3. Clean bold markers only at conservative word boundaries. ASCII
+        # identifiers wrapped in double underscores are Python dunder names,
+        # not formatting (for example ``__init__``), so preserve them.
+        text = self._BOLD_ASTERISK_PATTERN.sub(r'\1', text)
 
-        # 4. Clean italic *text* or _text_ (avoid matching already cleaned bold)
-        text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'\1', text)
-        text = re.sub(r'(?<!_)_([^_]+)_(?!_)', r'\1', text)
+        def strip_underscore_bold(match: re.Match[str]) -> str:
+            content = match.group(1)
+            if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', content):
+                return match.group(0)
+            return content
+
+        text = self._BOLD_UNDERSCORE_PATTERN.sub(strip_underscore_bold, text)
+
+        # 4. Clean italic markers only when the delimiters are not embedded in
+        # words or expressions. This keeps code such as ``s=3.14*r*r`` and
+        # snake_case identifiers intact.
+        text = self._ITALIC_ASTERISK_PATTERN.sub(r'\1', text)
+        text = self._ITALIC_UNDERSCORE_PATTERN.sub(r'\1', text)
 
         # 5. Clean headers # ## ### etc (at line start)
         text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
@@ -143,6 +167,23 @@ class DocumentRenderer:
         normalized = self._WHITESPACE_CLEANUP_PATTERN.sub(' ', normalized)
         lines = (line.strip() for line in normalized.split("\n"))
         return "\n".join(line for line in lines if line)
+
+    def _normalize_resource_text(self, value: Any) -> str:
+        """Separate accidentally concatenated URLs and numbered resources."""
+        if isinstance(value, list):
+            value = "\n".join(str(item) for item in value)
+        text = self._clean_text_for_output(str(value or ""))
+        if not text:
+            return ""
+
+        text = self._ADJACENT_RESOURCE_URL_PATTERN.sub("\n", text)
+        if self._NUMBERED_RESOURCE_LIST_PATTERN.search(text):
+            for number in range(2, 21):
+                item_boundary = re.compile(
+                    rf'\s*(?={number}[.、)](?:\s+|(?=[\u4e00-\u9fff])))'
+                )
+                text = item_boundary.sub("\n", text)
+        return self._normalize_line_breaks(text)
 
     @staticmethod
     def _ensure_role_marker(field_name: str, value: str) -> str:
@@ -220,6 +261,32 @@ class DocumentRenderer:
                 return
             for height in list(row_properties.findall(W + "trHeight")):
                 row_properties.remove(height)
+
+        def use_fixed_table_layout(table: etree._Element) -> None:
+            """Keep long URLs from expanding the homepage past page bounds."""
+            table_properties = table.find(W + "tblPr")
+            if table_properties is None:
+                table_properties = etree.Element(W + "tblPr")
+                table.insert(0, table_properties)
+
+            layout = table_properties.find(W + "tblLayout")
+            if layout is None:
+                layout = etree.Element(W + "tblLayout")
+                # Preserve the WordprocessingML property order when possible.
+                insert_before = {
+                    W + "tblCellMar",
+                    W + "tblLook",
+                    W + "tblCaption",
+                    W + "tblDescription",
+                    W + "tblPrChange",
+                }
+                for index, child in enumerate(table_properties):
+                    if child.tag in insert_before:
+                        table_properties.insert(index, layout)
+                        break
+                else:
+                    table_properties.append(layout)
+            layout.set(W + "type", "fixed")
 
         def apply_body_first_line_indent(paragraph: etree._Element) -> None:
             """Apply Word's native two-character first-line indent."""
@@ -401,6 +468,9 @@ class DocumentRenderer:
                     for paragraph in paragraphs:
                         apply_body_first_line_indent(paragraph)
 
+            if tables:
+                use_fixed_table_layout(tables[0])
+
             patched_xml = etree.tostring(
                 root,
                 encoding="UTF-8",
@@ -453,7 +523,7 @@ class DocumentRenderer:
         template = DocxTemplate(template_path)
 
         # Render with Jinja2
-        template.render(processed_data)
+        template.render(processed_data, autoescape=True)
 
         # Generate output path
         topic = lesson_plan_data.get("topic", "教案")
@@ -525,7 +595,7 @@ class DocumentRenderer:
 
             # Load and render template
             template = DocxTemplate(template_path)
-            template.render(processed_data)
+            template.render(processed_data, autoescape=True)
 
             # Save to temporary path
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -744,10 +814,22 @@ class DocumentRenderer:
                 value = data[key]
                 processed[key] = value if value is not None else ""
 
-        # Add field aliases for template compatibility
-        # Map online_resources to electronic_resources for Yunnan template
-        if "online_resources" in data:
-            processed["electronic_resources"] = data["online_resources"] or ""
+        # Keep books and online resources in their dedicated template rows.
+        # Older callers append online resources to ``references`` as a
+        # compatibility fallback; remove only that exact trailing duplicate.
+        online_resources = self._normalize_resource_text(
+            data.get("online_resources", "")
+        )
+        processed["online_resources"] = online_resources
+        processed["electronic_resources"] = online_resources
+
+        references = self._normalize_resource_text(data.get("references", ""))
+        if online_resources:
+            if references == online_resources:
+                references = ""
+            elif references.endswith(f"\n{online_resources}"):
+                references = references[:-(len(online_resources) + 1)].rstrip()
+        processed["references"] = references
 
         return processed
 
