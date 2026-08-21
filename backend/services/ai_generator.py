@@ -52,7 +52,8 @@ class AIGenerator:
         "课堂实践": {"teacher_activity": 80, "student_activity": 120},
     }
     _KEY_DIFFICULT_MIN_CHARS = 20
-    _KEY_DIFFICULT_MAX_CHARS = 40
+    _KEY_DIFFICULT_TARGET_MAX_CHARS = 40
+    _KEY_DIFFICULT_HARD_MAX_CHARS = 120
 
     # Generation prompt template
     GENERATION_PROMPT = """你是一位资深的{subject}学科教研专家，拥有20年教学经验。
@@ -947,10 +948,27 @@ class AIGenerator:
                 issues.append(f"{label}不能包含省略号")
                 continue
             length = len(re.sub(r"\s", "", value))
-            if not cls._KEY_DIFFICULT_MIN_CHARS <= length <= cls._KEY_DIFFICULT_MAX_CHARS:
+            if length < cls._KEY_DIFFICULT_MIN_CHARS:
                 issues.append(
-                    f"{label}为{length}字，必须为"
-                    f"{cls._KEY_DIFFICULT_MIN_CHARS}-{cls._KEY_DIFFICULT_MAX_CHARS}字"
+                    f"{label}为{length}字，少于最低要求"
+                    f"{cls._KEY_DIFFICULT_MIN_CHARS}字（生成目标为"
+                    f"{cls._KEY_DIFFICULT_MIN_CHARS}-"
+                    f"{cls._KEY_DIFFICULT_TARGET_MAX_CHARS}字）"
+                )
+            elif length > cls._KEY_DIFFICULT_HARD_MAX_CHARS:
+                issues.append(
+                    f"{label}为{length}字，超过硬性上限"
+                    f"{cls._KEY_DIFFICULT_HARD_MAX_CHARS}字（生成目标为"
+                    f"{cls._KEY_DIFFICULT_MIN_CHARS}-"
+                    f"{cls._KEY_DIFFICULT_TARGET_MAX_CHARS}字）"
+                )
+            elif length > cls._KEY_DIFFICULT_TARGET_MAX_CHARS:
+                logger.warning(
+                    "%s为%s字，超过%s字生成目标，但未超过%s字硬性上限；接受该内容。",
+                    label,
+                    length,
+                    cls._KEY_DIFFICULT_TARGET_MAX_CHARS,
+                    cls._KEY_DIFFICULT_HARD_MAX_CHARS,
                 )
         if issues:
             raise ValueError("；".join(issues))

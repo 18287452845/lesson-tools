@@ -107,6 +107,59 @@ async def test_generation_retries_sparse_output_then_normalizes_valid_steps(monk
 
 
 @pytest.mark.service
+async def test_generation_accepts_focus_above_target_within_hard_limit(
+    monkeypatch,
+    caplog,
+):
+    content = _valid_content()
+    content["key_points"] = "重" * 46
+    content["difficult_points"] = "难" * 54
+    calls = []
+
+    async def generate_with_ai(**kwargs):
+        calls.append(kwargs)
+        return json.dumps(content, ensure_ascii=False)
+
+    monkeypatch.setattr(generator_module, "generate_with_ai", generate_with_ai)
+
+    with caplog.at_level("WARNING"):
+        result = await generator_module.AIGenerator(
+            "deepseek", "key", "model"
+        ).generate_lesson_plan(_input())
+
+    assert result.key_points == "重" * 46
+    assert result.difficult_points == "难" * 54
+    assert len(calls) == 1
+    assert "教学重点为46字，超过40字生成目标" in caplog.text
+    assert "教学难点为54字，超过40字生成目标" in caplog.text
+    assert "未超过120字硬性上限；接受该内容" in caplog.text
+
+
+@pytest.mark.service
+async def test_generation_retries_and_fails_focus_above_hard_limit(monkeypatch):
+    content = _valid_content()
+    content["key_points"] = "重" * 121
+    prompts = []
+
+    async def generate_with_ai(**kwargs):
+        prompts.append(kwargs["prompt"])
+        return json.dumps(content, ensure_ascii=False)
+
+    async def no_sleep(*args):
+        return None
+
+    monkeypatch.setattr(generator_module, "generate_with_ai", generate_with_ai)
+    monkeypatch.setattr(generator_module.asyncio, "sleep", no_sleep)
+    generator = generator_module.AIGenerator("deepseek", "key", "model")
+
+    with pytest.raises(ValueError, match="教学重点为121字，超过硬性上限120字"):
+        await generator.generate_lesson_plan(_input())
+
+    assert len(prompts) == generator_module.settings.ai_max_retries + 1
+    assert "生成目标为20-40字" in prompts[1]
+
+
+@pytest.mark.service
 async def test_generation_and_field_convenience_methods(monkeypatch):
     calls = []
     valid_focus = _valid_content()["key_points"]
