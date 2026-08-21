@@ -9,6 +9,7 @@ from pptx.dml.color import RGBColor
 from pptx.util import Inches
 
 from backend.api import analytics, batch, course_archives, resources
+from backend import main as main_module
 from backend.models.schemas import (
     CourseArchiveCreate,
     CourseArchiveUpdate,
@@ -257,6 +258,40 @@ async def test_batch_launch_recovery_and_restart_checkpoint(test_db, monkeypatch
     assert exc.value.status_code == 409
     with pytest.raises(HTTPException):
         await batch._restart_checkpointed_task("missing", failed_only=False)
+
+
+@pytest.mark.asyncio
+async def test_startup_restores_ai_config_before_batch_recovery(monkeypatch):
+    events = []
+
+    async def record(name, result=None):
+        events.append(name)
+        return result
+
+    monkeypatch.setattr(main_module, "init_db", lambda: record("init_db"))
+    monkeypatch.setattr(
+        main_module,
+        "restore_runtime_ai_config",
+        lambda: record("restore_ai_config", True),
+    )
+    monkeypatch.setattr(main_module, "init_metadata", lambda _db: record("metadata"))
+    monkeypatch.setattr(
+        main_module,
+        "ensure_builtin_template_registered",
+        lambda: record("template"),
+    )
+    monkeypatch.setattr(main_module, "validate_all_builtin_templates", lambda: [])
+    monkeypatch.setattr(
+        main_module,
+        "recover_interrupted_batch_tasks",
+        lambda: record("recover_batch", 0),
+    )
+
+    async with main_module.lifespan(main_module.app):
+        pass
+
+    assert events.index("init_db") < events.index("restore_ai_config")
+    assert events.index("restore_ai_config") < events.index("recover_batch")
 
 
 async def _async_value(value):

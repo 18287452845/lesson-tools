@@ -1,5 +1,6 @@
 """API coverage for lesson plans, documents, templates, and settings."""
 
+import json
 import pathlib
 import types
 
@@ -314,6 +315,19 @@ async def test_settings_and_application_info_api(
     )
     assert deepseek.status_code == 200
     assert deepseek.json()["model"] == "deepseek-v4-flash"
+
+    monkeypatch.setattr(settings_api.settings, "deepseek_model", "deepseek-v4-pro")
+    monkeypatch.setattr(settings_api.settings, "ai_model", None)
+    default_model = await test_client.post(
+        "/api/settings/ai-provider",
+        json={"provider": "deepseek", "api_key": "default-model-key"},
+    )
+    assert default_model.status_code == 200
+    assert default_model.json()["model"] == "deepseek-v4-pro"
+    stored = await test_db.fetch_one(
+        "SELECT value FROM user_settings WHERE key = ?", ("ai_provider_config",)
+    )
+    assert json.loads(stored["value"])["model"] == "deepseek-v4-pro"
 
     anthropic = await test_client.post(
         "/api/settings/ai-provider",

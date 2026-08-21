@@ -16,6 +16,7 @@ from .services.builtin_template import (
 )
 from .services.metadata_sync import init_metadata
 from .services.batch_execution import recover_interrupted_batch_tasks
+from .utils.ai_config import restore_runtime_ai_config
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,13 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Initialize database on startup
     await init_db()
+
+    # Settings saved through the UI must survive backend/container restarts.
+    try:
+        if await restore_runtime_ai_config():
+            logger.info("Restored AI provider configuration")
+    except Exception as e:
+        logger.error("AI provider configuration restore failed: %s", e)
 
     # Initialize preset subjects and grades
     try:

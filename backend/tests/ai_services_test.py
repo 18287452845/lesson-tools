@@ -338,6 +338,15 @@ async def test_user_ai_config_database_and_factory_helpers(test_db, monkeypatch)
     provider, key, model = await ai_config.get_user_ai_config()
     assert (provider, key, model) == ("deepseek", "db-key", "deepseek-v4-flash")
 
+    # Simulate a fresh process that loaded a different key from its environment.
+    monkeypatch.setattr(ai_config.settings, "ai_provider", "deepseek")
+    monkeypatch.setattr(ai_config.settings, "deepseek_api_key", "stale-env-key")
+    monkeypatch.setattr(ai_config.settings, "deepseek_model", "deepseek-v4-pro")
+    monkeypatch.setattr(ai_config.settings, "ai_model", "deepseek-v4-pro")
+    assert await ai_config.restore_runtime_ai_config() is True
+    assert ai_config.settings.deepseek_api_key == "db-key"
+    assert ai_config.settings.get_active_model() == "deepseek-v4-flash"
+
     created = []
 
     def fake_generator(**kwargs):
@@ -367,3 +376,27 @@ async def test_user_ai_config_database_and_factory_helpers(test_db, monkeypatch)
         "env-key",
         "claude-env",
     )
+
+
+@pytest.mark.service
+async def test_user_ai_config_invalid_persisted_value_falls_back_without_leaking(
+    test_db, monkeypatch, caplog
+):
+    monkeypatch.setattr(ai_config, "db", test_db)
+    secret_fragment = "must-not-appear"
+    await test_db.execute(
+        "INSERT INTO user_settings (key, value) VALUES (?, ?)",
+        ("ai_provider_config", f'{{"api_key":"{secret_fragment}"'),
+        commit=True,
+    )
+    monkeypatch.setattr(ai_config.settings, "ai_provider", "anthropic")
+    monkeypatch.setattr(ai_config.settings, "anthropic_api_key", "env-key")
+    monkeypatch.setattr(ai_config.settings, "anthropic_model", "claude-env")
+    monkeypatch.setattr(ai_config.settings, "ai_model", None)
+
+    assert await ai_config.get_user_ai_config() == (
+        "anthropic",
+        "env-key",
+        "claude-env",
+    )
+    assert secret_fragment not in caplog.text

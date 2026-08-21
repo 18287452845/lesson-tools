@@ -9,9 +9,9 @@ from ..models.database import db
 from ..config import (
     DEEPSEEK_DEFAULT_MODEL,
     DEEPSEEK_MODELS,
-    normalize_deepseek_model,
     settings,
 )
+from ..utils.ai_config import apply_runtime_ai_config, resolve_ai_model
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -60,9 +60,7 @@ async def get_ai_provider_config():
 @router.post("/ai-provider")
 async def set_ai_provider_config(config: AIProviderConfig):
     """
-    设置AI提供商配置（运行时，不持久化）
-    注意：此API仅在运行时生效，重启后需要重新配置
-    建议在环境变量或.env文件中配置
+    设置并持久化AI提供商配置。
     """
     # 验证提供商
     if config.provider not in ["deepseek", "anthropic"]:
@@ -74,9 +72,7 @@ async def set_ai_provider_config(config: AIProviderConfig):
     # 保存到数据库（user_settings表）
     import json
 
-    selected_model = config.model
-    if config.provider == "deepseek" and selected_model:
-        selected_model = normalize_deepseek_model(selected_model)
+    selected_model = resolve_ai_model(config.provider, config.model)
 
     config_value = json.dumps({
         "provider": config.provider,
@@ -93,19 +89,8 @@ async def set_ai_provider_config(config: AIProviderConfig):
         commit=True,
     )
 
-    # 更新运行时配置
-    settings.ai_provider = config.provider
-    if config.provider == "deepseek":
-        settings.deepseek_api_key = config.api_key
-        if selected_model:
-            settings.deepseek_model = selected_model
-    else:
-        settings.anthropic_api_key = config.api_key
-        if selected_model:
-            settings.anthropic_model = selected_model
-
-    if selected_model:
-        settings.ai_model = selected_model
+    # 同步更新当前进程；服务重启时会从数据库恢复同一配置。
+    apply_runtime_ai_config(config.provider, config.api_key, selected_model)
 
     return {
         "message": "AI提供商配置已更新",
