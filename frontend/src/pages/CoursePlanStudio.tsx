@@ -69,6 +69,8 @@ const PLAN_TYPE_LABELS: Record<CoursePlanArtifactType, string> = {
   experiment_plan: '实验计划',
 };
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const HOMEWORK_MAX_CHARS = 15;
+const HOMEWORK_BRIEF_FALLBACK = '实验评估';
 
 function displayWidth(value: string): number {
   let width = 0;
@@ -1290,7 +1292,11 @@ function CoursePlanStudio() {
       group.map((chapter) => chapter.difficult_points).filter(Boolean).join('\n') ||
       `综合运用${topics.join('、')}`;
     const homework = Array.from(
-      new Set(group.flatMap((chapter) => homeworkLines(chapter.homework)))
+      new Set(
+        group
+          .flatMap((chapter) => homeworkLines(chapter.homework))
+          .map((line) => (line.length <= HOMEWORK_MAX_CHARS ? line : HOMEWORK_BRIEF_FALLBACK))
+      )
     );
     return {
       key: index,
@@ -1301,7 +1307,7 @@ function CoursePlanStudio() {
       total: weekly,
       focus,
       difficulty,
-      homework: homework.join('\n') || '课后练习、实验评估',
+      homework: homework.join('\n') || HOMEWORK_BRIEF_FALLBACK,
     };
   });
 

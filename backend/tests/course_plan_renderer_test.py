@@ -343,6 +343,37 @@ def test_render_18_week_teaching_and_experiment_plans(tmp_path: pathlib.Path):
     _assert_preserved_parts(settings.experiment_plan_template_path, experiment_path)
 
 
+def test_teaching_plan_homework_is_brief_and_assessment_focused(tmp_path: pathlib.Path):
+    chapters = [chapter.model_dump() for chapter in _chapters(2)]
+    chapters[0]["homework"] = {
+        "required": "完成实验项目《异常处理与自定义异常》的代码和实验报告；另编写一个用户登录模拟程序并提交运行截图",
+        "optional": "",
+    }
+    chapters[1]["homework"] = "撰写实验报告并提交平台，完成课后拓展任务与自查清单，思考异常处理与日志记录的关系"
+    renderer = course_plan_renderer.CoursePlanRenderer(tmp_path)
+
+    path = pathlib.Path(
+        renderer.render_teaching_plan(
+            batch_task_id="batch-brief-homework",
+            course_name="Windows服务器安全配置",
+            grade="24级",
+            class_names=["24级信息安全技术应用1班"],
+            academic_year="2025-2026",
+            semester=2,
+            teacher_name="李阳",
+            total_hours=4,
+            hours_per_lesson=2,
+            start_week=1,
+            chapters=chapters,
+            location="慧心楼3516",
+        )
+    )
+
+    homework_cell = Document(path).tables[0].rows[2].cells[8].text
+    assert homework_cell == "实验评估"
+    assert len(homework_cell) <= 15
+
+
 def test_batch_plan_request_rejects_more_than_18_weeks():
     with pytest.raises(pydantic.ValidationError, match="最多支持 18 周"):
         schemas.BatchTaskCreateRequest(

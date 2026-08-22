@@ -28,6 +28,10 @@ from .experiment_names import validate_experiment_chapters
 
 CoursePlanType = Literal["teaching_plan", "experiment_plan"]
 
+# 固定模板“作业”列以评估/实验为主，单行最多 15 字，超长一律回落为实验评估。
+HOMEWORK_MAX_CHARS = 15
+HOMEWORK_BRIEF_FALLBACK = "实验评估"
+
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -796,9 +800,12 @@ class CoursePlanRenderer:
                         )
                     elif str(homework or "").strip():
                         assignment_lines.append(str(homework).strip())
+                assignment_lines = [
+                    line if len(line) <= HOMEWORK_MAX_CHARS else HOMEWORK_BRIEF_FALLBACK
+                    for line in assignment_lines
+                ]
                 assignment_lines = list(dict.fromkeys(assignment_lines)) or [
-                    "课后练习",
-                    "实验评估",
+                    HOMEWORK_BRIEF_FALLBACK
                 ]
 
                 values = (
