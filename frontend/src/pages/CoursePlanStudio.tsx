@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
+  AutoComplete,
   Button,
   Card,
   Checkbox,
@@ -64,6 +65,20 @@ const { Title, Text } = Typography;
 
 const MAX_LESSONS = 36;
 const WEEKDAY_LABELS = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
+// 与批量生成教案页面保持一致的下拉选项
+const ACADEMIC_YEAR_START = (() => {
+  const now = new Date();
+  return now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+})();
+const ACADEMIC_YEAR_OPTIONS = Array.from({ length: 10 }, (_, index) => {
+  const startYear = ACADEMIC_YEAR_START - 4 + index;
+  const value = `${startYear}-${startYear + 1}`;
+  return { label: value, value };
+});
+const CLASS_PERIOD_OPTIONS = ['1-2', '3-4', '5-6', '7-8', '9-10'].map((value) => ({
+  value,
+  label: `第${value}节`,
+}));
 const PLAN_TYPE_LABELS: Record<CoursePlanArtifactType, string> = {
   teaching_plan: '授课计划',
   experiment_plan: '实验计划',
@@ -214,20 +229,13 @@ interface ScheduleState {
 function ScheduleCards({
   schedules,
   onChange,
-  defaultDate,
-  defaultPeriods,
-  defaultClassroom,
 }: {
   schedules: ScheduleState[];
   onChange: (rows: ScheduleState[]) => void;
-  defaultDate: string;
-  defaultPeriods: string;
-  defaultClassroom: string;
 }) {
   const update = (index: number, patch: Partial<ScheduleState>) => {
     onChange(schedules.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   };
-  const inputStyle = { width: 130 };
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={12}>
@@ -238,7 +246,8 @@ function ScheduleCards({
         <Card key={row.class_name} size="small" title={row.class_name}>
           <Space wrap size={12}>
             <Select
-              style={{ width: 110 }}
+              style={{ width: 120 }}
+              placeholder="选择星期"
               value={row.weekday}
               onChange={(value) => update(index, { weekday: value })}
               options={WEEKDAY_LABELS.map((label, i) => ({
@@ -246,47 +255,31 @@ function ScheduleCards({
                 label,
               }))}
             />
-            <Input
-              style={inputStyle}
-              placeholder="节次，如 3-4"
+            <AutoComplete
+              style={{ width: 140 }}
+              placeholder="例如：3-4"
               value={row.class_periods}
-              onChange={(event) => update(index, { class_periods: event.target.value })}
+              options={CLASS_PERIOD_OPTIONS}
+              filterOption={(input, option) =>
+                String(option?.value || '').includes(input)
+              }
+              onChange={(value) => update(index, { class_periods: value })}
             />
             <Input
-              style={inputStyle}
-              placeholder="第一周日期"
+              type="date"
+              style={{ width: 160 }}
               value={row.first_class_date}
               onChange={(event) => update(index, { first_class_date: event.target.value })}
             />
             <Input
-              style={{ width: 150 }}
-              placeholder="实验教室"
+              style={{ width: 160 }}
+              placeholder="例如：慧心楼3516"
               value={row.classroom}
               onChange={(event) => update(index, { classroom: event.target.value })}
             />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              默认值取「首课日期 / 节次 / 地点」，可单独调整
-            </Text>
           </Space>
         </Card>
       ))}
-      <Space size={4}>
-        <Button
-          size="small"
-          onClick={() =>
-            onChange(
-              schedules.map((row) => ({
-                ...row,
-                first_class_date: row.first_class_date || defaultDate,
-                class_periods: row.class_periods || defaultPeriods,
-                classroom: row.classroom || defaultClassroom,
-              }))
-            )
-          }
-        >
-          用默认值填充空白项
-        </Button>
-      </Space>
     </Space>
   );
 }
@@ -1226,18 +1219,19 @@ function CoursePlanStudio() {
         <Form.Item
           name="academic_year"
           label="学年"
-          rules={[
-            { required: true, message: '请输入学年' },
-            { pattern: /^\d{4}-\d{4}$/, message: '学年格式如 2025-2026' },
-          ]}
+          rules={[{ required: true, message: '请选择学年' }]}
         >
-          <Input placeholder="2025-2026" />
+          <Select
+            placeholder="从近10个学年中选择"
+            options={ACADEMIC_YEAR_OPTIONS}
+            showSearch
+          />
         </Form.Item>
         <Form.Item name="semester" label="学期" rules={[{ required: true }]}>
           <Select
             options={[
-              { value: 1, label: '第一学期' },
-              { value: 2, label: '第二学期' },
+              { value: 1, label: '第1学期' },
+              { value: 2, label: '第2学期' },
             ]}
           />
         </Form.Item>
@@ -1275,31 +1269,19 @@ function CoursePlanStudio() {
       </div>
       {hasExperiment && (
         <Card size="small" title="实验计划信息" style={{ marginTop: 8 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0 16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0 16px' }}>
             <Form.Item
               name="plan_date"
               label="制表日期"
-              rules={[{ required: true, message: '请填写制表日期' }]}
+              rules={[{ required: true, message: '请选择制表日期' }]}
             >
-              <Input placeholder="YYYY-MM-DD" />
-            </Form.Item>
-            <Form.Item name="first_class_date" label="默认首课日期">
-              <Input placeholder="YYYY-MM-DD" />
-            </Form.Item>
-            <Form.Item name="class_periods" label="默认上课节次">
-              <Input placeholder="如 3-4" />
+              <Input type="date" style={{ width: '100%' }} />
             </Form.Item>
           </div>
           <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-            每个班级需填写实验课排课（星期、节次、第一周日期、教室），第一周日期须与星期一致。
+            请为每个班级分别设置实验课时间和教室：第一周日期必须与所选星期一致；后续实验日期按每 7 天自动推算。
           </Text>
-          <ScheduleCards
-            schedules={schedules}
-            onChange={setSchedules}
-            defaultDate={metaForm.getFieldValue('first_class_date') || ''}
-            defaultPeriods={metaForm.getFieldValue('class_periods') || ''}
-            defaultClassroom={metaForm.getFieldValue('location') || ''}
-          />
+          <ScheduleCards schedules={schedules} onChange={setSchedules} />
         </Card>
       )}
     </Form>
