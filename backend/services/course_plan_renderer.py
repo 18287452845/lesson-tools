@@ -42,6 +42,29 @@ HOMEWORK_BRIEF_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
 HOMEWORK_BRIEF_FALLBACK = "课后作业"
 HOMEWORK_EMPTY_FALLBACK = "完成课后练习"
 
+# 固定模板“教学重点/教学难点”列每行最多 25 字：
+# 优先按分号保留完整要点句，装不下则只留前几条，单句超长才硬截断。
+POINTS_MAX_CHARS = 25
+
+
+def brief_point_line(line: str) -> str:
+    """Condense one focus/difficulty line to at most POINTS_MAX_CHARS characters."""
+    line = " ".join(str(line or "").split())
+    if len(line) <= POINTS_MAX_CHARS:
+        return line
+    kept: list[str] = []
+    total = 0
+    for part in re.split(r"[；;]", line):
+        part = part.strip()
+        if not part:
+            continue
+        extra = len(part) + (1 if kept else 0)
+        if total + extra > POINTS_MAX_CHARS:
+            break
+        kept.append(part)
+        total += extra
+    return "；".join(kept) if kept else line[:POINTS_MAX_CHARS]
+
 
 def brief_homework_line(line: str) -> str:
     """Return the homework text as-is when short, else a matched brief phrase."""
@@ -794,22 +817,30 @@ class CoursePlanRenderer:
                     item["content_summary"] for item in group if item.get("content_summary")
                 ]
 
-                focus_values = [item["key_points"] for item in group if item["key_points"]]
+                focus_values = [
+                    brief_point_line(item["key_points"])
+                    for item in group
+                    if item["key_points"]
+                ]
                 focus = "\n".join(dict.fromkeys(focus_values))
                 if not focus:
-                    focus = "、".join(dict.fromkeys(concepts))
+                    focus = brief_point_line("、".join(dict.fromkeys(concepts)))
                 if not focus:
-                    focus = summaries[0] if summaries else f"掌握{'、'.join(topics)}"
+                    focus = brief_point_line(
+                        summaries[0] if summaries else f"掌握{'、'.join(topics)}"
+                    )
                 difficulty_values = [
-                    item["difficult_points"] for item in group if item["difficult_points"]
+                    brief_point_line(item["difficult_points"])
+                    for item in group
+                    if item["difficult_points"]
                 ]
                 difficulty = "\n".join(dict.fromkeys(difficulty_values))
                 if not difficulty:
-                    difficulty = "、".join(dict.fromkeys(concepts[-2:]))
-                    if difficulty:
-                        difficulty = f"{difficulty}的综合运用"
+                    difficulty = brief_point_line("、".join(dict.fromkeys(concepts[-2:])))
                 if not difficulty:
-                    difficulty = summaries[-1] if summaries else f"综合运用{'、'.join(topics)}"
+                    difficulty = brief_point_line(
+                        summaries[-1] if summaries else f"综合运用{'、'.join(topics)}"
+                    )
                 assignment_lines: list[str] = []
                 for item in group:
                     homework = item.get("homework")

@@ -80,6 +80,23 @@ const HOMEWORK_BRIEF_RULES: Array<[string[], string]> = [
 ];
 const HOMEWORK_BRIEF_FALLBACK = '课后作业';
 const HOMEWORK_EMPTY_FALLBACK = '完成课后练习';
+const POINTS_MAX_CHARS = 25;
+
+function briefPointLine(line: string): string {
+  const trimmed = line.trim().replace(/\s+/g, ' ');
+  if (trimmed.length <= POINTS_MAX_CHARS) return trimmed;
+  const kept: string[] = [];
+  let total = 0;
+  for (const part of trimmed.split(/[；;]/)) {
+    const clause = part.trim();
+    if (!clause) continue;
+    const extra = clause.length + (kept.length ? 1 : 0);
+    if (total + extra > POINTS_MAX_CHARS) break;
+    kept.push(clause);
+    total += extra;
+  }
+  return kept.length ? kept.join('；') : trimmed.slice(0, POINTS_MAX_CHARS);
+}
 
 function briefHomeworkLine(line: string): string {
   const trimmed = line.trim();
@@ -1304,11 +1321,21 @@ function CoursePlanStudio() {
     const theory = Math.floor(weekly / 2);
     const topics = group.map((chapter) => chapter.topic).filter(Boolean);
     const focus =
-      group.map((chapter) => chapter.key_points).filter(Boolean).join('\n') ||
-      `掌握${topics.join('、')}`;
+      Array.from(
+        new Set(
+          group
+            .map((chapter) => briefPointLine(chapter.key_points))
+            .filter(Boolean)
+        )
+      ).join('\n') || briefPointLine(`掌握${topics.join('、')}`);
     const difficulty =
-      group.map((chapter) => chapter.difficult_points).filter(Boolean).join('\n') ||
-      `综合运用${topics.join('、')}`;
+      Array.from(
+        new Set(
+          group
+            .map((chapter) => briefPointLine(chapter.difficult_points))
+            .filter(Boolean)
+        )
+      ).join('\n') || briefPointLine(`综合运用${topics.join('、')}`);
     const homework = Array.from(
       new Set(
         group

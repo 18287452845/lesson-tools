@@ -387,6 +387,52 @@ def test_teaching_plan_homework_is_brief_and_varied(tmp_path: pathlib.Path):
     )
 
 
+def test_teaching_plan_points_are_brief(tmp_path: pathlib.Path):
+    chapters = [chapter.model_dump() for chapter in _chapters(2)]
+    chapters[0]["key_points"] = (
+        "掌握raise语句主动抛出异常的方法；掌握assert断言的语法与适用场景；"
+        "掌握自定义异常类的定义及异常类型继承机制"
+    )
+    chapters[0]["difficult_points"] = "依据业务逻辑设计合理的自定义异常类并正确处理异常继承关系，区分raise和assert的使用场景"
+    chapters[1]["key_points"] = "掌握try-except语句结构与多异常捕获"
+    chapters[1]["difficult_points"] = "理解异常传播流程"
+    renderer = course_plan_renderer.CoursePlanRenderer(tmp_path)
+
+    path = pathlib.Path(
+        renderer.render_teaching_plan(
+            batch_task_id="batch-brief-points",
+            course_name="Windows服务器安全配置",
+            grade="24级",
+            class_names=["24级信息安全技术应用1班"],
+            academic_year="2025-2026",
+            semester=2,
+            teacher_name="李阳",
+            total_hours=4,
+            hours_per_lesson=2,
+            start_week=1,
+            chapters=chapters,
+            location="慧心楼3516",
+        )
+    )
+
+    first_week = Document(path).tables[0].rows[2].cells
+    # 多要点句只保留装得下的前几条（16 + 1 + 15 = 32 > 25，仅保留第一条）
+    assert first_week[5].text == (
+        "掌握raise语句主动抛出异常的方法\n掌握try-except语句结构与多异常捕获"
+    )
+    # 无分号的长难点硬截断到 25 字
+    difficult_lines = first_week[6].text.splitlines()
+    assert difficult_lines == [
+        "依据业务逻辑设计合理的自定义异常类并正确处理异常继",
+        "理解异常传播流程",
+    ]
+    assert all(
+        len(line) <= course_plan_renderer.POINTS_MAX_CHARS
+        for cell in (first_week[5], first_week[6])
+        for line in cell.text.splitlines()
+    )
+
+
 def test_batch_plan_request_rejects_more_than_18_weeks():
     with pytest.raises(pydantic.ValidationError, match="最多支持 18 周"):
         schemas.BatchTaskCreateRequest(
