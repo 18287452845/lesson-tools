@@ -741,8 +741,8 @@ class CoursePlanRenderer:
             for values in week_values
         ]
 
-        header_height = 1060 + 620 + 794  # 标题段 + 元数据段 + 两列表头行
-        safety = 900
+        header_height = 670 + 280 + 620 + 794  # 标题段 + 元数据段 + 两列表头行（按实测）
+        safety = 400
         tail_height = 1500  # 合计行 + 签字行 + 富余
         budget = usable_height - header_height - safety
 
