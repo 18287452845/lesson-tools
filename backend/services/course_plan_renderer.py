@@ -28,9 +28,30 @@ from .experiment_names import validate_experiment_chapters
 
 CoursePlanType = Literal["teaching_plan", "experiment_plan"]
 
-# 固定模板“作业”列以评估/实验为主，单行最多 15 字，超长一律回落为实验评估。
+# 固定模板“作业”列每行最多 15 字；超长作业按内容回落为简短措辞，
+# 兼顾评估实验与简单作业，避免整表都是同一句话。
 HOMEWORK_MAX_CHARS = 15
-HOMEWORK_BRIEF_FALLBACK = "实验评估"
+HOMEWORK_BRIEF_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("实验报告", "实训报告", "报告"), "撰写实验报告"),
+    (("练习", "习题", "题目"), "完成课后练习"),
+    (("复习", "预习", "总结", "归纳"), "复习本课要点"),
+    (("代码", "编程", "程序"), "完成编程练习"),
+    (("实验", "实训", "上机", "实操"), "上机实操评估"),
+    (("项目", "任务", "案例"), "完成项目任务"),
+)
+HOMEWORK_BRIEF_FALLBACK = "课后作业"
+HOMEWORK_EMPTY_FALLBACK = "完成课后练习"
+
+
+def brief_homework_line(line: str) -> str:
+    """Return the homework text as-is when short, else a matched brief phrase."""
+    line = line.strip()
+    if len(line) <= HOMEWORK_MAX_CHARS:
+        return line
+    for keywords, phrase in HOMEWORK_BRIEF_RULES:
+        if any(keyword in line for keyword in keywords):
+            return phrase
+    return HOMEWORK_BRIEF_FALLBACK
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -801,11 +822,10 @@ class CoursePlanRenderer:
                     elif str(homework or "").strip():
                         assignment_lines.append(str(homework).strip())
                 assignment_lines = [
-                    line if len(line) <= HOMEWORK_MAX_CHARS else HOMEWORK_BRIEF_FALLBACK
-                    for line in assignment_lines
+                    brief_homework_line(line) for line in assignment_lines
                 ]
                 assignment_lines = list(dict.fromkeys(assignment_lines)) or [
-                    HOMEWORK_BRIEF_FALLBACK
+                    HOMEWORK_EMPTY_FALLBACK
                 ]
 
                 values = (

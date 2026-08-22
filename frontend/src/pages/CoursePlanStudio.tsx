@@ -70,7 +70,25 @@ const PLAN_TYPE_LABELS: Record<CoursePlanArtifactType, string> = {
 };
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const HOMEWORK_MAX_CHARS = 15;
-const HOMEWORK_BRIEF_FALLBACK = '实验评估';
+const HOMEWORK_BRIEF_RULES: Array<[string[], string]> = [
+  [['实验报告', '实训报告', '报告'], '撰写实验报告'],
+  [['练习', '习题', '题目'], '完成课后练习'],
+  [['复习', '预习', '总结', '归纳'], '复习本课要点'],
+  [['代码', '编程', '程序'], '完成编程练习'],
+  [['实验', '实训', '上机', '实操'], '上机实操评估'],
+  [['项目', '任务', '案例'], '完成项目任务'],
+];
+const HOMEWORK_BRIEF_FALLBACK = '课后作业';
+const HOMEWORK_EMPTY_FALLBACK = '完成课后练习';
+
+function briefHomeworkLine(line: string): string {
+  const trimmed = line.trim();
+  if (trimmed.length <= HOMEWORK_MAX_CHARS) return trimmed;
+  for (const [keywords, phrase] of HOMEWORK_BRIEF_RULES) {
+    if (keywords.some((keyword) => trimmed.includes(keyword))) return phrase;
+  }
+  return HOMEWORK_BRIEF_FALLBACK;
+}
 
 function displayWidth(value: string): number {
   let width = 0;
@@ -1295,7 +1313,7 @@ function CoursePlanStudio() {
       new Set(
         group
           .flatMap((chapter) => homeworkLines(chapter.homework))
-          .map((line) => (line.length <= HOMEWORK_MAX_CHARS ? line : HOMEWORK_BRIEF_FALLBACK))
+          .map(briefHomeworkLine)
       )
     );
     return {
@@ -1307,7 +1325,7 @@ function CoursePlanStudio() {
       total: weekly,
       focus,
       difficulty,
-      homework: homework.join('\n') || HOMEWORK_BRIEF_FALLBACK,
+      homework: homework.join('\n') || HOMEWORK_EMPTY_FALLBACK,
     };
   });
 

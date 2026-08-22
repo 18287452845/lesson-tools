@@ -343,13 +343,21 @@ def test_render_18_week_teaching_and_experiment_plans(tmp_path: pathlib.Path):
     _assert_preserved_parts(settings.experiment_plan_template_path, experiment_path)
 
 
-def test_teaching_plan_homework_is_brief_and_assessment_focused(tmp_path: pathlib.Path):
-    chapters = [chapter.model_dump() for chapter in _chapters(2)]
-    chapters[0]["homework"] = {
-        "required": "完成实验项目《异常处理与自定义异常》的代码和实验报告；另编写一个用户登录模拟程序并提交运行截图",
-        "optional": "",
-    }
-    chapters[1]["homework"] = "撰写实验报告并提交平台，完成课后拓展任务与自查清单，思考异常处理与日志记录的关系"
+def test_teaching_plan_homework_is_brief_and_varied(tmp_path: pathlib.Path):
+    chapters = [chapter.model_dump() for chapter in _chapters(6)]
+    long_homework = [
+        # 第 1 周：报告类 → 撰写实验报告
+        {"required": "完成实验项目《异常处理与自定义异常》的代码和实验报告；另编写一个用户登录模拟程序并提交运行截图", "optional": ""},
+        "撰写实验报告并提交平台，完成课后拓展任务与自查清单，思考异常处理与日志记录的关系",
+        # 第 2 周：练习类 → 完成课后练习
+        {"required": "认真完成课后练习第五题到第十二题，整理错题并进行巩固训练后提交到学习平台", "optional": ""},
+        {"required": "完成教材配套习题册中本节对应的全部题目，核对答案后将错题订正提交", "optional": ""},
+        # 第 3 周：实训类 → 上机实操评估
+        {"required": "在实训室完成交换机VLAN划分与端口配置，记录配置过程并截图提交", "optional": ""},
+        {"required": "分组完成路由器静态路由配置实训项目，互相检查并演示验收结果", "optional": ""},
+    ]
+    for chapter, homework in zip(chapters, long_homework):
+        chapter["homework"] = homework
     renderer = course_plan_renderer.CoursePlanRenderer(tmp_path)
 
     path = pathlib.Path(
@@ -361,7 +369,7 @@ def test_teaching_plan_homework_is_brief_and_assessment_focused(tmp_path: pathli
             academic_year="2025-2026",
             semester=2,
             teacher_name="李阳",
-            total_hours=4,
+            total_hours=12,
             hours_per_lesson=2,
             start_week=1,
             chapters=chapters,
@@ -369,9 +377,14 @@ def test_teaching_plan_homework_is_brief_and_assessment_focused(tmp_path: pathli
         )
     )
 
-    homework_cell = Document(path).tables[0].rows[2].cells[8].text
-    assert homework_cell == "实验评估"
-    assert len(homework_cell) <= 15
+    rows = Document(path).tables[0].rows
+    homework_cells = [rows[week + 2].cells[8].text for week in range(3)]
+    assert homework_cells == ["撰写实验报告", "完成课后练习", "上机实操评估"]
+    assert all(
+        len(line) <= course_plan_renderer.HOMEWORK_MAX_CHARS
+        for cell in homework_cells
+        for line in cell.splitlines()
+    )
 
 
 def test_batch_plan_request_rejects_more_than_18_weeks():
