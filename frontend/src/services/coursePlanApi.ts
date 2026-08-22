@@ -13,15 +13,13 @@ import type {
   CoursePlanUpdateRequest,
 } from '@/types';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
-
 /**
  * Create a semester-plan draft from selected generated lesson plans
  */
 export async function createCoursePlan(
   request: CoursePlanCreateRequest
 ): Promise<CoursePlanDetail> {
-  const response = await api.post(`${API_BASE_URL}/course-plans`, request);
+  const response = await api.post('/course-plans', request);
   return response.data;
 }
 
@@ -33,13 +31,7 @@ export async function listCoursePlans(params: {
   page?: number;
   limit?: number;
 } = {}): Promise<CoursePlanListResponse> {
-  const queryParams = new URLSearchParams();
-  if (params.status) queryParams.append('status', params.status);
-  if (params.page) queryParams.append('page', params.page.toString());
-  if (params.limit) queryParams.append('limit', params.limit.toString());
-  const response = await api.get(
-    `${API_BASE_URL}/course-plans?${queryParams.toString()}`
-  );
+  const response = await api.get('/course-plans', { params });
   return response.data;
 }
 
@@ -47,7 +39,7 @@ export async function listCoursePlans(params: {
  * Get the full editable state of a semester plan
  */
 export async function getCoursePlan(coursePlanId: string): Promise<CoursePlanDetail> {
-  const response = await api.get(`${API_BASE_URL}/course-plans/${coursePlanId}`);
+  const response = await api.get(`/course-plans/${coursePlanId}`);
   return response.data;
 }
 
@@ -58,10 +50,7 @@ export async function updateCoursePlan(
   coursePlanId: string,
   request: CoursePlanUpdateRequest
 ): Promise<CoursePlanDetail> {
-  const response = await api.put(
-    `${API_BASE_URL}/course-plans/${coursePlanId}`,
-    request
-  );
+  const response = await api.put(`/course-plans/${coursePlanId}`, request);
   return response.data;
 }
 
@@ -69,18 +58,16 @@ export async function updateCoursePlan(
  * Delete a semester-plan draft
  */
 export async function deleteCoursePlan(coursePlanId: string): Promise<void> {
-  await api.delete(`${API_BASE_URL}/course-plans/${coursePlanId}`);
+  await api.delete(`/course-plans/${coursePlanId}`);
 }
 
 /**
  * Export the semester plan as docx (or zip when multiple files) and download it
  */
 export async function exportCoursePlan(coursePlanId: string): Promise<string> {
-  const response = await api.post(
-    `${API_BASE_URL}/course-plans/${coursePlanId}/export`,
-    null,
-    { responseType: 'blob' }
-  );
+  const response = await api.post(`/course-plans/${coursePlanId}/export`, null, {
+    responseType: 'blob',
+  });
   const disposition = String(response.headers?.['content-disposition'] || '');
   const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
   const filename = match

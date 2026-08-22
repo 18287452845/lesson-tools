@@ -20,7 +20,7 @@ import type {
   BatchDeleteRequest,
 } from '@/types';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+
 
 /**
  * List lesson plans with optional filters
@@ -45,7 +45,7 @@ export async function listLessonPlans(params: {
   if (params.limit) queryParams.append('limit', params.limit.toString());
 
   const response = await api.get(
-    `${API_BASE_URL}/lesson-plans?${queryParams.toString()}`
+    `/lesson-plans?${queryParams.toString()}`
   );
   return response.data;
 }
@@ -54,7 +54,7 @@ export async function listLessonPlans(params: {
  * Get a single lesson plan by ID
  */
 export async function getLessonPlan(lessonPlanId: string): Promise<LessonPlan> {
-  const response = await api.get(`${API_BASE_URL}/lesson-plans/${lessonPlanId}`);
+  const response = await api.get(`/lesson-plans/${lessonPlanId}`);
   return response.data;
 }
 
@@ -66,7 +66,7 @@ export async function updateField(
   request: UpdateFieldRequest
 ): Promise<LessonPlan> {
   const response = await api.put(
-    `${API_BASE_URL}/lesson-plans/${lessonPlanId}/field`,
+    `/lesson-plans/${lessonPlanId}/field`,
     request
   );
   return response.data;
@@ -80,7 +80,7 @@ export async function regenerateField(
   request: RegenerateFieldRequest
 ): Promise<RegenerateFieldResponse> {
   const response = await api.post(
-    `${API_BASE_URL}/lesson-plans/${lessonPlanId}/regenerate-field`,
+    `/lesson-plans/${lessonPlanId}/regenerate-field`,
     request
   );
   return response.data;
@@ -91,7 +91,7 @@ export async function regenerateField(
  */
 export async function publishLessonPlan(lessonPlanId: string): Promise<PublishResponse> {
   const response = await api.post(
-    `${API_BASE_URL}/lesson-plans/${lessonPlanId}/publish`
+    `/lesson-plans/${lessonPlanId}/publish`
   );
   return response.data;
 }
@@ -102,7 +102,7 @@ export async function publishLessonPlan(lessonPlanId: string): Promise<PublishRe
  */
 export async function batchPublish(request: BatchPublishRequest): Promise<Blob> {
   const response = await api.post(
-    `${API_BASE_URL}/lesson-plans/batch-publish`,
+    `/lesson-plans/batch-publish`,
     request,
     { responseType: 'blob' }
   );
@@ -113,7 +113,7 @@ export async function batchPublish(request: BatchPublishRequest): Promise<Blob> 
  * Delete a single lesson plan
  */
 export async function deleteLessonPlan(lessonPlanId: string): Promise<void> {
-  await api.delete(`${API_BASE_URL}/lesson-plans/${lessonPlanId}`);
+  await api.delete(`/lesson-plans/${lessonPlanId}`);
 }
 
 /**
@@ -125,7 +125,7 @@ export async function batchDelete(request: BatchDeleteRequest): Promise<{
   failed_ids: string[];
 }> {
   const response = await api.post(
-    `${API_BASE_URL}/lesson-plans/batch-delete`,
+    `/lesson-plans/batch-delete`,
     request
   );
   return response.data;

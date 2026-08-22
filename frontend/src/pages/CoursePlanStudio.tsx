@@ -350,7 +350,7 @@ function CoursePlanStudio() {
     refreshDrafts();
     loadLessons(1, '');
     classApi
-      .listClasses({ limit: 200 })
+      .listClasses({ limit: 100 })
       .then((response) => setClassOptions(response.classes))
       .catch(() => undefined);
     templateApi
