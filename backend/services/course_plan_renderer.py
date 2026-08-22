@@ -702,6 +702,7 @@ class CoursePlanRenderer:
         for _ in range(group_count):
             row = deepcopy(data_template)
             _set_repeating_table_header(row, False)
+            _set_row_cant_split(row)
             continuous_table.append(row)
             data_rows.append(row)
 
@@ -994,6 +995,7 @@ class CoursePlanRenderer:
                         table.remove(rows[row_index])
                         continue
 
+                    _set_row_cant_split(rows[row_index])
                     cells = _table_cells(rows[row_index])
                     group_index, _group, project = schedule[row_index - 1]
                     lesson_date = first_date + timedelta(days=7 * group_index)
@@ -1015,6 +1017,7 @@ class CoursePlanRenderer:
                         lesson_date=lesson_date,
                     )
 
+                _set_row_cant_split(rows[19])
                 total_cells = _table_cells(rows[19])
                 total_hours = len(schedule) * hours_per_lesson
                 _set_cell_text(total_cells[1], f"   {total_hours}    学时")

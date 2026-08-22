@@ -73,7 +73,7 @@ def _assert_adaptive_teaching_structure(path: pathlib.Path, week_count: int):
     )
     assert all(
         row._tr.trPr.find(qn("w:tblHeader")) is None
-        and row._tr.trPr.find(qn("w:cantSplit")) is None
+        and row._tr.trPr.find(qn("w:cantSplit")) is not None
         for row in table.rows[2:-2]
     )
     assert all(
@@ -215,6 +215,10 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
         assert all(metadata_runs[index].underline is True for index in (1, 3, 5, 7, 14, 16, 19, 21))
         experiment_table = Document(path).tables[0]
         assert len(experiment_table.rows) == 18
+        assert all(
+            row._tr.trPr.find(qn("w:cantSplit")) is not None
+            for row in experiment_table.rows[1:]
+        )
         assert experiment_table.rows[1].cells[3].text == classroom
         assert experiment_table.rows[1].cells[1].text == "安全配置实验1"
         assert "\n" not in experiment_table.rows[1].cells[1].text
