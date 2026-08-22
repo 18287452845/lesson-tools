@@ -263,11 +263,6 @@ function CoursePlanStudio() {
   const [classOptions, setClassOptions] = useState<ClassInfo[]>([]);
   const [validations, setValidations] = useState<FixedTemplateValidation[]>([]);
 
-  const [metaForm] = Form.useForm<MetaFormValues>();
-  const planTypes = Form.useWatch('plan_types', metaForm) || [];
-  const classNames = Form.useWatch('class_names', metaForm) || [];
-  const hasExperiment = planTypes.includes('experiment_plan');
-
   const [schedules, setSchedules] = useState<ScheduleState[]>([]);
   const [metaFormKey, setMetaFormKey] = useState(0);
 
@@ -276,6 +271,15 @@ function CoursePlanStudio() {
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+
+  const [metaForm] = Form.useForm<MetaFormValues>();
+  const planTypes = Form.useWatch('plan_types', metaForm) || [];
+  const classNames = Form.useWatch('class_names', metaForm) || [];
+  // 编辑态 plan_types 字段不在表单内（只读展示），必须依据 detail 判定，
+  // 否则实验信息字段不会渲染，保存时会丢失制表日期等必填值。
+  const hasExperiment = detail
+    ? detail.plan_types.includes('experiment_plan')
+    : planTypes.includes('experiment_plan');
 
   const refreshDrafts = useCallback(async () => {
     setDraftsLoading(true);
@@ -508,6 +512,27 @@ function CoursePlanStudio() {
       const created = await coursePlanApi.createCoursePlan(request);
       setDetail(created);
       setChapters(created.chapters.map((chapter) => ({ ...chapter })));
+      // 回填规范化值，保证第 3 步表单重挂载后（含实验信息字段）取值完整
+      metaForm.setFieldsValue({
+        course_name: created.course_name,
+        grade: created.grade,
+        class_names: created.class_names,
+        academic_year: created.academic_year,
+        semester: created.semester as 1 | 2,
+        teacher_name: created.teacher_name,
+        hours_per_lesson: created.hours_per_lesson,
+        start_week: created.start_week,
+        total_hours: created.total_hours,
+        location: created.location,
+        plan_date: created.plan_date,
+        first_class_date: created.first_class_date,
+        class_periods: created.class_periods,
+      });
+      setSchedules(
+        created.class_schedules.length
+          ? created.class_schedules.map((row) => ({ ...row }))
+          : []
+      );
       messageApi.success('学期计划草稿已创建，可在导出前编辑内容');
       setStep(2);
       setSearchParams({ id: created.id }, { replace: true });
