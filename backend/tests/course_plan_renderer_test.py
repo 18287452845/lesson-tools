@@ -66,30 +66,29 @@ def _assert_adaptive_teaching_structure(path: pathlib.Path, week_count: int):
     document = Document(path)
     assert len(document.tables) == 1
     table = document.tables[0]
-    assert len(table.rows) == week_count + 4
+    # 标题行 + 元数据行 + 2 列头行 + N 数据行 + 合计行 + 签字行
+    assert len(table.rows) == week_count + 6
     assert all(
         row._tr.trPr.find(qn("w:tblHeader")) is not None
-        for row in table.rows[:2]
+        for row in table.rows[:4]
     )
-    assert all(
-        row._tr.trPr.find(qn("w:tblHeader")) is None
-        and row._tr.trPr.find(qn("w:cantSplit")) is not None
-        for row in table.rows[2:-2]
-    )
-    assert all(
-        row._tr.trPr.find(qn("w:cantSplit")) is not None
-        for row in (*table.rows[:2], *table.rows[-2:])
-    )
-    assert table.rows[-3].cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is None
-    assert table.rows[-2].cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is not None
-    header = document.sections[0].header
-    assert len(header.paragraphs) == 2
-    assert header.paragraphs[0].text == "云南林业职业技术学院教师授课计划表"
-    field_instructions = header._element.xpath(".//w:fldSimple/@w:instr")
+    assert "云南林业职业技术学院教师授课计划表" in table.rows[0].cells[0].text
+    field_instructions = table.rows[1]._tr.xpath(".//w:fldSimple/@w:instr")
     assert {instruction.strip() for instruction in field_instructions} == {
         "PAGE",
         "NUMPAGES",
     }
+    assert all(
+        row._tr.trPr.find(qn("w:tblHeader")) is None
+        and row._tr.trPr.find(qn("w:cantSplit")) is not None
+        for row in table.rows[4:-2]
+    )
+    assert all(
+        row._tr.trPr.find(qn("w:cantSplit")) is not None
+        for row in table.rows[:4]
+    )
+    assert table.rows[-3].cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is None
+    assert table.rows[-2].cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is not None
 
 
 def test_fixed_course_plan_templates_are_valid():
@@ -179,7 +178,7 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     assert "24级信息安全技术应用1、2班" in teaching_text
     assert "机房、计算机" in teaching_text
     assert "任务32 Windows服务器安全配置" in teaching_text
-    first_week = teaching.tables[0].rows[2].cells
+    first_week = teaching.tables[0].rows[4].cells
     assert first_week[1].text == "任务1 Windows服务器安全配置\n任务2 Windows服务器安全配置"
     assert first_week[5].text == (
         "准确完成第1项服务器配置并依据验证结果判断安全状态\n"
@@ -247,12 +246,7 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     _assert_preserved_parts(
         settings.teaching_plan_template_path,
         teaching_path,
-        changed_parts={
-            "word/document.xml",
-            "word/_rels/document.xml.rels",
-            "[Content_Types].xml",
-        },
-        added_parts={"word/header1.xml"},
+        changed_parts={"word/document.xml"},
     )
     _assert_preserved_parts(settings.experiment_plan_template_path, experiment_paths[0])
 
@@ -317,12 +311,13 @@ def test_render_18_week_teaching_and_experiment_plans(tmp_path: pathlib.Path):
 
     teaching = Document(teaching_path)
     _assert_adaptive_teaching_structure(teaching_path, 18)
-    assert teaching.tables[0].rows[18].cells[0].text == "17"
-    assert teaching.tables[0].rows[19].cells[0].text == "18"
+    assert teaching.tables[0].rows[20].cells[0].text == "17"
+    assert teaching.tables[0].rows[21].cells[0].text == "18"
     assert teaching.tables[0].rows[-2].cells[1].text == "总课时"
     assert teaching.tables[0].rows[-2].cells[4].text == "72"
-    header_text = "\n".join(
-        paragraph.text for paragraph in teaching.sections[0].header.paragraphs
+    header_text = (
+        teaching.tables[0].rows[0].cells[0].text
+        + teaching.tables[0].rows[1].cells[0].text
     )
     assert "网络安全" not in header_text
     assert "Windows服务器安全配置" in header_text
@@ -337,12 +332,7 @@ def test_render_18_week_teaching_and_experiment_plans(tmp_path: pathlib.Path):
     _assert_preserved_parts(
         settings.teaching_plan_template_path,
         teaching_path,
-        changed_parts={
-            "word/document.xml",
-            "word/_rels/document.xml.rels",
-            "[Content_Types].xml",
-        },
-        added_parts={"word/header1.xml"},
+        changed_parts={"word/document.xml"},
     )
     _assert_preserved_parts(settings.experiment_plan_template_path, experiment_path)
 
@@ -382,7 +372,7 @@ def test_teaching_plan_homework_is_brief_and_varied(tmp_path: pathlib.Path):
     )
 
     rows = Document(path).tables[0].rows
-    homework_cells = [rows[week + 2].cells[8].text for week in range(3)]
+    homework_cells = [rows[week + 4].cells[8].text for week in range(3)]
     assert homework_cells == ["撰写实验报告", "完成课后练习", "上机实操评估"]
     assert all(
         len(line) <= course_plan_renderer.HOMEWORK_MAX_CHARS
@@ -419,7 +409,7 @@ def test_teaching_plan_points_are_brief(tmp_path: pathlib.Path):
         )
     )
 
-    first_week = Document(path).tables[0].rows[2].cells
+    first_week = Document(path).tables[0].rows[4].cells
     # 多要点句只保留装得下的前几条（16 + 1 + 15 = 32 > 25，仅保留第一条）
     assert first_week[5].text == (
         "掌握raise语句主动抛出异常的方法\n掌握try-except语句结构与多异常捕获"
