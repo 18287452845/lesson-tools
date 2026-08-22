@@ -89,12 +89,8 @@ def brief_homework_line(line: str) -> str:
     return HOMEWORK_BRIEF_FALLBACK
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
-CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 NS = {"w": W_NS}
 W = f"{{{W_NS}}}"
-R = f"{{{R_NS}}}"
 
 
 @dataclass(frozen=True)
@@ -556,128 +552,6 @@ def _patch_docx(
     return output_path
 
 
-def _build_page_footer() -> etree._Element:
-    """Centered footer with live PAGE/NUMPAGES fields, correct on every page."""
-    footer_root = etree.Element(W + "ftr", nsmap={"w": W_NS})
-    paragraph = etree.SubElement(footer_root, W + "p")
-    paragraph_properties = etree.SubElement(paragraph, W + "pPr")
-    justification = etree.SubElement(paragraph_properties, W + "jc")
-    justification.set(W + "val", "center")
-
-    def _append_text(parent: etree._Element, text: str) -> None:
-        run = etree.SubElement(parent, W + "r")
-        run_properties = etree.SubElement(run, W + "rPr")
-        size = etree.SubElement(run_properties, W + "sz")
-        size.set(W + "val", "21")
-        text_element = etree.SubElement(run, W + "t")
-        text_element.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-        text_element.text = text
-
-    def _append_field(parent: etree._Element, instruction: str) -> None:
-        run = etree.SubElement(parent, W + "r")
-        run_properties = etree.SubElement(run, W + "rPr")
-        size = etree.SubElement(run_properties, W + "sz")
-        size.set(W + "val", "21")
-        field = etree.Element(W + "fldSimple")
-        field.set(W + "instr", f" {instruction} ")
-        display_run = deepcopy(run)
-        _set_run_text(display_run, "1")
-        field.append(display_run)
-        parent.replace(run, field)
-
-    _append_text(paragraph, "共 ")
-    _append_field(paragraph, "NUMPAGES")
-    _append_text(paragraph, " 页  第 ")
-    _append_field(paragraph, "PAGE")
-    _append_text(paragraph, " 页")
-    return footer_root
-
-
-def _patch_docx_with_footer(
-    template_path: Path,
-    output_path: Path,
-    patcher: Callable[[etree._Element], None],
-) -> Path:
-    """Patch the body and attach a footer part carrying the page-number fields.
-
-    Fields placed in repeated table header rows keep their cached value on
-    every page, so page numbers must live in a real footer to stay correct.
-    """
-    with zipfile.ZipFile(template_path, "r") as source:
-        root = etree.fromstring(source.read("word/document.xml"))
-        patcher(root)
-
-        relationships = etree.fromstring(source.read("word/_rels/document.xml.rels"))
-        used_ids = {
-            relationship.get("Id")
-            for relationship in relationships.findall(f"{{{PACKAGE_REL_NS}}}Relationship")
-        }
-        next_number = 1
-        while f"rId{next_number}" in used_ids:
-            next_number += 1
-        relationship_id = f"rId{next_number}"
-
-        footer_number = 1
-        while f"word/footer{footer_number}.xml" in source.namelist():
-            footer_number += 1
-        footer_name = f"footer{footer_number}.xml"
-        footer_path = f"word/{footer_name}"
-
-        relationship = etree.SubElement(
-            relationships, f"{{{PACKAGE_REL_NS}}}Relationship"
-        )
-        relationship.set("Id", relationship_id)
-        relationship.set(
-            "Type",
-            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer",
-        )
-        relationship.set("Target", footer_name)
-
-        content_types = etree.fromstring(source.read("[Content_Types].xml"))
-        override = etree.SubElement(content_types, f"{{{CONTENT_TYPES_NS}}}Override")
-        override.set("PartName", f"/{footer_path}")
-        override.set(
-            "ContentType",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
-        )
-
-        section_properties = root.find(".//" + W + "sectPr")
-        if section_properties is None:
-            raise ValueError("授课计划模板缺少页面设置")
-        for existing in list(section_properties.findall(W + "footerReference")):
-            section_properties.remove(existing)
-        footer_reference = etree.Element(W + "footerReference")
-        footer_reference.set(W + "type", "default")
-        footer_reference.set(R + "id", relationship_id)
-        section_properties.insert(0, footer_reference)
-
-        payloads = {
-            "word/document.xml": etree.tostring(
-                root, encoding="UTF-8", xml_declaration=True, standalone=True
-            ),
-            "word/_rels/document.xml.rels": etree.tostring(
-                relationships, encoding="UTF-8", xml_declaration=True, standalone=True
-            ),
-            "[Content_Types].xml": etree.tostring(
-                content_types, encoding="UTF-8", xml_declaration=True, standalone=True
-            ),
-            footer_path: etree.tostring(
-                _build_page_footer(),
-                encoding="UTF-8",
-                xml_declaration=True,
-                standalone=True,
-            ),
-        }
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(output_path, "w") as target:
-            for item in source.infolist():
-                payload = payloads.get(item.filename, source.read(item.filename))
-                target.writestr(deepcopy(item), payload)
-            target.writestr(footer_path, payloads[footer_path])
-    return output_path
-
-
 def _parse_date(value: str | date) -> date:
     if isinstance(value, date):
         return value
@@ -698,6 +572,78 @@ class CoursePlanRenderer:
         self.output_dir = Path(output_dir or settings.output_dir)
 
     @staticmethod
+    def _teaching_week_values(
+        group: list[dict[str, Any]],
+        *,
+        slot_index: int,
+        hours_per_lesson: int,
+        start_week: int,
+    ) -> tuple[str, ...]:
+        """Compute the nine cell values for one teaching-plan week row."""
+        weekly_hours = len(group) * hours_per_lesson
+        theory_hours = weekly_hours // 2
+        practice_hours = weekly_hours - theory_hours
+        topics = [item["topic"] for item in group if item["topic"]]
+        concepts = [
+            concept for item in group for concept in item.get("key_concepts", [])
+        ]
+        summaries = [
+            item["content_summary"] for item in group if item.get("content_summary")
+        ]
+
+        focus_values = [
+            brief_point_line(item["key_points"])
+            for item in group
+            if item["key_points"]
+        ]
+        focus = "\n".join(dict.fromkeys(focus_values))
+        if not focus:
+            focus = brief_point_line("、".join(dict.fromkeys(concepts)))
+        if not focus:
+            focus = brief_point_line(
+                summaries[0] if summaries else f"掌握{'、'.join(topics)}"
+            )
+        difficulty_values = [
+            brief_point_line(item["difficult_points"])
+            for item in group
+            if item["difficult_points"]
+        ]
+        difficulty = "\n".join(dict.fromkeys(difficulty_values))
+        if not difficulty:
+            difficulty = brief_point_line("、".join(dict.fromkeys(concepts[-2:])))
+        if not difficulty:
+            difficulty = brief_point_line(
+                summaries[-1] if summaries else f"综合运用{'、'.join(topics)}"
+            )
+        assignment_lines: list[str] = []
+        for item in group:
+            homework = item.get("homework")
+            if isinstance(homework, Mapping):
+                assignment_lines.extend(
+                    str(homework.get(field_name) or "").strip()
+                    for field_name in ("required", "optional")
+                    if str(homework.get(field_name) or "").strip()
+                )
+            elif str(homework or "").strip():
+                assignment_lines.append(str(homework).strip())
+        assignment_lines = [brief_homework_line(line) for line in assignment_lines]
+        assignment_lines = list(dict.fromkeys(assignment_lines)) or [
+            HOMEWORK_EMPTY_FALLBACK
+        ]
+
+        return (
+            str(start_week + slot_index),
+            "\n".join(topics),
+            str(theory_hours),
+            str(practice_hours),
+            str(weekly_hours),
+            focus,
+            difficulty,
+            "机房、计算机",
+            "\n".join(assignment_lines),
+        )
+
+    @staticmethod
     def _patch_metadata_paragraph(
         paragraph: etree._Element,
         *,
@@ -706,10 +652,12 @@ class CoursePlanRenderer:
         semester: int,
         class_display: str,
         teacher_name: str,
+        page_no: int,
+        page_count: int,
     ) -> None:
-        """Fill the copied metadata paragraph and turn page digits into fields."""
+        """Fill the copied metadata paragraph with static per-page numbers."""
         runs = _direct_runs(paragraph)
-        if len(runs) < 14:
+        if len(runs) < 21:
             raise ValueError("授课计划元数据段结构已改变")
         # 按学院参考样式的间距填写：标签与数值之间保留空格，
         # 班级整串放入班级值 run，年级/结尾 run 清空。
@@ -723,93 +671,32 @@ class CoursePlanRenderer:
         _set_run_text(runs[10], class_display)
         _set_run_text(runs[11], "")
         _set_run_text(runs[13], teacher_name)
-        # 页码改由页脚的 PAGE/NUMPAGES 字段承担：重复表头行里的字段
-        # 不会按页重算，行内页码一律清空。
-        if len(runs) > 14:
-            for index in range(14, len(runs)):
-                _set_run_text(runs[index], "")
+        # 页码按分页结果静态写入：域字段在重复结构里不会按页重算
+        _set_run_text(runs[16], str(page_count))
+        _set_run_text(runs[19], f" {page_no} ")
 
     @staticmethod
-    def _prepare_adaptive_teaching_layout(
+    def _compose_paged_teaching(
         root: etree._Element,
-        group_count: int,
+        week_values: list[tuple[str, ...]],
         *,
         course_name: str,
         academic_year: str,
         semester: int,
         class_display: str,
         teacher_name: str,
-    ) -> tuple[list[etree._Element], etree._Element]:
-        """Build one flowing table whose first four rows repeat on every page.
+        total_hours: int,
+    ) -> None:
+        """Compose one title + metadata + table block per page.
 
-        The title and metadata paragraphs from the template are composed into
-        the table body itself (as repeated header rows) instead of a Word
-        header part, so the patched package only touches word/document.xml.
+        Page breaks are decided here from conservative row-height estimates,
+        so every page carries its own static page numbers in the original
+        metadata position (共 N 页 第 X 页).
         """
         paragraphs = _direct_paragraphs(root)
         tables = _direct_tables(root)
         if len(paragraphs) != 19 or len(tables) != 6:
             raise ValueError("授课计划模板分页结构已改变")
-
-        title_paragraph = deepcopy(paragraphs[0])
-        metadata_paragraph = deepcopy(paragraphs[1])
-        _remove_page_break_before(metadata_paragraph)
-        self_cls = CoursePlanRenderer
-        self_cls._patch_metadata_paragraph(
-            metadata_paragraph,
-            course_name=course_name,
-            academic_year=academic_year,
-            semester=semester,
-            class_display=class_display,
-            teacher_name=teacher_name,
-        )
-
-        continuous_table = deepcopy(tables[0])
-        continuous_rows = continuous_table.xpath("./w:tr", namespaces=NS)
-        if len(continuous_rows) < 3:
-            raise ValueError("授课计划表头结构已改变")
-        for row in continuous_rows[2:]:
-            continuous_table.remove(row)
-        for row in continuous_rows[:2]:
-            _set_repeating_table_header(row, True)
-            _set_row_cant_split(row)
-
-        source_rows = tables[5].xpath("./w:tr", namespaces=NS)
-        if len(source_rows) != 6:
-            raise ValueError("授课计划末页表格结构已改变")
-        data_template = source_rows[2]
-
-        title_row = _make_full_width_paragraph_row(
-            data_template, title_paragraph, continuous_table
-        )
-        metadata_row = _make_full_width_paragraph_row(
-            data_template, metadata_paragraph, continuous_table
-        )
-        for row in (title_row, metadata_row):
-            _set_repeating_table_header(row, True)
-        continuous_table.insert(0, title_row)
-        continuous_table.insert(1, metadata_row)
-
-        data_rows: list[etree._Element] = []
-        for _ in range(group_count):
-            row = deepcopy(data_template)
-            _set_repeating_table_header(row, False)
-            _set_row_cant_split(row)
-            continuous_table.append(row)
-            data_rows.append(row)
-
-        total_row = deepcopy(source_rows[-1])
-        _set_repeating_table_header(total_row, False)
-        _set_row_cant_split(total_row)
-        _set_row_keep_with_next(total_row)
-        continuous_table.append(total_row)
-        continuous_table.append(
-            _make_full_width_paragraph_row(
-                data_template,
-                paragraphs[18],
-                continuous_table,
-            )
-        )
 
         body = root.find(W + "body")
         if body is None:
@@ -817,10 +704,127 @@ class CoursePlanRenderer:
         section_properties = body.find(W + "sectPr")
         if section_properties is None:
             raise ValueError("授课计划模板缺少页面设置")
+
+        page_size = section_properties.find(W + "pgSz")
+        page_margin = section_properties.find(W + "pgMar")
+        if page_size is None or page_margin is None:
+            raise ValueError("授课计划模板缺少页面尺寸")
+        usable_height = int(page_size.get(W + "h")) - int(
+            page_margin.get(W + "top")
+        ) - int(page_margin.get(W + "bottom"))
+
+        grid_widths = [
+            int(column.get(W + "w") or 0)
+            for column in tables[0].xpath("./w:tblGrid/w:gridCol", namespaces=NS)
+        ]
+        if len(grid_widths) != 9:
+            raise ValueError("授课计划表格列结构已改变")
+
+        col_header_table = tables[0]
+        source_rows = tables[5].xpath("./w:tr", namespaces=NS)
+        if len(source_rows) != 6:
+            raise ValueError("授课计划末页表格结构已改变")
+        data_template = source_rows[2]
+        total_template = source_rows[-1]
+        signature_paragraph = paragraphs[18]
+
+        def cell_lines(text: str, width: int) -> int:
+            usable = max(width - 216, 120)
+            count = 0
+            for line in str(text or "").split("\n"):
+                count += max(1, -(-_display_width(line) * 120 // usable))
+            return max(count, 1)
+
+        week_heights = [
+            max(cell_lines(value, width) for value, width in zip(values, grid_widths))
+            * 400
+            for values in week_values
+        ]
+
+        header_height = 1060 + 620 + 794  # 标题段 + 元数据段 + 两列表头行
+        safety = 900
+        tail_height = 1500  # 合计行 + 签字行 + 富余
+        budget = usable_height - header_height - safety
+
+        pages: list[list[int]] = [[]]
+        used = 0
+        for index, height in enumerate(week_heights):
+            if pages[-1] and used + height > budget:
+                pages.append([])
+                used = 0
+            pages[-1].append(index)
+            used += height
+        if not pages[0]:
+            raise ValueError("授课计划缺少周数据")
+        if used + tail_height > budget and len(pages[-1]) > 1:
+            pages.append([pages[-1].pop()])
+        page_count = len(pages)
+
         for child in list(body):
             if child is not section_properties:
                 body.remove(child)
-        section_properties.addprevious(continuous_table)
+
+        for page_index, week_indexes in enumerate(pages, start=1):
+            title_paragraph = deepcopy(paragraphs[0])
+            if page_index > 1:
+                _set_page_break_before(title_paragraph)
+            metadata_paragraph = deepcopy(paragraphs[1])
+            _remove_page_break_before(metadata_paragraph)
+            CoursePlanRenderer._patch_metadata_paragraph(
+                metadata_paragraph,
+                course_name=course_name,
+                academic_year=academic_year,
+                semester=semester,
+                class_display=class_display,
+                teacher_name=teacher_name,
+                page_no=page_index,
+                page_count=page_count,
+            )
+            section_properties.addprevious(title_paragraph)
+            section_properties.addprevious(metadata_paragraph)
+
+            page_table = deepcopy(col_header_table)
+            page_rows = page_table.xpath("./w:tr", namespaces=NS)
+            for row in page_rows[2:]:
+                page_table.remove(row)
+            for row in page_rows[:2]:
+                _set_repeating_table_header(row, True)
+                _set_row_cant_split(row)
+
+            for week_index in week_indexes:
+                row = deepcopy(data_template)
+                _set_repeating_table_header(row, False)
+                _set_row_cant_split(row)
+                cells = _table_cells(row)
+                if len(cells) != 9:
+                    raise ValueError("授课计划数据行结构已改变")
+                for cell, value in zip(cells, week_values[week_index]):
+                    _set_cell_text(cell, value)
+                page_table.append(row)
+
+            if page_index == page_count:
+                total_row = deepcopy(total_template)
+                _set_repeating_table_header(total_row, False)
+                _set_row_cant_split(total_row)
+                _set_row_keep_with_next(total_row)
+                theory_total = total_hours // 2
+                practice_total = total_hours - theory_total
+                total_cells = _table_cells(total_row)
+                for index, value in (
+                    (1, "总课时"),
+                    (2, str(theory_total)),
+                    (3, str(practice_total)),
+                    (4, str(total_hours)),
+                ):
+                    _set_cell_text(total_cells[index], value)
+                page_table.append(total_row)
+                page_table.append(
+                    _make_full_width_paragraph_row(
+                        data_template, signature_paragraph, page_table
+                    )
+                )
+            section_properties.addprevious(page_table)
+
         # 表格不能是正文最后一个块级元素；补一个 1pt 高的占位段落，
         # 避免 Word 自动追加默认高度段落而挤出一张空白页。
         trailing = etree.Element(W + "p")
@@ -833,7 +837,6 @@ class CoursePlanRenderer:
         trailing_size = etree.SubElement(trailing_run_properties, W + "sz")
         trailing_size.set(W + "val", "2")
         section_properties.addprevious(trailing)
-        return data_rows, total_row
 
     def render_teaching_plan(
         self,
@@ -866,98 +869,29 @@ class CoursePlanRenderer:
         )
         output_path = self.output_dir / f"{batch_task_id}_{output_name}"
 
+        week_values = [
+            CoursePlanRenderer._teaching_week_values(
+                group,
+                slot_index=slot_index,
+                hours_per_lesson=hours_per_lesson,
+                start_week=start_week,
+            )
+            for slot_index, group in enumerate(groups)
+        ]
+
         def patch(root: etree._Element) -> None:
-            data_rows, total_row = self._prepare_adaptive_teaching_layout(
+            CoursePlanRenderer._compose_paged_teaching(
                 root,
-                len(groups),
+                week_values,
                 course_name=course_name,
                 academic_year=academic_year,
                 semester=semester,
                 class_display=class_display,
                 teacher_name=teacher_name,
+                total_hours=total_hours,
             )
 
-            for slot_index, row in enumerate(data_rows):
-                cells = _table_cells(row)
-                if len(cells) != 9:
-                    raise ValueError("授课计划数据行结构已改变")
-
-                group = groups[slot_index]
-                weekly_hours = len(group) * hours_per_lesson
-                theory_hours = weekly_hours // 2
-                practice_hours = weekly_hours - theory_hours
-                topics = [item["topic"] for item in group if item["topic"]]
-                concepts = [
-                    concept for item in group for concept in item.get("key_concepts", [])
-                ]
-                summaries = [
-                    item["content_summary"] for item in group if item.get("content_summary")
-                ]
-
-                focus_values = [
-                    brief_point_line(item["key_points"])
-                    for item in group
-                    if item["key_points"]
-                ]
-                focus = "\n".join(dict.fromkeys(focus_values))
-                if not focus:
-                    focus = brief_point_line("、".join(dict.fromkeys(concepts)))
-                if not focus:
-                    focus = brief_point_line(
-                        summaries[0] if summaries else f"掌握{'、'.join(topics)}"
-                    )
-                difficulty_values = [
-                    brief_point_line(item["difficult_points"])
-                    for item in group
-                    if item["difficult_points"]
-                ]
-                difficulty = "\n".join(dict.fromkeys(difficulty_values))
-                if not difficulty:
-                    difficulty = brief_point_line("、".join(dict.fromkeys(concepts[-2:])))
-                if not difficulty:
-                    difficulty = brief_point_line(
-                        summaries[-1] if summaries else f"综合运用{'、'.join(topics)}"
-                    )
-                assignment_lines: list[str] = []
-                for item in group:
-                    homework = item.get("homework")
-                    if isinstance(homework, Mapping):
-                        assignment_lines.extend(
-                            str(homework.get(field_name) or "").strip()
-                            for field_name in ("required", "optional")
-                            if str(homework.get(field_name) or "").strip()
-                        )
-                    elif str(homework or "").strip():
-                        assignment_lines.append(str(homework).strip())
-                assignment_lines = [
-                    brief_homework_line(line) for line in assignment_lines
-                ]
-                assignment_lines = list(dict.fromkeys(assignment_lines)) or [
-                    HOMEWORK_EMPTY_FALLBACK
-                ]
-
-                values = (
-                    str(start_week + slot_index),
-                    "\n".join(topics),
-                    str(theory_hours),
-                    str(practice_hours),
-                    str(weekly_hours),
-                    focus,
-                    difficulty,
-                    "机房、计算机",
-                    "\n".join(assignment_lines),
-                )
-                for cell, value in zip(cells, values):
-                    _set_cell_text(cell, value)
-
-            total_cells = _table_cells(total_row)
-            theory_total = total_hours // 2
-            practice_total = total_hours - theory_total
-            for index, value in ((1, "总课时"), (2, str(theory_total)),
-                                 (3, str(practice_total)), (4, str(total_hours))):
-                _set_cell_text(total_cells[index], value)
-
-        return str(_patch_docx_with_footer(spec.path, output_path, patch))
+        return str(_patch_docx(spec.path, output_path, patch))
 
     def render_experiment_plans(
         self,

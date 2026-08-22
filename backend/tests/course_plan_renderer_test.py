@@ -62,45 +62,52 @@ def _assert_preserved_parts(
                 assert output.read(name) == source.read(name), name
 
 
-def _assert_adaptive_teaching_structure(path: pathlib.Path, week_count: int):
+def _teaching_week_rows(document: Document) -> list:
+    """Collect week data rows across page tables in order."""
+    rows = []
+    for table in document.tables[:-1]:
+        rows.extend(table.rows[2:])
+    rows.extend(document.tables[-1].rows[2:-2])
+    return rows
+
+
+def _assert_paged_teaching_structure(path: pathlib.Path, week_count: int):
     document = Document(path)
-    assert len(document.tables) == 1
-    table = document.tables[0]
-    # 标题行 + 元数据行 + 2 列头行 + N 数据行 + 合计行 + 签字行
-    assert len(table.rows) == week_count + 6
-    assert all(
-        row._tr.trPr.find(qn("w:tblHeader")) is not None
-        for row in table.rows[:4]
-    )
-    assert "云南林业职业技术学院教师授课计划表" in table.rows[0].cells[0].text
-    # 行内不再放页码：字段在重复表头行里不会按页重算
-    assert "页第" not in table.rows[1].cells[0].text
-    footer = document.sections[0].footer
-    assert not footer.is_linked_to_previous
-    footer_text = "".join(paragraph.text for paragraph in footer.paragraphs)
-    assert "共" in footer_text and "页" in footer_text
-    field_instructions = footer._element.xpath(".//w:fldSimple/@w:instr")
-    assert {instruction.strip() for instruction in field_instructions} == {
-        "PAGE",
-        "NUMPAGES",
-    }
-    assert all(
-        row._tr.trPr.find(qn("w:tblHeader")) is None
-        and row._tr.trPr.find(qn("w:cantSplit")) is not None
-        for row in table.rows[4:-2]
-    )
-    assert all(
-        row._tr.trPr.find(qn("w:cantSplit")) is not None
-        for row in table.rows[:4]
-    )
-    assert table.rows[-3].cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is None
-    assert table.rows[-2].cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is not None
-    # 表尾紧跟 1pt 占位段落，避免 Word 自动补默认段落挤出空白页
+    assert len(document.tables) >= 1
+    for table in document.tables:
+        # 每页一张表：2 列头行 + 数据行（末页另有合计与签字行）
+        assert all(
+            row._tr.trPr.find(qn("w:tblHeader")) is not None
+            for row in table.rows[:2]
+        )
+        assert all(
+            row._tr.trPr.find(qn("w:cantSplit")) is not None
+            for row in table.rows
+        )
+    last_table = document.tables[-1]
+    assert last_table.rows[-2].cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is not None
+
+    week_rows = _teaching_week_rows(document)
+    assert [row.cells[0].text.strip() for row in week_rows] == [
+        str(number) for number in range(1, week_count + 1)
+    ]
+
+    # 每页顶部都有标题与元数据段，页码为原位置的静态文字
+    titles = [p.text for p in document.paragraphs if p.text == "云南林业职业技术学院教师授课计划表"]
+    metas = [p.text for p in document.paragraphs if p.text.startswith("课名：")]
+    page_count = len(document.tables)
+    assert len(titles) == page_count
+    assert len(metas) == page_count
+    for page_no, meta in enumerate(metas, start=1):
+        assert f"共 {page_count} 页" in meta
+        assert f"第 {page_no} 页" in meta
+
+    # 正文以 表格 + 1pt 占位段 + sectPr 结尾，避免空白页
     body_children = [
         child.tag.split("}")[1]
         for child in document.element.body.iterchildren()
     ]
-    assert body_children[-2:] == ["p", "sectPr"]
+    assert body_children[-3:] == ["tbl", "p", "sectPr"]
 
 
 def test_fixed_course_plan_templates_are_valid():
@@ -182,15 +189,15 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     assert teaching_path.is_file()
     assert len(experiment_paths) == 2
     teaching = Document(teaching_path)
-    _assert_adaptive_teaching_structure(teaching_path, 16)
-    assert teaching.tables[0].rows[-2].cells[2].text == "32"
-    assert teaching.tables[0].rows[-2].cells[3].text == "32"
-    assert teaching.tables[0].rows[-2].cells[4].text == "64"
+    _assert_paged_teaching_structure(teaching_path, 16)
+    assert teaching.tables[-1].rows[-2].cells[2].text == "32"
+    assert teaching.tables[-1].rows[-2].cells[3].text == "32"
+    assert teaching.tables[-1].rows[-2].cells[4].text == "64"
     teaching_text = _all_text(teaching_path)
     assert "24级信息安全技术应用1、2班" in teaching_text
     assert "机房、计算机" in teaching_text
     assert "任务32 Windows服务器安全配置" in teaching_text
-    first_week = teaching.tables[0].rows[4].cells
+    first_week = teaching.tables[0].rows[2].cells
     assert first_week[1].text == "任务1 Windows服务器安全配置\n任务2 Windows服务器安全配置"
     assert first_week[5].text == (
         "准确完成第1项服务器配置并依据验证结果判断安全状态\n"
@@ -258,12 +265,7 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     _assert_preserved_parts(
         settings.teaching_plan_template_path,
         teaching_path,
-        changed_parts={
-            "word/document.xml",
-            "word/_rels/document.xml.rels",
-            "[Content_Types].xml",
-        },
-        added_parts={"word/footer1.xml"},
+        changed_parts={"word/document.xml"},
     )
     _assert_preserved_parts(settings.experiment_plan_template_path, experiment_paths[0])
 
@@ -327,15 +329,16 @@ def test_render_18_week_teaching_and_experiment_plans(tmp_path: pathlib.Path):
     )
 
     teaching = Document(teaching_path)
-    _assert_adaptive_teaching_structure(teaching_path, 18)
-    assert teaching.tables[0].rows[20].cells[0].text == "17"
-    assert teaching.tables[0].rows[21].cells[0].text == "18"
-    assert teaching.tables[0].rows[-2].cells[1].text == "总课时"
-    assert teaching.tables[0].rows[-2].cells[4].text == "72"
-    header_text = (
-        teaching.tables[0].rows[0].cells[0].text
-        + teaching.tables[0].rows[1].cells[0].text
-    )
+    _assert_paged_teaching_structure(teaching_path, 18)
+    week_labels = [row.cells[0].text.strip() for row in _teaching_week_rows(teaching)]
+    assert week_labels[-2:] == ["17", "18"]
+    assert teaching.tables[-1].rows[-2].cells[1].text == "总课时"
+    assert teaching.tables[-1].rows[-2].cells[4].text == "72"
+    header_paragraphs = [
+        p.text for p in teaching.paragraphs
+        if p.text.startswith("课名：") or p.text.startswith("云南林业")
+    ]
+    header_text = "".join(header_paragraphs[:2])
     assert "网络安全" not in header_text
     assert "Windows服务器安全配置" in header_text
     assert "24级信息安全技术应用1班" in header_text
@@ -349,12 +352,7 @@ def test_render_18_week_teaching_and_experiment_plans(tmp_path: pathlib.Path):
     _assert_preserved_parts(
         settings.teaching_plan_template_path,
         teaching_path,
-        changed_parts={
-            "word/document.xml",
-            "word/_rels/document.xml.rels",
-            "[Content_Types].xml",
-        },
-        added_parts={"word/footer1.xml"},
+        changed_parts={"word/document.xml"},
     )
     _assert_preserved_parts(settings.experiment_plan_template_path, experiment_path)
 
@@ -393,8 +391,8 @@ def test_teaching_plan_homework_is_brief_and_varied(tmp_path: pathlib.Path):
         )
     )
 
-    rows = Document(path).tables[0].rows
-    homework_cells = [rows[week + 4].cells[8].text for week in range(3)]
+    rows = _teaching_week_rows(Document(path))
+    homework_cells = [rows[week].cells[8].text for week in range(3)]
     assert homework_cells == ["撰写实验报告", "完成课后练习", "上机实操评估"]
     assert all(
         len(line) <= course_plan_renderer.HOMEWORK_MAX_CHARS
@@ -431,7 +429,7 @@ def test_teaching_plan_points_are_brief(tmp_path: pathlib.Path):
         )
     )
 
-    first_week = Document(path).tables[0].rows[4].cells
+    first_week = _teaching_week_rows(Document(path))[0].cells
     # 多要点句只保留装得下的前几条（16 + 1 + 15 = 32 > 25，仅保留第一条）
     assert first_week[5].text == (
         "掌握raise语句主动抛出异常的方法\n掌握try-except语句结构与多异常捕获"
