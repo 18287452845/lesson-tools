@@ -13,13 +13,18 @@ import type {
   CoursePlanUpdateRequest,
 } from '@/types';
 
+// 创建/保存/导出可能触发 AI 精简与整批渲染，放宽到 300 秒
+const LONG_TIMEOUT = 300000;
+
 /**
  * Create a semester-plan draft from selected generated lesson plans
  */
 export async function createCoursePlan(
   request: CoursePlanCreateRequest
 ): Promise<CoursePlanDetail> {
-  const response = await api.post('/course-plans', request);
+  const response = await api.post('/course-plans', request, {
+    timeout: LONG_TIMEOUT,
+  });
   return response.data;
 }
 
@@ -50,7 +55,9 @@ export async function updateCoursePlan(
   coursePlanId: string,
   request: CoursePlanUpdateRequest
 ): Promise<CoursePlanDetail> {
-  const response = await api.put(`/course-plans/${coursePlanId}`, request);
+  const response = await api.put(`/course-plans/${coursePlanId}`, request, {
+    timeout: LONG_TIMEOUT,
+  });
   return response.data;
 }
 
@@ -67,6 +74,7 @@ export async function deleteCoursePlan(coursePlanId: string): Promise<void> {
 export async function exportCoursePlan(coursePlanId: string): Promise<string> {
   const response = await api.post(`/course-plans/${coursePlanId}/export`, null, {
     responseType: 'blob',
+    timeout: LONG_TIMEOUT,
   });
   const disposition = String(response.headers?.['content-disposition'] || '');
   const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);

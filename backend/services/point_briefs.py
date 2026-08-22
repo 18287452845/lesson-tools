@@ -71,8 +71,10 @@ def _parse_response(content: str) -> list[dict[str, Any]]:
 
 def _apply_briefs(
     chapters: list[dict[str, Any]],
+    targets: list[int],
     generated: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    """Overwrite key/difficult points only for the targeted lesson indexes."""
     briefs_by_number: dict[int, tuple[str, str]] = {}
     for item in generated:
         try:
@@ -90,17 +92,18 @@ def _apply_briefs(
             ),
         )
 
-    expected = {int(chapter.get("lesson_number") or 0) for chapter in chapters}
+    expected = {int(chapters[index].get("lesson_number") or 0) for index in targets}
     if set(briefs_by_number) != expected:
-        raise ValueError("重难点精简结果数量与教案数量不一致")
+        raise ValueError("重难点精简结果数量与待精简教案数量不一致")
 
     result: list[dict[str, Any]] = []
     for chapter in chapters:
         number = int(chapter.get("lesson_number") or 0)
-        key_points, difficult_points = briefs_by_number[number]
         merged = dict(chapter)
-        merged["key_points"] = key_points
-        merged["difficult_points"] = difficult_points
+        if number in briefs_by_number:
+            key_points, difficult_points = briefs_by_number[number]
+            merged["key_points"] = key_points
+            merged["difficult_points"] = difficult_points
         result.append(merged)
     return result
 
@@ -140,15 +143,21 @@ async def ensure_brief_points(
     api_key: str | None,
     model: str | None,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Condense focus/difficulty lines via AI when any lesson exceeds the limit."""
+    """Condense focus/difficulty lines via AI when any lesson exceeds the limit.
+
+    Only non-compliant lessons are sent to the AI so large batches stay fast.
+    """
     values = [
         chapter if isinstance(chapter, dict) else dict(chapter)
         for chapter in chapters
     ]
-    if all(chapter_points_ok(chapter) for chapter in values):
+    targets = [
+        index for index, chapter in enumerate(values) if not chapter_points_ok(chapter)
+    ]
+    if not targets:
         return values, False
 
-    prompt = _build_prompt(values)
+    prompt = _build_prompt([values[index] for index in targets])
     last_error: Exception | None = None
     for attempt in range(1, POINT_BRIEF_GENERATION_ATTEMPTS + 1):
         try:
@@ -160,9 +169,11 @@ async def ensure_brief_points(
                 model=model,
                 max_tokens=settings.ai_max_tokens_batch,
             )
-            condensed = _apply_briefs(values, _parse_response(response))
+            condensed = _apply_briefs(values, targets, _parse_response(response))
             logger.info(
-                "Condensed focus/difficulty lines for %s lessons", len(condensed)
+                "Condensed focus/difficulty lines for %s of %s lessons",
+                len(targets),
+                len(values),
             )
             return condensed, True
         except Exception as exc:

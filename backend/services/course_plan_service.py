@@ -10,6 +10,7 @@ from already generated lesson plans:
 import json
 import logging
 import zipfile
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -73,14 +74,6 @@ class CoursePlanService:
         self._check_capacity(chapters)
 
         provider, api_key, model = await get_user_ai_config()
-        # 超过每行 25 字或缺失的重难点由 AI 重新总结，禁止硬截断或留空。
-        chapters, _ = await ensure_brief_points(
-            chapters,
-            provider=provider,
-            api_key=api_key,
-            model=model,
-        )
-
         if "experiment_plan" in request.plan_types:
             self._check_experiment_metadata(
                 plan_date=request.plan_date,
@@ -91,14 +84,40 @@ class CoursePlanService:
                     schedule.model_dump() for schedule in request.class_schedules
                 ],
             )
-            provider, api_key, model = await get_user_ai_config()
-            chapters, _regenerated = await ensure_experiment_names(
+        # 超过每行 25 字或缺失的重难点由 AI 重新总结，禁止硬截断或留空；
+        # 与实验名称生成并行执行，缩短整批等待时间。
+        brief_coro = ensure_brief_points(
+            chapters, provider=provider, api_key=api_key, model=model
+        )
+        if "experiment_plan" in request.plan_types:
+            names_coro = ensure_experiment_names(
                 chapters,
                 provider=provider,
                 api_key=api_key,
                 model=model,
                 require_every_group=True,
             )
+            (brief_chapters, _), (named_chapters, _regenerated) = await asyncio.gather(
+                brief_coro, names_coro
+            )
+            brief_by_number = {
+                int(chapter.get("lesson_number") or 0): chapter
+                for chapter in brief_chapters
+            }
+            chapters = [
+                {
+                    **chapter,
+                    "key_points": brief_by_number[
+                        int(chapter.get("lesson_number") or 0)
+                    ]["key_points"],
+                    "difficult_points": brief_by_number[
+                        int(chapter.get("lesson_number") or 0)
+                    ]["difficult_points"],
+                }
+                for chapter in named_chapters
+            ]
+        else:
+            chapters, _ = await brief_coro
 
         total_hours = request.total_hours or len(chapters) * request.hours_per_lesson
         course_plan_id = str(uuid4())
