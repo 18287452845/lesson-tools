@@ -17,19 +17,18 @@ from .ai_provider import generate_with_ai
 logger = logging.getLogger(__name__)
 
 POINT_BRIEF_MAX_CHARS = 25
-POINT_BRIEF_MAX_LINES = 2
+POINT_BRIEF_MAX_LINES = 1
 POINT_BRIEF_GENERATION_ATTEMPTS = 3
 
 
 def point_lines_ok(value: Any) -> bool:
-    """True when the text exists and every line fits the template limit."""
+    """True when the text is exactly one line within the template limit."""
     text = str(value or "").strip()
     if not text:
         return False
-    return all(
-        len(line.strip()) <= POINT_BRIEF_MAX_CHARS
-        for line in text.splitlines()
-        if line.strip()
+    lines = [line for line in text.splitlines() if line.strip()]
+    return len(lines) <= POINT_BRIEF_MAX_LINES and all(
+        len(line.strip()) <= POINT_BRIEF_MAX_CHARS for line in lines
     )
 
 
@@ -121,7 +120,7 @@ def _build_prompt(chapters: list[dict[str, Any]]) -> str:
     return f"""请把以下每份教案的“教学重点”和“教学难点”改写为固定模板可用的简短版本。
 
 硬性要求：
-1. 重点、难点各输出 1-2 行，每行一个完整要点；
+1. 重点、难点各输出 1 行，概括该课最核心的要点；
 2. 每行不超过 {POINT_BRIEF_MAX_CHARS} 个字符（含标点）；
 3. 忠于原意，保留最核心的要点，不得编造原文没有的内容；
 4. 原文为空或过长时，依据课题概括生成一条最核心的要点；

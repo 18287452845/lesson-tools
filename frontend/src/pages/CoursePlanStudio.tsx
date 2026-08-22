@@ -1564,7 +1564,7 @@ function CoursePlanStudio() {
           }
           extra={
             <Text type="secondary" style={{ fontSize: 12 }}>
-              重点/难点每行超过 25 字或作业超过 15 字时，保存将自动由 AI 精简
+              重点/难点每课 1 行且不超过 25 字、作业不超过 15 字，超限时保存将自动由 AI 精简
             </Text>
           }
         >

@@ -210,8 +210,7 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     assert "…" not in first_week[5].text + first_week[6].text
     assert first_week[7].text == "机房、计算机"
     assert first_week[8].text == (
-        "完成第1项配置验证记录\n分析第1项安全加固方案\n"
-        "完成第2项配置验证记录\n分析第2项安全加固方案"
+        "完成第1项配置验证记录\n分析第1项安全加固方案"
     )
 
     expectations = (
@@ -393,6 +392,7 @@ def test_teaching_plan_homework_is_brief_and_varied(tmp_path: pathlib.Path):
 
     rows = _teaching_week_rows(Document(path))
     homework_cells = [rows[week].cells[8].text for week in range(3)]
+    # 每周作业最多两行，避免行高过大导致每页只能放一周
     assert homework_cells == ["撰写实验报告", "完成课后练习", "上机实操评估"]
     assert all(
         len(line) <= course_plan_renderer.HOMEWORK_MAX_CHARS

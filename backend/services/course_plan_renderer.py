@@ -627,7 +627,7 @@ class CoursePlanRenderer:
             elif str(homework or "").strip():
                 assignment_lines.append(str(homework).strip())
         assignment_lines = [brief_homework_line(line) for line in assignment_lines]
-        assignment_lines = list(dict.fromkeys(assignment_lines)) or [
+        assignment_lines = list(dict.fromkeys(assignment_lines))[:2] or [
             HOMEWORK_EMPTY_FALLBACK
         ]
 
