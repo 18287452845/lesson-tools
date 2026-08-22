@@ -274,7 +274,7 @@ function CoursePlanStudio() {
 
   const [metaForm] = Form.useForm<MetaFormValues>();
   const planTypes = Form.useWatch('plan_types', metaForm) || [];
-  const classNames = Form.useWatch('class_names', metaForm) || [];
+  const classNamesWatch = Form.useWatch('class_names', metaForm);
   // 编辑态 plan_types 字段不在表单内（只读展示），必须依据 detail 判定，
   // 否则实验信息字段不会渲染，保存时会丢失制表日期等必填值。
   const hasExperiment = detail
@@ -372,10 +372,12 @@ function CoursePlanStudio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  // 让每班排课行与所选班级保持同步
+  // 让每班排课行与所选班级保持同步；useWatch 在表单挂载前为 undefined，
+  // 此时跳过，避免把已加载草稿的排课清空。
   useEffect(() => {
+    if (!classNamesWatch) return;
     setSchedules((current) => {
-      const next = classNames
+      const next = classNamesWatch
         .map((name) => name.trim())
         .filter(Boolean)
         .map(
@@ -390,7 +392,7 @@ function CoursePlanStudio() {
         );
       return next;
     });
-  }, [classNames]);
+  }, [classNamesWatch]);
 
   const selectedLessons = useMemo(
     () => selectedIds.map((id) => lessons.find((lesson) => lesson.id === id)),
