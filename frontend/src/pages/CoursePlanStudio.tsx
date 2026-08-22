@@ -43,13 +43,12 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { TableRowSelection } from 'antd/es/table/interface';
-import { classApi, templateApi } from '../services/api';
+import { templateApi } from '../services/api';
 import lessonPlanApi from '../services/lessonPlanApi';
 import coursePlanApi from '../services/coursePlanApi';
 import batchApi from '../services/batchApi';
 import type {
   BatchTask,
-  ClassInfo,
   CoursePlanArtifactType,
   CoursePlanChapter,
   CoursePlanDetail,
@@ -79,6 +78,68 @@ const CLASS_PERIOD_OPTIONS = ['1-2', '3-4', '5-6', '7-8', '9-10'].map((value) =>
   value,
   label: `第${value}节`,
 }));
+// 与批量生成教案页面保持一致的专业/年级/班号选项
+const BATCH_MAJOR_OPTIONS = [
+  '信息安全技术应用',
+  '计算机网络技术',
+  '计算机应用技术',
+  '软件技术',
+  '大数据技术',
+  '云计算技术应用',
+  '人工智能技术应用',
+  '移动应用开发',
+];
+const BATCH_GRADE_OPTIONS = Array.from({ length: 14 }, (_, index) => `${2022 + index}级`);
+const CLASS_NUMBER_OPTIONS = Array.from({ length: 5 }, (_, index) => index + 1);
+
+interface ParsedClassNames {
+  grade: string;
+  majors: string[];
+  numbersByMajor: Record<string, number[]>;
+  custom: string[];
+}
+
+/** 把既有班级名拆回“年级 + 专业 + 班号”；不匹配规则的保留为自定义班级。 */
+function parseClassNames(names: string[], gradeHint: string): ParsedClassNames {
+  const majors: string[] = [];
+  const numbersByMajor: Record<string, number[]> = {};
+  const custom: string[] = [];
+  let grade = gradeHint || '';
+  for (const name of names) {
+    const match = name.match(/^(.+级)(.+?)([1-9]\d?)班$/);
+    if (match) {
+      grade = match[1];
+      const major = match[2];
+      if (!numbersByMajor[major]) {
+        numbersByMajor[major] = [];
+        majors.push(major);
+      }
+      const number = Number(match[3]);
+      if (!numbersByMajor[major].includes(number)) numbersByMajor[major].push(number);
+    } else {
+      custom.push(name);
+    }
+  }
+  return { grade, majors, numbersByMajor, custom };
+}
+
+/** 与后端 build_class_names 相同的组合规则：{年级}{专业}{班号}班 */
+function composeClassNames(
+  grade: string,
+  majors: string[],
+  numbersByMajor: Record<string, number[]>
+): string[] {
+  const names: string[] = [];
+  const cleanGrade = (grade || '').trim();
+  if (!cleanGrade) return names;
+  for (const major of majors.map((m) => m.trim()).filter(Boolean)) {
+    for (const number of numbersByMajor[major] || []) {
+      const name = `${cleanGrade}${major}${number}班`;
+      if (!names.includes(name)) names.push(name);
+    }
+  }
+  return names;
+}
 const PLAN_TYPE_LABELS: Record<CoursePlanArtifactType, string> = {
   teaching_plan: '授课计划',
   experiment_plan: '实验计划',
@@ -169,7 +230,7 @@ interface MetaFormValues {
   plan_types?: CoursePlanArtifactType[];
   course_name: string;
   grade: string;
-  class_names: string[];
+  majors?: string[];
   academic_year: string;
   semester: 1 | 2;
   teacher_name: string;
@@ -182,11 +243,11 @@ interface MetaFormValues {
   class_periods?: string;
 }
 
-function buildMetaPayload(values: MetaFormValues) {
+function buildMetaPayload(values: MetaFormValues, classNames: string[]) {
   return {
     course_name: values.course_name.trim(),
     grade: values.grade.trim(),
-    class_names: values.class_names.map((name) => name.trim()).filter(Boolean),
+    class_names: classNames,
     academic_year: values.academic_year.trim(),
     semester: values.semester,
     teacher_name: values.teacher_name.trim(),
@@ -308,11 +369,11 @@ function CoursePlanStudio() {
   const [pickingBatchId, setPickingBatchId] = useState<string | null>(null);
   const [batchLessons, setBatchLessons] = useState<LessonPlan[]>([]);
 
-  const [classOptions, setClassOptions] = useState<ClassInfo[]>([]);
   const [validations, setValidations] = useState<FixedTemplateValidation[]>([]);
 
   const [schedules, setSchedules] = useState<ScheduleState[]>([]);
   const [metaFormKey, setMetaFormKey] = useState(0);
+  const [customClassNames, setCustomClassNames] = useState<string[]>([]);
 
   const [detail, setDetail] = useState<CoursePlanDetail | null>(null);
   const [chapters, setChapters] = useState<CoursePlanChapter[]>([]);
@@ -322,7 +383,24 @@ function CoursePlanStudio() {
 
   const [metaForm] = Form.useForm<MetaFormValues>();
   const planTypes = Form.useWatch('plan_types', metaForm) || [];
-  const classNamesWatch = Form.useWatch('class_names', metaForm);
+  const watchedMajors = Form.useWatch('majors', metaForm);
+  const watchedGrade = Form.useWatch('grade', metaForm);
+  const watchedNumbersByMajor = (Form.useWatch(
+    'class_numbers_by_major',
+    metaForm
+  ) || {}) as Record<string, number[]>;
+  const formMounted = watchedMajors !== undefined || watchedGrade !== undefined;
+  const derivedClassNames = useMemo(() => {
+    const names = composeClassNames(
+      watchedGrade || '',
+      watchedMajors || [],
+      watchedNumbersByMajor
+    );
+    for (const name of customClassNames) {
+      if (!names.includes(name)) names.push(name);
+    }
+    return names;
+  }, [watchedGrade, watchedMajors, watchedNumbersByMajor, customClassNames]);
   // 编辑态 plan_types 字段不在表单内（只读展示），必须依据 detail 判定，
   // 否则实验信息字段不会渲染，保存时会丢失制表日期等必填值。
   const hasExperiment = detail
@@ -411,9 +489,19 @@ function CoursePlanStudio() {
       }
       setSelectedIds(ordered.map((lesson) => lesson.id));
       setBatchLessons(ordered);
+      const taskClassNames = (task.class_names || '')
+        .split(/[,，]/)
+        .map((name) => name.trim())
+        .filter(Boolean);
+      const parsedClasses = parseClassNames(taskClassNames, task.grade);
+      setCustomClassNames(parsedClasses.custom);
       metaForm.setFieldsValue({
         course_name: task.course_name,
-        grade: task.grade,
+        grade: parsedClasses.grade || task.grade,
+        majors: parsedClasses.majors,
+        ...(parsedClasses.majors.length
+          ? { class_numbers_by_major: parsedClasses.numbersByMajor }
+          : {}),
         hours_per_lesson: task.hours_per_lesson || 2,
         total_hours: task.total_hours,
         ...(task.teacher_name ? { teacher_name: task.teacher_name } : {}),
@@ -445,10 +533,15 @@ function CoursePlanStudio() {
             : []
         );
         setMetaFormKey((key) => key + 1);
+        const parsedClasses = parseClassNames(loaded.class_names, loaded.grade);
+        setCustomClassNames(parsedClasses.custom);
         metaForm.setFieldsValue({
           course_name: loaded.course_name,
-          grade: loaded.grade,
-          class_names: loaded.class_names,
+          grade: parsedClasses.grade || loaded.grade,
+          majors: parsedClasses.majors,
+          ...(parsedClasses.majors.length
+            ? { class_numbers_by_major: parsedClasses.numbersByMajor }
+            : {}),
           academic_year: loaded.academic_year,
           semester: loaded.semester as 1 | 2,
           teacher_name: loaded.teacher_name,
@@ -474,10 +567,6 @@ function CoursePlanStudio() {
     refreshDrafts();
     loadLessons(1, '');
     loadBatchTasks();
-    classApi
-      .listClasses({ limit: 100 })
-      .then((response) => setClassOptions(response.classes))
-      .catch(() => undefined);
     templateApi
       .validateAllTemplates()
       .then((response) => setValidations(response || []))
@@ -493,27 +582,24 @@ function CoursePlanStudio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  // 让每班排课行与所选班级保持同步；useWatch 在表单挂载前为 undefined，
-  // 此时跳过，避免把已加载草稿的排课清空。
+  // 让每班排课行与所选班级保持同步；表单未挂载时跳过，
+  // 避免把已加载草稿的排课清空。
   useEffect(() => {
-    if (!classNamesWatch) return;
+    if (!formMounted) return;
     setSchedules((current) => {
-      const next = classNamesWatch
-        .map((name) => name.trim())
-        .filter(Boolean)
-        .map(
-          (name) =>
-            current.find((row) => row.class_name === name) || {
-              class_name: name,
-              weekday: 1 as ScheduleState['weekday'],
-              class_periods: '',
-              first_class_date: '',
-              classroom: '',
-            }
-        );
+      const next = derivedClassNames.map(
+        (name) =>
+          current.find((row) => row.class_name === name) || {
+            class_name: name,
+            weekday: 1 as ScheduleState['weekday'],
+            class_periods: '',
+            first_class_date: '',
+            classroom: '',
+          }
+      );
       return next;
     });
-  }, [classNamesWatch]);
+  }, [derivedClassNames, formMounted]);
 
   const selectedLessons = useMemo(
     () =>
@@ -623,6 +709,10 @@ function CoursePlanStudio() {
 
   const handleCreate = async () => {
     const values = await metaForm.validateFields();
+    if (derivedClassNames.length === 0) {
+      messageApi.error('请选择专业与班级，生成实际的授课班级');
+      return;
+    }
     const scheduleRows = hasExperiment ? schedules : [];
     if (hasExperiment) {
       const scheduleError = validateSchedules(scheduleRows);
@@ -636,7 +726,7 @@ function CoursePlanStudio() {
       const request: CoursePlanCreateRequest = {
         lesson_plan_ids: selectedIds,
         plan_types: values.plan_types || [],
-        ...buildMetaPayload(values),
+        ...buildMetaPayload(values, derivedClassNames),
         total_hours: values.total_hours || undefined,
         class_schedules: scheduleRows,
       };
@@ -644,10 +734,18 @@ function CoursePlanStudio() {
       setDetail(created);
       setChapters(created.chapters.map((chapter) => ({ ...chapter })));
       // 回填规范化值，保证第 3 步表单重挂载后（含实验信息字段）取值完整
+      const createdClasses = parseClassNames(
+        created.class_names,
+        created.grade
+      );
+      setCustomClassNames(createdClasses.custom);
       metaForm.setFieldsValue({
         course_name: created.course_name,
-        grade: created.grade,
-        class_names: created.class_names,
+        grade: createdClasses.grade || created.grade,
+        majors: createdClasses.majors,
+        ...(createdClasses.majors.length
+          ? { class_numbers_by_major: createdClasses.numbersByMajor }
+          : {}),
         academic_year: created.academic_year,
         semester: created.semester as 1 | 2,
         teacher_name: created.teacher_name,
@@ -679,7 +777,7 @@ function CoursePlanStudio() {
     values: MetaFormValues,
     planTypesValue: CoursePlanArtifactType[]
   ): CoursePlanUpdateRequest => ({
-    ...buildMetaPayload(values),
+    ...buildMetaPayload(values, derivedClassNames),
     total_hours: values.total_hours || chapters.length * values.hours_per_lesson,
     chapters,
     class_schedules: planTypesValue.includes('experiment_plan') ? schedules : [],
@@ -688,6 +786,10 @@ function CoursePlanStudio() {
   const handleSave = async () => {
     if (!detail) return;
     const values = await metaForm.validateFields();
+    if (derivedClassNames.length === 0) {
+      messageApi.error('请选择专业与班级，生成实际的授课班级');
+      return;
+    }
     const planTypesValue = detail.plan_types;
     if (planTypesValue.includes('experiment_plan')) {
       const scheduleError = validateSchedules(schedules);
@@ -730,6 +832,10 @@ function CoursePlanStudio() {
   const handleExport = async () => {
     if (!detail) return;
     const values = await metaForm.validateFields();
+    if (derivedClassNames.length === 0) {
+      messageApi.error('请选择专业与班级，生成实际的授课班级');
+      return;
+    }
     if (detail.plan_types.includes('experiment_plan')) {
       for (let index = 0; index < teachingGroups.length; index += 1) {
         const names = teachingGroups[index]
@@ -1193,20 +1299,30 @@ function CoursePlanStudio() {
         <Form.Item
           name="grade"
           label="年级"
-          rules={[{ required: true, message: '请输入年级' }]}
+          rules={[{ required: true, message: '请选择年级' }]}
         >
-          <Input placeholder="如 2024级" />
+          <Select
+            placeholder="选择年级"
+            options={BATCH_GRADE_OPTIONS.map((g) => ({ label: g, value: g }))}
+            showSearch
+          />
         </Form.Item>
         <Form.Item
-          name="class_names"
-          label="授课班级"
-          rules={[{ required: true, message: '请选择或输入至少一个班级' }]}
+          name="majors"
+          label="专业"
+          rules={[{ required: true, message: '请选择至少一个专业' }]}
         >
           <Select
             mode="tags"
-            placeholder="选择班级，也可直接输入名称"
+            placeholder="选择或输入专业（可多选）"
+            options={BATCH_MAJOR_OPTIONS.map((major) => ({
+              label: major,
+              value: major,
+            }))}
+            showSearch
             allowClear
-            options={classOptions.map((item) => ({ value: item.name, label: item.name }))}
+            tokenSeparators={[',', '，']}
+            maxTagCount="responsive"
           />
         </Form.Item>
         <Form.Item
@@ -1267,6 +1383,56 @@ function CoursePlanStudio() {
           <Input placeholder="如 机房、实验楼101" />
         </Form.Item>
       </div>
+      {(watchedMajors || []).length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0 16px' }}>
+          {(watchedMajors || [])
+            .map((major) => String(major).trim())
+            .filter(Boolean)
+            .map((major) => (
+              <Form.Item
+                key={major}
+                name={['class_numbers_by_major', major]}
+                label={`${major}班级`}
+                tooltip="每个专业独立选择实际开设的班级"
+                rules={[{ required: true, message: `请选择${major}的班级` }]}
+              >
+                <Select
+                  mode="multiple"
+                  placeholder={`选择${major}的 1-5 班`}
+                  options={CLASS_NUMBER_OPTIONS.map((number) => ({
+                    label: `${number}班`,
+                    value: number,
+                  }))}
+                  allowClear
+                  maxTagCount="responsive"
+                />
+              </Form.Item>
+            ))}
+        </div>
+      )}
+      {customClassNames.length > 0 && (
+        <Form.Item label="其他班级（不匹配“年级+专业+班号”的班级名）">
+          <Select
+            mode="tags"
+            value={customClassNames}
+            onChange={setCustomClassNames}
+            placeholder="输入班级名后回车"
+            allowClear
+            tokenSeparators={[',', '，']}
+          />
+        </Form.Item>
+      )}
+      <Form.Item label="授课班级预览" style={{ marginBottom: 12 }}>
+        {derivedClassNames.length > 0 ? (
+          <Space size={4} wrap>
+            {derivedClassNames.map((name) => (
+              <Tag key={name}>{name}</Tag>
+            ))}
+          </Space>
+        ) : (
+          <Text type="secondary">选择专业与班级后自动生成，如“2025级信息安全技术应用1班”</Text>
+        )}
+      </Form.Item>
       {hasExperiment && (
         <Card size="small" title="实验计划信息" style={{ marginTop: 8 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0 16px' }}>
