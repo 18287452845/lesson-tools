@@ -19,6 +19,7 @@ import {
   List,
   message,
   Popconfirm,
+  Segmented,
   Select,
   Space,
   Steps,
@@ -28,6 +29,7 @@ import {
   Typography,
 } from 'antd';
 import {
+  AppstoreAddOutlined,
   ArrowLeftOutlined,
   ArrowUpOutlined,
   ArrowDownOutlined,
@@ -43,7 +45,9 @@ import type { TableRowSelection } from 'antd/es/table/interface';
 import { classApi, templateApi } from '../services/api';
 import lessonPlanApi from '../services/lessonPlanApi';
 import coursePlanApi from '../services/coursePlanApi';
+import batchApi from '../services/batchApi';
 import type {
+  BatchTask,
   ClassInfo,
   CoursePlanArtifactType,
   CoursePlanChapter,
@@ -260,6 +264,12 @@ function CoursePlanStudio() {
   const [lessonPage, setLessonPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
+  const [selectMode, setSelectMode] = useState<'batch' | 'manual'>('batch');
+  const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
+  const [batchTasksLoading, setBatchTasksLoading] = useState(false);
+  const [pickingBatchId, setPickingBatchId] = useState<string | null>(null);
+  const [batchLessons, setBatchLessons] = useState<LessonPlan[]>([]);
+
   const [classOptions, setClassOptions] = useState<ClassInfo[]>([]);
   const [validations, setValidations] = useState<FixedTemplateValidation[]>([]);
 
@@ -313,6 +323,78 @@ function CoursePlanStudio() {
     [messageApi]
   );
 
+  const loadBatchTasks = useCallback(async () => {
+    setBatchTasksLoading(true);
+    try {
+      const response = await batchApi.listBatchTasks({ limit: 100 });
+      setBatchTasks(response.tasks || []);
+    } catch (error) {
+      messageApi.error(`备课批次加载失败：${(error as Error).message}`);
+    } finally {
+      setBatchTasksLoading(false);
+    }
+  }, [messageApi]);
+
+  const handlePickBatch = async (task: BatchTask) => {
+    setPickingBatchId(task.id);
+    try {
+      const ordered: LessonPlan[] = [];
+      let page = 1;
+      let total = Infinity;
+      while (ordered.length < total && page <= 5) {
+        const response = await batchApi.getTaskLessonPlans(task.id, {
+          page,
+          limit: 100,
+        });
+        total = response.total;
+        ordered.push(...response.lesson_plans);
+        page += 1;
+        if (response.lesson_plans.length === 0) break;
+      }
+      const missing = ordered.filter((lesson) => !lesson.generated_content);
+      if (missing.length > 0) {
+        messageApi.warning(
+          `批次《${task.course_name}》中第 ${missing
+            .map((lesson) => lesson.lesson_number)
+            .filter((value) => value)
+            .join('、')} 份教案还没有生成内容，请先生成或改用手动勾选`
+        );
+        return;
+      }
+      if (ordered.length === 0) {
+        messageApi.warning(`批次《${task.course_name}》还没有教案`);
+        return;
+      }
+      if (ordered.length > MAX_LESSONS) {
+        messageApi.warning(
+          `批次包含 ${ordered.length} 份教案，超过固定模板上限 ${MAX_LESSONS} 份（18 周），请改用手动勾选`
+        );
+        return;
+      }
+      setSelectedIds(ordered.map((lesson) => lesson.id));
+      setBatchLessons(ordered);
+      metaForm.setFieldsValue({
+        course_name: task.course_name,
+        grade: task.grade,
+        hours_per_lesson: task.hours_per_lesson || 2,
+        total_hours: task.total_hours,
+        ...(task.teacher_name ? { teacher_name: task.teacher_name } : {}),
+        ...(task.academic_year ? { academic_year: task.academic_year } : {}),
+        ...(task.semester ? { semester: task.semester as 1 | 2 } : {}),
+        ...(task.location ? { location: task.location } : {}),
+      });
+      messageApi.success(
+        `已带入批次《${task.course_name}》全部 ${ordered.length} 份教案（${Math.ceil(
+          ordered.length / 2
+        )} 周），可在下方调整顺序或删减`
+      );
+    } catch (error) {
+      messageApi.error(`批次教案加载失败：${(error as Error).message}`);
+    } finally {
+      setPickingBatchId(null);
+    }
+  };
+
   const openDraft = useCallback(
     async (coursePlanId: string) => {
       try {
@@ -353,6 +435,7 @@ function CoursePlanStudio() {
   useEffect(() => {
     refreshDrafts();
     loadLessons(1, '');
+    loadBatchTasks();
     classApi
       .listClasses({ limit: 100 })
       .then((response) => setClassOptions(response.classes))
@@ -395,8 +478,13 @@ function CoursePlanStudio() {
   }, [classNamesWatch]);
 
   const selectedLessons = useMemo(
-    () => selectedIds.map((id) => lessons.find((lesson) => lesson.id === id)),
-    [selectedIds, lessons]
+    () =>
+      selectedIds.map(
+        (id) =>
+          lessons.find((lesson) => lesson.id === id) ||
+          batchLessons.find((lesson) => lesson.id === id)
+      ),
+    [selectedIds, lessons, batchLessons]
   );
 
   const teachingGroups = useMemo(() => {
@@ -474,6 +562,9 @@ function CoursePlanStudio() {
     setDetail(null);
     setChapters([]);
     setSelectedIds([]);
+    setBatchLessons([]);
+    setSelectMode('batch');
+    loadBatchTasks();
     setSearchParams({}, { replace: true });
   };
 
@@ -796,54 +887,149 @@ function CoursePlanStudio() {
     }),
   };
 
+  const batchStatusMap: Record<string, { color: string; label: string }> = {
+    completed: { color: 'green', label: '已完成' },
+    processing: { color: 'blue', label: '生成中' },
+    pending: { color: 'default', label: '等待中' },
+    failed: { color: 'red', label: '失败' },
+    cancelled: { color: 'default', label: '已取消' },
+  };
+
+  const batchColumns: ColumnsType<BatchTask> = [
+    {
+      title: '备课批次',
+      dataIndex: 'course_name',
+      render: (_, record) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{record.course_name}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {record.subject} · {record.grade} · 每份 {record.hours_per_lesson} 课时 · 共{' '}
+            {record.total_hours} 课时
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: '教案进度',
+      key: 'progress',
+      width: 200,
+      render: (_, record) => {
+        const item = batchStatusMap[record.status] || {
+          color: 'default',
+          label: record.status,
+        };
+        return (
+          <Space size={6}>
+            <Tag color={item.color}>{item.label}</Tag>
+            <Text type="secondary">
+              {record.completed_count}/{record.total_count} 份
+            </Text>
+          </Space>
+        );
+      },
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      width: 170,
+      render: (value: string) => <Text type="secondary">{value?.slice(0, 19)}</Text>,
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 150,
+      render: (_, record) => (
+        <Button
+          type="link"
+          size="small"
+          icon={<AppstoreAddOutlined />}
+          loading={pickingBatchId === record.id}
+          onClick={() => handlePickBatch(record)}
+        >
+          带入整批教案
+        </Button>
+      ),
+    },
+  ];
+
   const renderSelectLessons = () => (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Alert
         type="info"
         showIcon
-        message="按上课顺序勾选教案：每 2 份教案组成 1 周（授课计划 1 行、实验计划 1 条），固定模板最多 18 周 / 36 份教案。"
+        message="按备课批次一次带入整批教案（如 16 周 / 18 周课程），系统按课序自动配对：每 2 份教案 = 1 周，最多 18 周 / 36 份。"
       />
-      <Space wrap>
-        <Input.Search
-          placeholder="搜索课题 / 标题"
-          style={{ width: 260 }}
-          allowClear
-          onSearch={(value) => {
-            setLessonSearch(value);
-            setLessonPage(1);
-            loadLessons(1, value);
+      <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
+        <Segmented
+          value={selectMode}
+          onChange={(value) => setSelectMode(value as 'batch' | 'manual')}
+          options={[
+            { label: '按备课批次选择', value: 'batch' },
+            { label: '手动勾选教案', value: 'manual' },
+          ]}
+        />
+        <Space size={6}>
+          {['teaching_plan', 'experiment_plan'].map((type) => {
+            const report = templateReport(type as CoursePlanArtifactType);
+            return (
+              <Tag key={type} color={report?.is_valid ? 'green' : 'red'}>
+                {PLAN_TYPE_LABELS[type as CoursePlanArtifactType]}模板 ·{' '}
+                {report?.is_valid ? '校验通过' : '校验失败'}
+              </Tag>
+            );
+          })}
+        </Space>
+      </Space>
+      {selectMode === 'batch' ? (
+        <Table
+          rowKey="id"
+          size="middle"
+          columns={batchColumns}
+          dataSource={batchTasks}
+          loading={batchTasksLoading}
+          pagination={{ pageSize: 8, showSizeChanger: false }}
+          locale={{
+            emptyText: (
+              <Empty description="还没有备课批次，可先在「学期批量备课」生成整批教案" />
+            ),
           }}
         />
-        {['teaching_plan', 'experiment_plan'].map((type) => {
-          const report = templateReport(type as CoursePlanArtifactType);
-          return (
-            <Tag key={type} color={report?.is_valid ? 'green' : 'red'}>
-              {PLAN_TYPE_LABELS[type as CoursePlanArtifactType]}模板 ·{' '}
-              {report?.is_valid ? '校验通过' : '校验失败'}
-            </Tag>
-          );
-        })}
-      </Space>
-      <Table
-        rowKey="id"
-        columns={lessonColumns}
-        dataSource={lessons}
-        loading={lessonsLoading}
-        rowSelection={rowSelection}
-        pagination={{
-          current: lessonPage,
-          pageSize: 20,
-          total: lessonsTotal,
-          showSizeChanger: false,
-          onChange: (page) => {
-            setLessonPage(page);
-            loadLessons(page, lessonSearch);
-          },
-        }}
-      />
+      ) : (
+        <>
+          <Input.Search
+            placeholder="搜索课题 / 标题"
+            style={{ width: 260 }}
+            allowClear
+            onSearch={(value) => {
+              setLessonSearch(value);
+              setLessonPage(1);
+              loadLessons(1, value);
+            }}
+          />
+          <Table
+            rowKey="id"
+            columns={lessonColumns}
+            dataSource={lessons}
+            loading={lessonsLoading}
+            rowSelection={rowSelection}
+            pagination={{
+              current: lessonPage,
+              pageSize: 20,
+              total: lessonsTotal,
+              showSizeChanger: false,
+              onChange: (page) => {
+                setLessonPage(page);
+                loadLessons(page, lessonSearch);
+              },
+            }}
+          />
+        </>
+      )}
       <Card
         size="small"
-        title={`已选教案（${selectedIds.length}/${MAX_LESSONS}），顺序即周次配对顺序`}
+        title={`已选教案（${selectedIds.length}/${MAX_LESSONS} 份，约 ${Math.ceil(
+          selectedIds.length / 2
+        )} 周），顺序即周次配对顺序`}
       >
         {selectedIds.length === 0 ? (
           <Text type="secondary">尚未选择教案</Text>
