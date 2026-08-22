@@ -1522,3 +1522,171 @@ class CompetitionReportContent(BaseModel):
 
     # 四、教学反思与改进
     reflection: CompetitionReportReflection = Field(default_factory=CompetitionReportReflection)
+
+
+# ============================================================================
+# Standalone Course Plan Models (teaching/experiment plans from lesson plans)
+# ============================================================================
+
+COURSE_PLAN_TYPES = ("teaching_plan", "experiment_plan")
+COURSE_PLAN_MAX_GROUPS = 18
+COURSE_PLAN_MAX_LESSONS = COURSE_PLAN_MAX_GROUPS * 2
+
+
+class CoursePlanChapter(BaseModel):
+    """One lesson-derived editable row of a standalone semester plan."""
+    lesson_number: int = Field(..., ge=1, description="课序（按周配对顺序）")
+    topic: str = Field(default="", description="课题")
+    key_points: str = Field(default="", description="教学重点")
+    difficult_points: str = Field(default="", description="教学难点")
+    homework: Optional[Any] = Field(default=None, description="作业（必做/选做）")
+    experiment_name: str = Field(default="", description="实验项目名称（两课一组）")
+
+    @field_validator("topic", "key_points", "difficult_points", "experiment_name", mode="before")
+    @classmethod
+    def clean_text(cls, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (list, tuple)):
+            return "；".join(str(item).strip() for item in value if str(item).strip())
+        return str(value).strip()
+
+
+class CoursePlanCreateRequest(BaseModel):
+    """Request to build a standalone semester-plan draft from generated lesson plans."""
+    lesson_plan_ids: List[str] = Field(
+        ...,
+        min_length=1,
+        max_length=COURSE_PLAN_MAX_LESSONS,
+        description="已生成教案的ID列表（按上课顺序）",
+    )
+    plan_types: List[Literal["teaching_plan", "experiment_plan"]] = Field(
+        ...,
+        min_length=1,
+        description="要制作的学期计划类型",
+    )
+    course_name: str = Field(..., min_length=1, max_length=150)
+    grade: str = Field(..., min_length=1, max_length=50)
+    class_names: List[str] = Field(..., min_length=1, description="授课班级名称列表")
+    academic_year: str = Field(..., pattern=r"^\d{4}-\d{4}$", description="学年，如 2025-2026")
+    semester: Literal[1, 2]
+    teacher_name: str = Field(..., min_length=1, max_length=50)
+    hours_per_lesson: int = Field(default=2, ge=1, le=8, description="每份教案课时")
+    start_week: int = Field(default=1, ge=1, le=40, description="起始周次")
+    total_hours: Optional[int] = Field(
+        None,
+        ge=1,
+        description="总课时（默认按教案数×每份课时计算）",
+    )
+    location: Optional[str] = Field(None, max_length=100, description="默认授课/实验地点")
+    plan_date: Optional[str] = Field(None, description="制表日期，YYYY-MM-DD")
+    first_class_date: Optional[str] = Field(None, description="首课日期，YYYY-MM-DD")
+    class_periods: Optional[str] = Field(None, max_length=30, description="默认上课节次，如 3-4")
+    class_schedules: List[ExperimentClassSchedule] = Field(
+        default_factory=list,
+        description="各班独立的每周实验课安排",
+    )
+
+    @field_validator("lesson_plan_ids")
+    @classmethod
+    def unique_lesson_plan_ids(cls, value: List[str]) -> List[str]:
+        cleaned = list(dict.fromkeys(item.strip() for item in value if item.strip()))
+        if not cleaned:
+            raise ValueError("请至少选择一份教案")
+        if len(cleaned) != len(value):
+            raise ValueError("教案不能重复选择")
+        return cleaned
+
+    @field_validator("plan_types")
+    @classmethod
+    def unique_plan_types(
+        cls, value: List[Literal["teaching_plan", "experiment_plan"]]
+    ) -> List[Literal["teaching_plan", "experiment_plan"]]:
+        return list(dict.fromkeys(value))
+
+    @field_validator("class_names")
+    @classmethod
+    def clean_class_names(cls, value: List[str]) -> List[str]:
+        cleaned = list(dict.fromkeys(item.strip() for item in value if item.strip()))
+        if not cleaned:
+            raise ValueError("请至少选择一个班级")
+        return cleaned
+
+
+class CoursePlanUpdateRequest(BaseModel):
+    """Request to save edited metadata and lesson rows of a semester plan."""
+    course_name: str = Field(..., min_length=1, max_length=150)
+    grade: str = Field(..., min_length=1, max_length=50)
+    class_names: List[str] = Field(..., min_length=1)
+    academic_year: str = Field(..., pattern=r"^\d{4}-\d{4}$")
+    semester: Literal[1, 2]
+    teacher_name: str = Field(..., min_length=1, max_length=50)
+    hours_per_lesson: int = Field(default=2, ge=1, le=8)
+    start_week: int = Field(default=1, ge=1, le=40)
+    total_hours: int = Field(..., ge=1)
+    location: Optional[str] = Field(None, max_length=100)
+    plan_date: Optional[str] = None
+    first_class_date: Optional[str] = None
+    class_periods: Optional[str] = Field(None, max_length=30)
+    class_schedules: List[ExperimentClassSchedule] = Field(default_factory=list)
+    chapters: List[CoursePlanChapter] = Field(..., min_length=1)
+
+    @field_validator("class_names")
+    @classmethod
+    def clean_class_names(cls, value: List[str]) -> List[str]:
+        cleaned = list(dict.fromkeys(item.strip() for item in value if item.strip()))
+        if not cleaned:
+            raise ValueError("请至少选择一个班级")
+        return cleaned
+
+    @field_validator("chapters")
+    @classmethod
+    def order_chapters(cls, value: List[CoursePlanChapter]) -> List[CoursePlanChapter]:
+        if len(value) > COURSE_PLAN_MAX_LESSONS:
+            raise ValueError(f"学期计划最多容纳 {COURSE_PLAN_MAX_LESSONS} 份教案")
+        return value
+
+
+class CoursePlanDetail(BaseModel):
+    """Full editable state of a standalone semester plan."""
+    id: str
+    course_name: str
+    grade: str
+    class_names: List[str]
+    academic_year: str
+    semester: int
+    teacher_name: str
+    hours_per_lesson: int
+    start_week: int
+    total_hours: int
+    location: str
+    plan_date: str
+    first_class_date: str
+    class_periods: str
+    class_schedules: List[ExperimentClassSchedule]
+    plan_types: List[Literal["teaching_plan", "experiment_plan"]]
+    chapters: List[CoursePlanChapter]
+    source_lesson_plan_ids: List[str]
+    status: str
+    output_files: List[str]
+    created_at: str
+    updated_at: str
+
+
+class CoursePlanListItem(BaseModel):
+    """Summary row for the semester-plan draft list."""
+    id: str
+    course_name: str
+    grade: str
+    teacher_name: str
+    class_names: List[str]
+    plan_types: List[Literal["teaching_plan", "experiment_plan"]]
+    status: str
+    created_at: str
+    updated_at: str
+
+
+class CoursePlanListResponse(BaseModel):
+    """Response for listing standalone semester plans."""
+    course_plans: List[CoursePlanListItem]
+    total: int

@@ -22,6 +22,7 @@ import CompetitionNew from './pages/Competition/CompetitionNew';
 import CompetitionDetail from './pages/Competition/CompetitionDetail';
 import ResourceLibrary from './pages/ResourceLibrary';
 import CourseArchives from './pages/CourseArchives';
+import CoursePlanStudio from './pages/CoursePlanStudio';
 import AIAnalyticsDashboard from './pages/AIAnalyticsDashboard';
 
 const { Content } = Layout;
@@ -53,6 +54,7 @@ function App() {
           <Route path="/competition/:projectId" element={<CompetitionDetail />} />
           <Route path="/resources" element={<ResourceLibrary />} />
           <Route path="/course-archives" element={<CourseArchives />} />
+          <Route path="/course-plans" element={<CoursePlanStudio />} />
           <Route path="/analytics" element={<AIAnalyticsDashboard />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -4,6 +4,7 @@ import {
   AppstoreAddOutlined,
   ApartmentOutlined,
   BookOutlined,
+  CalendarOutlined,
   CloudDownloadOutlined,
   FilePptOutlined,
   FileTextOutlined,
@@ -54,6 +55,7 @@ const preparationCards: Array<{
 ];
 
 const supportingTools = [
+  { title: '学期计划制作', icon: <CalendarOutlined />, route: '/course-plans' },
   { title: '教学资源库', icon: <ReadOutlined />, route: '/resources' },
   { title: '课程学期档案', icon: <FolderOpenOutlined />, route: '/course-archives' },
   { title: 'AI 成本与质量', icon: <DashboardOutlined />, route: '/analytics' },

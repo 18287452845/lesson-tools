@@ -159,6 +159,34 @@ class Database:
             )
         """)
 
+        # Standalone semester plans (teaching/experiment) derived from lesson plans
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS course_plans (
+                id TEXT PRIMARY KEY,
+                course_name TEXT NOT NULL,
+                grade TEXT NOT NULL DEFAULT '',
+                class_names TEXT NOT NULL DEFAULT '',
+                academic_year TEXT NOT NULL DEFAULT '',
+                semester INTEGER NOT NULL DEFAULT 0,
+                teacher_name TEXT NOT NULL DEFAULT '',
+                hours_per_lesson INTEGER NOT NULL DEFAULT 2,
+                start_week INTEGER NOT NULL DEFAULT 1,
+                total_hours INTEGER NOT NULL DEFAULT 0,
+                location TEXT NOT NULL DEFAULT '',
+                plan_date TEXT NOT NULL DEFAULT '',
+                first_class_date TEXT NOT NULL DEFAULT '',
+                class_periods TEXT NOT NULL DEFAULT '',
+                class_schedules TEXT NOT NULL DEFAULT '[]',
+                plan_types TEXT NOT NULL DEFAULT '[]',
+                chapters TEXT NOT NULL DEFAULT '[]',
+                source_lesson_plan_ids TEXT NOT NULL DEFAULT '[]',
+                status TEXT DEFAULT 'draft',
+                output_files TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Add batch-related columns to lesson_plans if they don't exist
         await self._add_column_if_not_exists(
             db, "lesson_plans", "batch_task_id", "TEXT"

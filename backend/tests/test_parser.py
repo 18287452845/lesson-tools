@@ -138,6 +138,7 @@ class TestDatabase:
             "course_archive_resources",
             "ai_usage_metrics",
             "content_quality_metrics",
+            "course_plans",  # Added
         }
 
         assert tables == expected_tables

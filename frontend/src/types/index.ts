@@ -1077,3 +1077,82 @@ export interface CompetitionOutputListResponse {
   outputs: CompetitionOutput[];
   total: number;
 }
+
+// ============================================================================
+// Standalone Course Plan Types (teaching/experiment plans from lesson plans)
+// ============================================================================
+
+export interface CoursePlanChapter {
+  lesson_number: number;
+  topic: string;
+  key_points: string;
+  difficult_points: string;
+  homework: string | { required?: string; optional?: string } | null;
+  experiment_name: string;
+}
+
+export interface CoursePlanCreateRequest {
+  lesson_plan_ids: string[];
+  plan_types: CoursePlanArtifactType[];
+  course_name: string;
+  grade: string;
+  class_names: string[];
+  academic_year: string;
+  semester: 1 | 2;
+  teacher_name: string;
+  hours_per_lesson?: number;
+  start_week?: number;
+  total_hours?: number;
+  location?: string;
+  plan_date?: string;
+  first_class_date?: string;
+  class_periods?: string;
+  class_schedules?: ExperimentClassSchedule[];
+}
+
+export interface CoursePlanUpdateRequest extends Omit<CoursePlanCreateRequest, 'lesson_plan_ids' | 'plan_types'> {
+  total_hours: number;
+  chapters: CoursePlanChapter[];
+}
+
+export interface CoursePlanDetail {
+  id: string;
+  course_name: string;
+  grade: string;
+  class_names: string[];
+  academic_year: string;
+  semester: number;
+  teacher_name: string;
+  hours_per_lesson: number;
+  start_week: number;
+  total_hours: number;
+  location: string;
+  plan_date: string;
+  first_class_date: string;
+  class_periods: string;
+  class_schedules: ExperimentClassSchedule[];
+  plan_types: CoursePlanArtifactType[];
+  chapters: CoursePlanChapter[];
+  source_lesson_plan_ids: string[];
+  status: string;
+  output_files: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CoursePlanListItem {
+  id: string;
+  course_name: string;
+  grade: string;
+  teacher_name: string;
+  class_names: string[];
+  plan_types: CoursePlanArtifactType[];
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CoursePlanListResponse {
+  course_plans: CoursePlanListItem[];
+  total: number;
+}
