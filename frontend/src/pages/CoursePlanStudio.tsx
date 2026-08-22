@@ -1406,6 +1406,11 @@ function CoursePlanStudio() {
               教案内容编辑
             </Space>
           }
+          extra={
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              重点/难点每行超过 25 字或作业超过 15 字时，保存将自动由 AI 精简
+            </Text>
+          }
         >
           <Table
             size="small"

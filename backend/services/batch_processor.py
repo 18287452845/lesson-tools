@@ -35,6 +35,7 @@ from .course_plan_renderer import CoursePlanRenderer
 from .batch_context import format_class_names
 from .experiment_names import ensure_experiment_names
 from .lesson_content import merge_lesson_content
+from .point_briefs import ensure_brief_points
 from .teaching_resource_service import get_resource_context
 from .ai_metrics import record_quality
 
@@ -482,6 +483,14 @@ class BatchTaskProcessor:
             }
             for chapter in chapters
         ]
+        if "teaching_plan" in selected:
+            # 授课计划表重难点每行限 25 字，超限或缺失时由 AI 重新总结。
+            chapters, _ = await ensure_brief_points(
+                chapters,
+                provider=self.provider,
+                api_key=self.api_key,
+                model=self.model,
+            )
         common = {
             "batch_task_id": batch_task_id,
             "course_name": task["course_name"],

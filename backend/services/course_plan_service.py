@@ -33,6 +33,7 @@ from .course_plan_renderer import (
 )
 from .experiment_names import ensure_experiment_names, validate_experiment_chapters
 from .lesson_content import merge_lesson_content
+from .point_briefs import ensure_brief_points
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,15 @@ class CoursePlanService:
     async def create_draft(self, request: CoursePlanCreateRequest) -> CoursePlanDetail:
         chapters = await self._build_chapters(request.lesson_plan_ids)
         self._check_capacity(chapters)
+
+        provider, api_key, model = await get_user_ai_config()
+        # 超过每行 25 字或缺失的重难点由 AI 重新总结，禁止硬截断或留空。
+        chapters, _ = await ensure_brief_points(
+            chapters,
+            provider=provider,
+            api_key=api_key,
+            model=model,
+        )
 
         if "experiment_plan" in request.plan_types:
             self._check_experiment_metadata(
@@ -272,6 +282,14 @@ class CoursePlanService:
 
         chapters = [chapter.model_dump() for chapter in request.chapters]
         self._check_capacity(chapters)
+        # 用户编辑后的重难点若超行宽或为空，同样由 AI 重新总结后再入库。
+        provider, api_key, model = await get_user_ai_config()
+        chapters, _ = await ensure_brief_points(
+            chapters,
+            provider=provider,
+            api_key=api_key,
+            model=model,
+        )
         if "experiment_plan" in existing.plan_types:
             self._check_experiment_metadata(
                 plan_date=request.plan_date,

@@ -256,6 +256,100 @@ async def test_update_validates_experiment_names(service, test_db, monkeypatch):
         )
 
 
+@pytest.mark.service
+async def test_create_draft_condenses_points_via_ai(service, test_db, monkeypatch):
+    await _insert_lesson(
+        test_db,
+        "lp-long",
+        topic="异常处理",
+        generated_content=_content(
+            "掌握raise语句主动抛出异常的方法；掌握assert断言的语法与适用场景；掌握自定义异常类的定义及异常类型继承机制",
+            difficult_points="依据业务逻辑设计合理的自定义异常类并正确处理异常继承关系，区分raise和assert的使用场景",
+        ),
+    )
+
+    calls = []
+
+    async def fake_brief_points(chapters, **kwargs):
+        calls.append(len(chapters))
+        prepared = [dict(chapter) for chapter in chapters]
+        for chapter in prepared:
+            chapter["key_points"] = "掌握raise与assert用法"
+            chapter["difficult_points"] = "自定义异常类的设计"
+        return prepared, True
+
+    monkeypatch.setattr(service_module, "ensure_brief_points", fake_brief_points)
+
+    plan = await service.create_draft(_create_request(["lp-long"]))
+    assert calls == [1]
+    assert plan.chapters[0].key_points == "掌握raise与assert用法"
+    assert plan.chapters[0].difficult_points == "自定义异常类的设计"
+
+
+@pytest.mark.service
+async def test_create_draft_fails_when_condensation_fails(service, test_db, monkeypatch):
+    await _insert_lesson(
+        test_db,
+        "lp-long",
+        topic="异常处理",
+        generated_content=_content(
+            "掌握raise语句主动抛出异常的方法；掌握assert断言的语法与适用场景；掌握自定义异常类的定义及异常类型继承机制"
+        ),
+    )
+
+    async def failing_brief_points(chapters, **kwargs):
+        raise ValueError("重难点精简连续 3 次仍不符合每行 25 字要求：超时")
+
+    monkeypatch.setattr(service_module, "ensure_brief_points", failing_brief_points)
+    with pytest.raises(ValueError, match="重难点精简"):
+        await service.create_draft(_create_request(["lp-long"]))
+
+
+@pytest.mark.service
+async def test_update_condenses_overlong_points(service, test_db, monkeypatch):
+    await _insert_lesson(test_db, "lp-1", topic="列表操作", generated_content=_content("a"))
+
+    async def brief_ok(chapters, **kwargs):
+        return [dict(chapter) for chapter in chapters], False
+
+    async def brief_shorten(chapters, **kwargs):
+        prepared = [dict(chapter) for chapter in chapters]
+        for chapter in prepared:
+            chapter["key_points"] = "掌握VLAN配置要点"
+            chapter["difficult_points"] = "理解Trunk转发过程"
+        return prepared, True
+
+    monkeypatch.setattr(service_module, "ensure_brief_points", brief_ok)
+    plan = await service.create_draft(_create_request(["lp-1"]))
+
+    # 用户把重点改超长后保存，应先经 AI 精简再入库
+    monkeypatch.setattr(service_module, "ensure_brief_points", brief_shorten)
+    updated = await service.update_course_plan(
+        plan.id,
+        CoursePlanUpdateRequest(
+            course_name=plan.course_name,
+            grade=plan.grade,
+            class_names=plan.class_names,
+            academic_year=plan.academic_year,
+            semester=plan.semester,
+            teacher_name=plan.teacher_name,
+            hours_per_lesson=plan.hours_per_lesson,
+            start_week=plan.start_week,
+            total_hours=plan.total_hours,
+            chapters=[
+                chapter.model_copy(
+                    update={
+                        "key_points": "掌握raise语句主动抛出异常的方法；掌握assert断言的语法与适用场景；掌握自定义异常类的定义及异常类型继承机制"
+                    }
+                )
+                for chapter in plan.chapters
+            ],
+        ),
+    )
+    assert updated.chapters[0].key_points == "掌握VLAN配置要点"
+    assert updated.chapters[0].difficult_points == "理解Trunk转发过程"
+
+
 @pytest.mark.slow
 async def test_export_renders_fixed_templates(service, test_db, monkeypatch):
     async def fake_ensure_names(chapters, **kwargs):
