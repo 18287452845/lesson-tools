@@ -585,9 +585,13 @@ class CoursePlanRenderer:
         runs = _direct_runs(paragraph)
         if len(runs) < 14:
             raise ValueError("授课计划元数据段结构已改变")
+        # 按学院参考样式的间距填写：标签与数值之间保留空格，
+        # 班级整串放入班级值 run，年级/结尾 run 清空。
         _set_run_text(runs[1], f" {course_name}")
         _set_run_text(runs[4], academic_year)
+        _set_run_text(runs[5], " 学期：")
         _set_run_text(runs[6], str(semester))
+        _set_run_text(runs[7], "  班级：")
         _set_run_text(runs[8], "")
         _set_run_text(runs[9], "")
         _set_run_text(runs[10], class_display)
