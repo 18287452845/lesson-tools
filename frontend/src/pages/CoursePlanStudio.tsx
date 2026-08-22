@@ -83,19 +83,27 @@ const HOMEWORK_EMPTY_FALLBACK = '完成课后练习';
 const POINTS_MAX_CHARS = 25;
 
 function briefPointLine(line: string): string {
-  const trimmed = line.trim().replace(/\s+/g, ' ');
-  if (trimmed.length <= POINTS_MAX_CHARS) return trimmed;
-  const kept: string[] = [];
-  let total = 0;
-  for (const part of trimmed.split(/[；;]/)) {
-    const clause = part.trim();
-    if (!clause) continue;
-    const extra = clause.length + (kept.length ? 1 : 0);
-    if (total + extra > POINTS_MAX_CHARS) break;
-    kept.push(clause);
-    total += extra;
+  const briefLines: string[] = [];
+  for (const raw of line.split('\n')) {
+    const text = raw.trim().replace(/\s+/g, ' ');
+    if (!text) continue;
+    if (text.length <= POINTS_MAX_CHARS) {
+      briefLines.push(text);
+      continue;
+    }
+    const kept: string[] = [];
+    let total = 0;
+    for (const part of text.split(/[；;]/)) {
+      const clause = part.trim();
+      if (!clause) continue;
+      const extra = clause.length + (kept.length ? 1 : 0);
+      if (total + extra > POINTS_MAX_CHARS) break;
+      kept.push(clause);
+      total += extra;
+    }
+    briefLines.push(kept.length ? kept.join('；') : text.slice(0, POINTS_MAX_CHARS));
   }
-  return kept.length ? kept.join('；') : trimmed.slice(0, POINTS_MAX_CHARS);
+  return briefLines.join('\n');
 }
 
 function briefHomeworkLine(line: string): string {

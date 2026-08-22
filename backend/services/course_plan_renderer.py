@@ -48,22 +48,34 @@ POINTS_MAX_CHARS = 25
 
 
 def brief_point_line(line: str) -> str:
-    """Condense one focus/difficulty line to at most POINTS_MAX_CHARS characters."""
-    line = " ".join(str(line or "").split())
-    if len(line) <= POINTS_MAX_CHARS:
-        return line
-    kept: list[str] = []
-    total = 0
-    for part in re.split(r"[；;]", line):
-        part = part.strip()
-        if not part:
+    """Condense focus/difficulty text to at most POINTS_MAX_CHARS per line.
+
+    Multi-line values (e.g. AI-condensed points) are handled line by line;
+    within one line whole semicolon clauses are kept when they fit.
+    """
+    brief_lines: list[str] = []
+    for raw in str(line or "").splitlines():
+        text = " ".join(raw.split())
+        if not text:
             continue
-        extra = len(part) + (1 if kept else 0)
-        if total + extra > POINTS_MAX_CHARS:
-            break
-        kept.append(part)
-        total += extra
-    return "；".join(kept) if kept else line[:POINTS_MAX_CHARS]
+        if len(text) <= POINTS_MAX_CHARS:
+            brief_lines.append(text)
+            continue
+        kept: list[str] = []
+        total = 0
+        for part in re.split(r"[；;]", text):
+            part = part.strip()
+            if not part:
+                continue
+            extra = len(part) + (1 if kept else 0)
+            if total + extra > POINTS_MAX_CHARS:
+                break
+            kept.append(part)
+            total += extra
+        brief_lines.append(
+            "；".join(kept) if kept else text[:POINTS_MAX_CHARS]
+        )
+    return "\n".join(brief_lines)
 
 
 def brief_homework_line(line: str) -> str:
