@@ -89,8 +89,12 @@ def brief_homework_line(line: str) -> str:
     return HOMEWORK_BRIEF_FALLBACK
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 NS = {"w": W_NS}
 W = f"{{{W_NS}}}"
+R = f"{{{R_NS}}}"
 
 
 @dataclass(frozen=True)
@@ -552,6 +556,128 @@ def _patch_docx(
     return output_path
 
 
+def _build_page_footer() -> etree._Element:
+    """Centered footer with live PAGE/NUMPAGES fields, correct on every page."""
+    footer_root = etree.Element(W + "ftr", nsmap={"w": W_NS})
+    paragraph = etree.SubElement(footer_root, W + "p")
+    paragraph_properties = etree.SubElement(paragraph, W + "pPr")
+    justification = etree.SubElement(paragraph_properties, W + "jc")
+    justification.set(W + "val", "center")
+
+    def _append_text(parent: etree._Element, text: str) -> None:
+        run = etree.SubElement(parent, W + "r")
+        run_properties = etree.SubElement(run, W + "rPr")
+        size = etree.SubElement(run_properties, W + "sz")
+        size.set(W + "val", "21")
+        text_element = etree.SubElement(run, W + "t")
+        text_element.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        text_element.text = text
+
+    def _append_field(parent: etree._Element, instruction: str) -> None:
+        run = etree.SubElement(parent, W + "r")
+        run_properties = etree.SubElement(run, W + "rPr")
+        size = etree.SubElement(run_properties, W + "sz")
+        size.set(W + "val", "21")
+        field = etree.Element(W + "fldSimple")
+        field.set(W + "instr", f" {instruction} ")
+        display_run = deepcopy(run)
+        _set_run_text(display_run, "1")
+        field.append(display_run)
+        parent.replace(run, field)
+
+    _append_text(paragraph, "共 ")
+    _append_field(paragraph, "NUMPAGES")
+    _append_text(paragraph, " 页  第 ")
+    _append_field(paragraph, "PAGE")
+    _append_text(paragraph, " 页")
+    return footer_root
+
+
+def _patch_docx_with_footer(
+    template_path: Path,
+    output_path: Path,
+    patcher: Callable[[etree._Element], None],
+) -> Path:
+    """Patch the body and attach a footer part carrying the page-number fields.
+
+    Fields placed in repeated table header rows keep their cached value on
+    every page, so page numbers must live in a real footer to stay correct.
+    """
+    with zipfile.ZipFile(template_path, "r") as source:
+        root = etree.fromstring(source.read("word/document.xml"))
+        patcher(root)
+
+        relationships = etree.fromstring(source.read("word/_rels/document.xml.rels"))
+        used_ids = {
+            relationship.get("Id")
+            for relationship in relationships.findall(f"{{{PACKAGE_REL_NS}}}Relationship")
+        }
+        next_number = 1
+        while f"rId{next_number}" in used_ids:
+            next_number += 1
+        relationship_id = f"rId{next_number}"
+
+        footer_number = 1
+        while f"word/footer{footer_number}.xml" in source.namelist():
+            footer_number += 1
+        footer_name = f"footer{footer_number}.xml"
+        footer_path = f"word/{footer_name}"
+
+        relationship = etree.SubElement(
+            relationships, f"{{{PACKAGE_REL_NS}}}Relationship"
+        )
+        relationship.set("Id", relationship_id)
+        relationship.set(
+            "Type",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer",
+        )
+        relationship.set("Target", footer_name)
+
+        content_types = etree.fromstring(source.read("[Content_Types].xml"))
+        override = etree.SubElement(content_types, f"{{{CONTENT_TYPES_NS}}}Override")
+        override.set("PartName", f"/{footer_path}")
+        override.set(
+            "ContentType",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
+        )
+
+        section_properties = root.find(".//" + W + "sectPr")
+        if section_properties is None:
+            raise ValueError("授课计划模板缺少页面设置")
+        for existing in list(section_properties.findall(W + "footerReference")):
+            section_properties.remove(existing)
+        footer_reference = etree.Element(W + "footerReference")
+        footer_reference.set(W + "type", "default")
+        footer_reference.set(R + "id", relationship_id)
+        section_properties.insert(0, footer_reference)
+
+        payloads = {
+            "word/document.xml": etree.tostring(
+                root, encoding="UTF-8", xml_declaration=True, standalone=True
+            ),
+            "word/_rels/document.xml.rels": etree.tostring(
+                relationships, encoding="UTF-8", xml_declaration=True, standalone=True
+            ),
+            "[Content_Types].xml": etree.tostring(
+                content_types, encoding="UTF-8", xml_declaration=True, standalone=True
+            ),
+            footer_path: etree.tostring(
+                _build_page_footer(),
+                encoding="UTF-8",
+                xml_declaration=True,
+                standalone=True,
+            ),
+        }
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(output_path, "w") as target:
+            for item in source.infolist():
+                payload = payloads.get(item.filename, source.read(item.filename))
+                target.writestr(deepcopy(item), payload)
+            target.writestr(footer_path, payloads[footer_path])
+    return output_path
+
+
 def _parse_date(value: str | date) -> date:
     if isinstance(value, date):
         return value
@@ -597,37 +723,11 @@ class CoursePlanRenderer:
         _set_run_text(runs[10], class_display)
         _set_run_text(runs[11], "")
         _set_run_text(runs[13], teacher_name)
-
-        marker_index = next(
-            (
-                index
-                for index, run in enumerate(runs)
-                if "页第" in "".join(run.xpath(".//w:t/text()", namespaces=NS))
-            ),
-            None,
-        )
-        if marker_index is None:
-            raise ValueError("授课计划页码段结构已改变")
-        total_index = next(
-            (
-                index
-                for index in range(marker_index - 1, -1, -1)
-                if "".join(runs[index].xpath(".//w:t/text()", namespaces=NS)).strip().isdigit()
-            ),
-            None,
-        )
-        current_index = next(
-            (
-                index
-                for index in range(marker_index + 1, len(runs))
-                if "".join(runs[index].xpath(".//w:t/text()", namespaces=NS)).strip().isdigit()
-            ),
-            None,
-        )
-        if total_index is None or current_index is None:
-            raise ValueError("授课计划页码段结构已改变")
-        _replace_run_with_field(runs[total_index], "NUMPAGES", "1")
-        _replace_run_with_field(runs[current_index], "PAGE", "1")
+        # 页码改由页脚的 PAGE/NUMPAGES 字段承担：重复表头行里的字段
+        # 不会按页重算，行内页码一律清空。
+        if len(runs) > 14:
+            for index in range(14, len(runs)):
+                _set_run_text(runs[index], "")
 
     @staticmethod
     def _prepare_adaptive_teaching_layout(
@@ -721,6 +821,18 @@ class CoursePlanRenderer:
             if child is not section_properties:
                 body.remove(child)
         section_properties.addprevious(continuous_table)
+        # 表格不能是正文最后一个块级元素；补一个 1pt 高的占位段落，
+        # 避免 Word 自动追加默认高度段落而挤出一张空白页。
+        trailing = etree.Element(W + "p")
+        trailing_properties = etree.SubElement(trailing, W + "pPr")
+        trailing_spacing = etree.SubElement(trailing_properties, W + "spacing")
+        trailing_spacing.set(W + "after", "0")
+        trailing_spacing.set(W + "line", "20")
+        trailing_spacing.set(W + "lineRule", "exact")
+        trailing_run_properties = etree.SubElement(trailing_properties, W + "rPr")
+        trailing_size = etree.SubElement(trailing_run_properties, W + "sz")
+        trailing_size.set(W + "val", "2")
+        section_properties.addprevious(trailing)
         return data_rows, total_row
 
     def render_teaching_plan(
@@ -845,7 +957,7 @@ class CoursePlanRenderer:
                                  (3, str(practice_total)), (4, str(total_hours))):
                 _set_cell_text(total_cells[index], value)
 
-        return str(_patch_docx(spec.path, output_path, patch))
+        return str(_patch_docx_with_footer(spec.path, output_path, patch))
 
     def render_experiment_plans(
         self,

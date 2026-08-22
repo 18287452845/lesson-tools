@@ -73,7 +73,13 @@ def _assert_adaptive_teaching_structure(path: pathlib.Path, week_count: int):
         for row in table.rows[:4]
     )
     assert "云南林业职业技术学院教师授课计划表" in table.rows[0].cells[0].text
-    field_instructions = table.rows[1]._tr.xpath(".//w:fldSimple/@w:instr")
+    # 行内不再放页码：字段在重复表头行里不会按页重算
+    assert "页第" not in table.rows[1].cells[0].text
+    footer = document.sections[0].footer
+    assert not footer.is_linked_to_previous
+    footer_text = "".join(paragraph.text for paragraph in footer.paragraphs)
+    assert "共" in footer_text and "页" in footer_text
+    field_instructions = footer._element.xpath(".//w:fldSimple/@w:instr")
     assert {instruction.strip() for instruction in field_instructions} == {
         "PAGE",
         "NUMPAGES",
@@ -89,6 +95,12 @@ def _assert_adaptive_teaching_structure(path: pathlib.Path, week_count: int):
     )
     assert table.rows[-3].cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is None
     assert table.rows[-2].cells[0].paragraphs[0]._p.pPr.find(qn("w:keepNext")) is not None
+    # 表尾紧跟 1pt 占位段落，避免 Word 自动补默认段落挤出空白页
+    body_children = [
+        child.tag.split("}")[1]
+        for child in document.element.body.iterchildren()
+    ]
+    assert body_children[-2:] == ["p", "sectPr"]
 
 
 def test_fixed_course_plan_templates_are_valid():
@@ -246,7 +258,12 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     _assert_preserved_parts(
         settings.teaching_plan_template_path,
         teaching_path,
-        changed_parts={"word/document.xml"},
+        changed_parts={
+            "word/document.xml",
+            "word/_rels/document.xml.rels",
+            "[Content_Types].xml",
+        },
+        added_parts={"word/footer1.xml"},
     )
     _assert_preserved_parts(settings.experiment_plan_template_path, experiment_paths[0])
 
@@ -332,7 +349,12 @@ def test_render_18_week_teaching_and_experiment_plans(tmp_path: pathlib.Path):
     _assert_preserved_parts(
         settings.teaching_plan_template_path,
         teaching_path,
-        changed_parts={"word/document.xml"},
+        changed_parts={
+            "word/document.xml",
+            "word/_rels/document.xml.rels",
+            "[Content_Types].xml",
+        },
+        added_parts={"word/footer1.xml"},
     )
     _assert_preserved_parts(settings.experiment_plan_template_path, experiment_path)
 
