@@ -401,6 +401,61 @@ function CoursePlanStudio() {
     return groups;
   }, [chapters]);
 
+  // 注意：本组件在 mode === 'list' 时提前 return，所有 hooks 必须在此之前调用。
+  const hoursPerLesson =
+    metaForm.getFieldValue('hours_per_lesson') || detail?.hours_per_lesson || 2;
+  const startWeek = metaForm.getFieldValue('start_week') || detail?.start_week || 1;
+
+  const experimentTabs = useMemo(() => {
+    if (!detail?.plan_types.includes('experiment_plan')) return [];
+    const sources = schedules.length
+      ? schedules
+      : detail.class_schedules.length
+        ? detail.class_schedules
+        : detail.class_names.map((name) => ({
+            class_name: name,
+            weekday: (parseIsoDate(detail.first_class_date)?.getDay() || 1) as ScheduleState['weekday'],
+            class_periods: detail.class_periods,
+            first_class_date: detail.first_class_date,
+            classroom: detail.location,
+          }));
+    return sources.map((row) => {
+      const firstDate = parseIsoDate(row.first_class_date);
+      return {
+        key: row.class_name,
+        label: row.class_name,
+        children: (
+          <Table
+            size="small"
+            rowKey="group"
+            pagination={false}
+            dataSource={teachingGroups.map((group, index) => ({
+              key: index,
+              group: index + 1,
+              week: startWeek + index,
+              name: group[0]?.experiment_name || '',
+              date: firstDate
+                ? formatDate(new Date(firstDate.getTime() + index * 7 * 86400000))
+                : '待填写首课日期',
+              weekday: WEEKDAY_LABELS[row.weekday - 1],
+              periods: row.class_periods || '待填写',
+              classroom: row.classroom || '待填写',
+            }))}
+            columns={[
+              { title: '实验序号', dataIndex: 'group', width: 90 },
+              { title: '实验项目名称', dataIndex: 'name' },
+              { title: '周次', dataIndex: 'week', width: 80 },
+              { title: '授课时间', dataIndex: 'date', width: 130 },
+              { title: '星期', dataIndex: 'weekday', width: 90 },
+              { title: '节次', dataIndex: 'periods', width: 90 },
+              { title: '实验室', dataIndex: 'classroom', width: 120 },
+            ]}
+          />
+        ),
+      };
+    });
+  }, [detail, schedules, teachingGroups, startWeek]);
+
   const templateReport = (type: CoursePlanArtifactType) =>
     validations.find((report) => report.type === type);
   const templatesReady = ['teaching_plan', 'experiment_plan'].every(
@@ -1011,9 +1066,6 @@ function CoursePlanStudio() {
 
   // ------------------------------------------------------------- 第 3 步：编辑导出
 
-  const hoursPerLesson = metaForm.getFieldValue('hours_per_lesson') || detail?.hours_per_lesson || 2;
-  const startWeek = metaForm.getFieldValue('start_week') || detail?.start_week || 1;
-
   const teachingPreviewRows = teachingGroups.map((group, index) => {
     const weekly = group.length * hoursPerLesson;
     const theory = Math.floor(weekly / 2);
@@ -1050,56 +1102,6 @@ function CoursePlanStudio() {
     { title: '教学难点', dataIndex: 'difficulty' },
     { title: '作业', dataIndex: 'homework' },
   ];
-
-  const experimentTabs = useMemo(() => {
-    if (!detail?.plan_types.includes('experiment_plan')) return [];
-    const sources = schedules.length
-      ? schedules
-      : detail.class_schedules.length
-        ? detail.class_schedules
-        : detail.class_names.map((name) => ({
-            class_name: name,
-            weekday: (parseIsoDate(detail.first_class_date)?.getDay() || 1) as ScheduleState['weekday'],
-            class_periods: detail.class_periods,
-            first_class_date: detail.first_class_date,
-            classroom: detail.location,
-          }));
-    return sources.map((row) => {
-      const firstDate = parseIsoDate(row.first_class_date);
-      return {
-        key: row.class_name,
-        label: row.class_name,
-        children: (
-          <Table
-            size="small"
-            rowKey="group"
-            pagination={false}
-            dataSource={teachingGroups.map((group, index) => ({
-              key: index,
-              group: index + 1,
-              week: startWeek + index,
-              name: group[0]?.experiment_name || '',
-              date: firstDate
-                ? formatDate(new Date(firstDate.getTime() + index * 7 * 86400000))
-                : '待填写首课日期',
-              weekday: WEEKDAY_LABELS[row.weekday - 1],
-              periods: row.class_periods || '待填写',
-              classroom: row.classroom || '待填写',
-            }))}
-            columns={[
-              { title: '实验序号', dataIndex: 'group', width: 90 },
-              { title: '实验项目名称', dataIndex: 'name' },
-              { title: '周次', dataIndex: 'week', width: 80 },
-              { title: '授课时间', dataIndex: 'date', width: 130 },
-              { title: '星期', dataIndex: 'weekday', width: 90 },
-              { title: '节次', dataIndex: 'periods', width: 90 },
-              { title: '实验室', dataIndex: 'classroom', width: 120 },
-            ]}
-          />
-        ),
-      };
-    });
-  }, [detail, schedules, teachingGroups, startWeek]);
 
   const renderStepEdit = () => {
     if (!detail) return null;
