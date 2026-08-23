@@ -16,7 +16,7 @@ from .ai_provider import generate_with_ai
 
 logger = logging.getLogger(__name__)
 
-POINT_BRIEF_MAX_CHARS = 25
+POINT_BRIEF_MAX_CHARS = 8
 POINT_BRIEF_MAX_LINES = 1
 POINT_BRIEF_GENERATION_ATTEMPTS = 3
 
@@ -120,8 +120,8 @@ def _build_prompt(chapters: list[dict[str, Any]]) -> str:
     return f"""请把以下每份教案的“教学重点”和“教学难点”改写为固定模板可用的简短版本。
 
 硬性要求：
-1. 重点、难点各输出 1 行，概括该课最核心的要点；
-2. 每行不超过 {POINT_BRIEF_MAX_CHARS} 个字符（含标点）；
+1. 重点、难点各输出 1 行短语，最多 8 个字（如“掌握VLAN配置”）；
+2. 每行不超过 {POINT_BRIEF_MAX_CHARS} 个字符，确保在表格单行内显示；
 3. 忠于原意，保留最核心的要点，不得编造原文没有的内容；
 4. 原文为空或过长时，依据课题概括生成一条最核心的要点；
 5. 重点和难点都不能为空；

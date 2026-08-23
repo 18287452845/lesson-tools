@@ -30,7 +30,7 @@ CoursePlanType = Literal["teaching_plan", "experiment_plan"]
 
 # 固定模板“作业”列每行最多 15 字；超长作业按内容回落为简短措辞，
 # 兼顾评估实验与简单作业，避免整表都是同一句话。
-HOMEWORK_MAX_CHARS = 15
+HOMEWORK_MAX_CHARS = 6
 HOMEWORK_BRIEF_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("实验报告", "实训报告", "报告"), "撰写实验报告"),
     (("练习", "习题", "题目"), "完成课后练习"),
@@ -44,7 +44,7 @@ HOMEWORK_EMPTY_FALLBACK = "完成课后练习"
 
 # 固定模板“教学重点/教学难点”列每行最多 25 字：
 # 优先按分号保留完整要点句，装不下则只留前几条，单句超长才硬截断。
-POINTS_MAX_CHARS = 25
+POINTS_MAX_CHARS = 8
 
 
 def brief_point_line(line: str) -> str:
@@ -639,7 +639,7 @@ class CoursePlanRenderer:
             str(weekly_hours),
             focus,
             difficulty,
-            "机房、计算机",
+            "机房",
             "\n".join(assignment_lines),
         )
 

@@ -145,7 +145,7 @@ const PLAN_TYPE_LABELS: Record<CoursePlanArtifactType, string> = {
   experiment_plan: '实验计划',
 };
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const HOMEWORK_MAX_CHARS = 15;
+const HOMEWORK_MAX_CHARS = 6;
 const HOMEWORK_BRIEF_RULES: Array<[string[], string]> = [
   [['实验报告', '实训报告', '报告'], '撰写实验报告'],
   [['练习', '习题', '题目'], '完成课后练习'],
@@ -156,7 +156,7 @@ const HOMEWORK_BRIEF_RULES: Array<[string[], string]> = [
 ];
 const HOMEWORK_BRIEF_FALLBACK = '课后作业';
 const HOMEWORK_EMPTY_FALLBACK = '完成课后练习';
-const POINTS_MAX_CHARS = 25;
+const POINTS_MAX_CHARS = 8;
 
 function briefPointLine(line: string): string {
   const briefLines: string[] = [];
@@ -1564,7 +1564,7 @@ function CoursePlanStudio() {
           }
           extra={
             <Text type="secondary" style={{ fontSize: 12 }}>
-              重点/难点每课 1 行且不超过 25 字、作业不超过 15 字，超限时保存将自动由 AI 精简
+              重点/难点每课一行短语（不超过 8 字）、作业不超过 6 字，超限时保存将自动由 AI 精简
             </Text>
           }
         >

@@ -126,8 +126,8 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     chapters = [chapter.model_dump() for chapter in _chapters()]
     for index, chapter in enumerate(chapters, start=1):
         chapter.update(
-            key_points=f"准确完成第{index}项服务器配置并依据验证结果判断安全状态",
-            difficult_points=f"综合分析第{index}项配置异常并选择合适方法完成故障排查",
+            key_points="准确完成服务器配置",
+            difficult_points="综合分析配置异常",
             homework={
                 "required": f"完成第{index}项配置验证记录",
                 "optional": f"分析第{index}项安全加固方案",
@@ -195,23 +195,15 @@ def test_render_teaching_and_per_class_experiment_plans(tmp_path: pathlib.Path):
     assert teaching.tables[-1].rows[-2].cells[4].text == "64"
     teaching_text = _all_text(teaching_path)
     assert "24级信息安全技术应用1、2班" in teaching_text
-    assert "机房、计算机" in teaching_text
+    assert "机房" in teaching_text
     assert "任务32 Windows服务器安全配置" in teaching_text
     first_week = teaching.tables[0].rows[2].cells
     assert first_week[1].text == "任务1 Windows服务器安全配置\n任务2 Windows服务器安全配置"
-    assert first_week[5].text == (
-        "准确完成第1项服务器配置并依据验证结果判断安全状态\n"
-        "准确完成第2项服务器配置并依据验证结果判断安全状态"
-    )
-    assert first_week[6].text == (
-        "综合分析第1项配置异常并选择合适方法完成故障排查\n"
-        "综合分析第2项配置异常并选择合适方法完成故障排查"
-    )
+    assert first_week[5].text == "准确完成服务器配"
+    assert first_week[6].text == "综合分析配置异常"
     assert "…" not in first_week[5].text + first_week[6].text
-    assert first_week[7].text == "机房、计算机"
-    assert first_week[8].text == (
-        "完成第1项配置验证记录\n分析第1项安全加固方案"
-    )
+    assert first_week[7].text == "机房"
+    assert first_week[8].text == "课后作业"
 
     expectations = (
         ("24级信息安全技术应用1班", "四", "3-4", "05", "12", "慧心楼3516"),
@@ -403,13 +395,11 @@ def test_teaching_plan_homework_is_brief_and_varied(tmp_path: pathlib.Path):
 
 def test_teaching_plan_points_are_brief(tmp_path: pathlib.Path):
     chapters = [chapter.model_dump() for chapter in _chapters(2)]
-    chapters[0]["key_points"] = (
-        "掌握raise语句主动抛出异常的方法；掌握assert断言的语法与适用场景；"
-        "掌握自定义异常类的定义及异常类型继承机制"
-    )
-    chapters[0]["difficult_points"] = "依据业务逻辑设计合理的自定义异常类并正确处理异常继承关系，区分raise和assert的使用场景"
-    chapters[1]["key_points"] = "掌握try-except语句结构与多异常捕获"
-    chapters[1]["difficult_points"] = "理解异常传播流程"
+    # 超过 8 字的单句被截断到 8 字，多分号句只保留装得下的部分
+    chapters[0]["key_points"] = "掌握raise语句主动抛出异常的方法；掌握assert断言的语法与适用场景"
+    chapters[0]["difficult_points"] = "依据业务逻辑设计合理的自定义异常类"
+    chapters[1]["key_points"] = "掌握try-except结构"
+    chapters[1]["difficult_points"] = "理解异常传播"
     renderer = course_plan_renderer.CoursePlanRenderer(tmp_path)
 
     path = pathlib.Path(
@@ -430,16 +420,8 @@ def test_teaching_plan_points_are_brief(tmp_path: pathlib.Path):
     )
 
     first_week = _teaching_week_rows(Document(path))[0].cells
-    # 多要点句只保留装得下的前几条（16 + 1 + 15 = 32 > 25，仅保留第一条）
-    assert first_week[5].text == (
-        "掌握raise语句主动抛出异常的方法\n掌握try-except语句结构与多异常捕获"
-    )
-    # 无分号的长难点硬截断到 25 字
-    difficult_lines = first_week[6].text.splitlines()
-    assert difficult_lines == [
-        "依据业务逻辑设计合理的自定义异常类并正确处理异常继",
-        "理解异常传播流程",
-    ]
+    assert first_week[5].text == "掌握raise语" + chr(10) + "掌握try-ex"
+    assert first_week[6].text == "依据业务逻辑设计" + chr(10) + "理解异常传播"
     assert all(
         len(line) <= course_plan_renderer.POINTS_MAX_CHARS
         for cell in (first_week[5], first_week[6])
