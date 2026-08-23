@@ -182,10 +182,14 @@ class Database:
                 source_lesson_plan_ids TEXT NOT NULL DEFAULT '[]',
                 status TEXT DEFAULT 'draft',
                 output_files TEXT NOT NULL DEFAULT '[]',
+                error_message TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        await self._add_column_if_not_exists(
+            db, "course_plans", "error_message", "TEXT"
+        )
 
         # Add batch-related columns to lesson_plans if they don't exist
         await self._add_column_if_not_exists(

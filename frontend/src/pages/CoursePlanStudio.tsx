@@ -556,6 +556,9 @@ function CoursePlanStudio() {
         setMode('studio');
         setStep(2);
         setSearchParams({ id: coursePlanId }, { replace: true });
+        if (loaded.status === 'condensing') {
+          void waitForCondensing(coursePlanId);
+        }
       } catch (error) {
         messageApi.error(`学期计划加载失败：${(error as Error).message}`);
       }
@@ -573,6 +576,39 @@ function CoursePlanStudio() {
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const [condensing, setCondensing] = useState(false);
+
+  const applyDetail = useCallback((loaded: CoursePlanDetail) => {
+    setDetail(loaded);
+    setChapters(loaded.chapters.map((chapter) => ({ ...chapter })));
+  }, []);
+
+  const waitForCondensing = useCallback(
+    async (coursePlanId: string): Promise<CoursePlanDetail | null> => {
+      setCondensing(true);
+      try {
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          const loaded = await coursePlanApi.getCoursePlan(coursePlanId);
+          if (loaded.status !== 'condensing') {
+            applyDetail(loaded);
+            if (loaded.error_message) {
+              messageApi.error(`AI 精简失败：${loaded.error_message}`);
+            } else {
+              messageApi.success('AI 精简完成');
+            }
+            return loaded;
+          }
+        }
+        messageApi.error('AI 精简超时，请稍后刷新查看结果');
+        return null;
+      } finally {
+        setCondensing(false);
+      }
+    },
+    [applyDetail, messageApi]
+  );
 
   useEffect(() => {
     const coursePlanId = searchParams.get('id');
@@ -732,6 +768,9 @@ function CoursePlanStudio() {
       };
       const created = await coursePlanApi.createCoursePlan(request);
       setDetail(created);
+      if (created.status === 'condensing') {
+        void waitForCondensing(created.id);
+      }
       setChapters(created.chapters.map((chapter) => ({ ...chapter })));
       // 回填规范化值，保证第 3 步表单重挂载后（含实验信息字段）取值完整
       const createdClasses = parseClassNames(
@@ -820,7 +859,12 @@ function CoursePlanStudio() {
         collectUpdateRequest(values, planTypesValue)
       );
       setDetail(updated);
-      messageApi.success('草稿已保存');
+      if (updated.status === 'condensing') {
+        messageApi.info('部分内容需要 AI 精简，正在后台处理（约 1-3 分钟）');
+        void waitForCondensing(detail.id);
+      } else {
+        messageApi.success('草稿已保存');
+      }
       refreshDrafts();
     } catch (error) {
       messageApi.error(`保存失败：${(error as Error).message}`);
@@ -854,10 +898,15 @@ function CoursePlanStudio() {
     }
     setExporting(true);
     try {
-      await coursePlanApi.updateCoursePlan(
+      const updated = await coursePlanApi.updateCoursePlan(
         detail.id,
         collectUpdateRequest(values, detail.plan_types)
       );
+      if (updated.status === 'condensing') {
+        messageApi.info('内容需要 AI 精简，正在后台处理（约 1-3 分钟），完成后自动导出');
+        const ready = await waitForCondensing(detail.id);
+        if (!ready || ready.error_message) return;
+      }
       const filename = await coursePlanApi.exportCoursePlan(detail.id);
       messageApi.success(`已导出：${filename}`);
       const refreshed = await coursePlanApi.getCoursePlan(detail.id);
@@ -1534,12 +1583,14 @@ function CoursePlanStudio() {
     return (
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Alert
-          type={detail.status === 'exported' ? 'success' : 'info'}
+          type={condensing ? 'warning' : detail.status === 'exported' ? 'success' : 'info'}
           showIcon
           message={
-            detail.status === 'exported'
-              ? '该计划已导出过；修改内容后可再次导出新文件。'
-              : '导出前可编辑下方内容；每 2 份教案 = 1 周（实验计划 1 条）。'
+            condensing
+              ? 'AI 正在精简重难点（约 1-3 分钟），完成后即可保存导出……'
+              : detail.status === 'exported'
+                ? '该计划已导出过；修改内容后可再次导出新文件。'
+                : '导出前可编辑下方内容；每 2 份教案 = 1 周（实验计划 1 条）。'
           }
         />
 
@@ -1727,16 +1778,22 @@ function CoursePlanStudio() {
             返回列表
           </Button>
           <Space>
-            <Button icon={<SaveOutlined />} loading={saving} onClick={handleSave}>
+            <Button
+              icon={<SaveOutlined />}
+              loading={saving}
+              disabled={condensing}
+              onClick={handleSave}
+            >
               保存草稿
             </Button>
             <Button
               type="primary"
               icon={<DownloadOutlined />}
-              loading={exporting}
+              loading={exporting || condensing}
+              disabled={condensing}
               onClick={handleExport}
             >
-              导出 Word
+              {condensing ? 'AI 精简中…' : '导出 Word'}
             </Button>
           </Space>
         </Space>

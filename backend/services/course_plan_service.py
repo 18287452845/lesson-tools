@@ -33,6 +33,7 @@ from .course_plan_renderer import (
     require_valid_course_plan_template,
 )
 from .experiment_names import ensure_experiment_names, validate_experiment_chapters
+from .background_runner import run_in_background
 from .lesson_content import merge_lesson_content
 from .point_briefs import ensure_brief_points
 
@@ -70,10 +71,13 @@ class CoursePlanService:
     # ------------------------------------------------------------------ create
 
     async def create_draft(self, request: CoursePlanCreateRequest) -> CoursePlanDetail:
+        """Persist the draft immediately and condense via AI in the background.
+
+        The site proxy cuts connections after ~120s while AI condensation of a
+        full course takes 1-3 minutes, so no AI is awaited on the request path.
+        """
         chapters = await self._build_chapters(request.lesson_plan_ids)
         self._check_capacity(chapters)
-
-        provider, api_key, model = await get_user_ai_config()
         if "experiment_plan" in request.plan_types:
             self._check_experiment_metadata(
                 plan_date=request.plan_date,
@@ -84,40 +88,6 @@ class CoursePlanService:
                     schedule.model_dump() for schedule in request.class_schedules
                 ],
             )
-        # 超过每行 25 字或缺失的重难点由 AI 重新总结，禁止硬截断或留空；
-        # 与实验名称生成并行执行，缩短整批等待时间。
-        brief_coro = ensure_brief_points(
-            chapters, provider=provider, api_key=api_key, model=model
-        )
-        if "experiment_plan" in request.plan_types:
-            names_coro = ensure_experiment_names(
-                chapters,
-                provider=provider,
-                api_key=api_key,
-                model=model,
-                require_every_group=True,
-            )
-            (brief_chapters, _), (named_chapters, _regenerated) = await asyncio.gather(
-                brief_coro, names_coro
-            )
-            brief_by_number = {
-                int(chapter.get("lesson_number") or 0): chapter
-                for chapter in brief_chapters
-            }
-            chapters = [
-                {
-                    **chapter,
-                    "key_points": brief_by_number[
-                        int(chapter.get("lesson_number") or 0)
-                    ]["key_points"],
-                    "difficult_points": brief_by_number[
-                        int(chapter.get("lesson_number") or 0)
-                    ]["difficult_points"],
-                }
-                for chapter in named_chapters
-            ]
-        else:
-            chapters, _ = await brief_coro
 
         total_hours = request.total_hours or len(chapters) * request.hours_per_lesson
         course_plan_id = str(uuid4())
@@ -155,7 +125,7 @@ class CoursePlanService:
                 json.dumps(request.plan_types, ensure_ascii=False),
                 json.dumps(chapters, ensure_ascii=False),
                 json.dumps(request.lesson_plan_ids, ensure_ascii=False),
-                "draft",
+                "condensing",
                 "[]",
                 now,
                 now,
@@ -163,12 +133,85 @@ class CoursePlanService:
             commit=True,
         )
         logger.info(
-            "Created course plan draft %s with %s lessons (%s)",
+            "Created course plan draft %s with %s lessons (%s), condensing in background",
             course_plan_id,
             len(chapters),
             "、".join(request.plan_types),
         )
+        run_in_background(
+            self._finalize_draft(course_plan_id),
+            name=f"course-plan-condense-{course_plan_id[:8]}",
+        )
         return await self.get_course_plan(course_plan_id)  # type: ignore[return-value]
+
+    async def _finalize_draft(self, course_plan_id: str) -> None:
+        """Condense points and generate experiment names, then unlock the draft."""
+        plan = await self.get_course_plan(course_plan_id)
+        if not plan:
+            return
+        chapters = [chapter.model_dump() for chapter in plan.chapters]
+        db = await get_db()
+        try:
+            provider, api_key, model = await get_user_ai_config()
+            brief_coro = ensure_brief_points(
+                chapters, provider=provider, api_key=api_key, model=model
+            )
+            if "experiment_plan" in plan.plan_types:
+                names_coro = ensure_experiment_names(
+                    chapters,
+                    provider=provider,
+                    api_key=api_key,
+                    model=model,
+                    require_every_group=True,
+                )
+                (brief_chapters, _), (named_chapters, _regenerated) = (
+                    await asyncio.gather(brief_coro, names_coro)
+                )
+                brief_by_number = {
+                    int(chapter.get("lesson_number") or 0): chapter
+                    for chapter in brief_chapters
+                }
+                chapters = [
+                    {
+                        **chapter,
+                        "key_points": brief_by_number[
+                            int(chapter.get("lesson_number") or 0)
+                        ]["key_points"],
+                        "difficult_points": brief_by_number[
+                            int(chapter.get("lesson_number") or 0)
+                        ]["difficult_points"],
+                    }
+                    for chapter in named_chapters
+                ]
+            else:
+                chapters, _ = await brief_coro
+            await db.execute(
+                """
+                UPDATE course_plans
+                SET chapters = ?, status = 'draft', error_message = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    json.dumps(chapters, ensure_ascii=False),
+                    datetime.now().isoformat(),
+                    course_plan_id,
+                ),
+                commit=True,
+            )
+            logger.info("Course plan %s condensation finished", course_plan_id)
+        except Exception as exc:
+            logger.error(
+                "Course plan %s condensation failed: %s", course_plan_id, exc
+            )
+            await db.execute(
+                """
+                UPDATE course_plans
+                SET status = 'draft', error_message = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (str(exc), datetime.now().isoformat(), course_plan_id),
+                commit=True,
+            )
 
     async def _build_chapters(self, lesson_plan_ids: List[str]) -> List[Dict[str, Any]]:
         db = await get_db()
@@ -301,14 +344,11 @@ class CoursePlanService:
 
         chapters = [chapter.model_dump() for chapter in request.chapters]
         self._check_capacity(chapters)
-        # 用户编辑后的重难点若超行宽或为空，同样由 AI 重新总结后再入库。
-        provider, api_key, model = await get_user_ai_config()
-        chapters, _ = await ensure_brief_points(
-            chapters,
-            provider=provider,
-            api_key=api_key,
-            model=model,
-        )
+        # 用户编辑后的重难点若超限，保存原始内容并转入后台 AI 精简，
+        # 避免同步等待超过站点代理的读超时。
+        from .point_briefs import chapter_points_ok
+
+        needs_condensing = any(not chapter_points_ok(c) for c in chapters)
         if "experiment_plan" in existing.plan_types:
             self._check_experiment_metadata(
                 plan_date=request.plan_date,
@@ -355,6 +395,20 @@ class CoursePlanService:
             ),
             commit=True,
         )
+        if needs_condensing:
+            await db.execute(
+                """
+                UPDATE course_plans
+                SET status = 'condensing', error_message = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (datetime.now().isoformat(), course_plan_id),
+                commit=True,
+            )
+            run_in_background(
+                self._finalize_draft(course_plan_id),
+                name=f"course-plan-condense-{course_plan_id[:8]}",
+            )
         return await self.get_course_plan(course_plan_id)  # type: ignore[return-value]
 
     async def delete_course_plan(self, course_plan_id: str) -> None:
@@ -376,6 +430,16 @@ class CoursePlanService:
         plan = await self.get_course_plan(course_plan_id)
         if not plan:
             raise ValueError(f"学期计划 {course_plan_id} 不存在")
+        if plan.status == "condensing":
+            raise ValueError("AI 正在精简重难点，请等待完成后再导出")
+        from .point_briefs import chapter_points_ok
+
+        if any(not chapter_points_ok(chapter.model_dump()) for chapter in plan.chapters):
+            raise ValueError(
+                "存在超限的重难点内容且未能自动精简"
+                + (f"：{plan.error_message}" if plan.error_message else "")
+                + "，请在编辑页修正后重试"
+            )
 
         for plan_type in plan.plan_types:
             try:
@@ -510,6 +574,7 @@ class CoursePlanService:
             ),
             status=row["status"],
             output_files=cls._split_json(row["output_files"], default=[]),
+            error_message=row["error_message"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

@@ -1669,6 +1669,7 @@ class CoursePlanDetail(BaseModel):
     source_lesson_plan_ids: List[str]
     status: str
     output_files: List[str]
+    error_message: Optional[str] = None
     created_at: str
     updated_at: str
 

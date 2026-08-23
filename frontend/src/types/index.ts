@@ -1136,6 +1136,7 @@ export interface CoursePlanDetail {
   source_lesson_plan_ids: string[];
   status: string;
   output_files: string[];
+  error_message?: string | null;
   created_at: string;
   updated_at: string;
 }

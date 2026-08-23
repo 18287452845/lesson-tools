@@ -81,6 +81,10 @@ async def service(test_db, tmp_path, monkeypatch):
     monkeypatch.setattr(service_module, "get_db", get_test_db)
     monkeypatch.setattr(service_module, "get_user_ai_config", fake_ai_config)
     monkeypatch.setattr(service_module.settings, "output_dir", tmp_path)
+    # 测试中不让精简进入后台线程，由用例显式 await _finalize_draft
+    monkeypatch.setattr(
+        service_module, "run_in_background", lambda coro, name=None: coro.close()
+    )
 
     await test_db.execute(
         """
@@ -111,7 +115,7 @@ async def test_create_draft_derives_rows_from_lesson_plans(service, test_db):
 
     plan = await service.create_draft(_create_request(["lp-1", "lp-2"]))
 
-    assert plan.status == "draft"
+    assert plan.status == "condensing"
     assert plan.total_hours == 4  # 2 份教案 × 每份 2 课时
     assert [chapter.lesson_number for chapter in plan.chapters] == [1, 2]
     assert plan.chapters[0].topic == "列表操作"
@@ -169,9 +173,11 @@ async def test_create_draft_generates_experiment_names(service, test_db, monkeyp
             class_periods="3-4",
         )
     )
+    await service._finalize_draft(plan.id)
+    finalized = await service.get_course_plan(plan.id)
 
-    assert plan.chapters[0].experiment_name == "列表与字典上机"
-    assert plan.chapters[1].experiment_name == ""
+    assert finalized.chapters[0].experiment_name == "列表与字典上机"
+    assert finalized.chapters[1].experiment_name == ""
 
 
 @pytest.mark.service
@@ -204,6 +210,8 @@ async def test_update_validates_experiment_names(service, test_db, monkeypatch):
             class_periods="3-4",
         )
     )
+    await service._finalize_draft(plan.id)
+    plan = await service.get_course_plan(plan.id)
 
     # 实验名称超过固定模板单行限制时应拒绝保存
     invalid_chapters = [
@@ -281,9 +289,13 @@ async def test_create_draft_condenses_points_via_ai(service, test_db, monkeypatc
     monkeypatch.setattr(service_module, "ensure_brief_points", fake_brief_points)
 
     plan = await service.create_draft(_create_request(["lp-long"]))
+    assert plan.status == "condensing"
+    await service._finalize_draft(plan.id)
+    finalized = await service.get_course_plan(plan.id)
     assert calls == [1]
-    assert plan.chapters[0].key_points == "掌握raise与assert用法"
-    assert plan.chapters[0].difficult_points == "自定义异常类的设计"
+    assert finalized.status == "draft"
+    assert finalized.chapters[0].key_points == "掌握raise与assert用法"
+    assert finalized.chapters[0].difficult_points == "自定义异常类的设计"
 
 
 @pytest.mark.service
@@ -301,8 +313,14 @@ async def test_create_draft_fails_when_condensation_fails(service, test_db, monk
         raise ValueError("重难点精简连续 3 次仍不符合每行 25 字要求：超时")
 
     monkeypatch.setattr(service_module, "ensure_brief_points", failing_brief_points)
-    with pytest.raises(ValueError, match="重难点精简"):
-        await service.create_draft(_create_request(["lp-long"]))
+    plan = await service.create_draft(_create_request(["lp-long"]))
+    await service._finalize_draft(plan.id)
+    finalized = await service.get_course_plan(plan.id)
+    assert finalized.status == "draft"
+    assert finalized.error_message and "重难点精简" in finalized.error_message
+    # 精简失败时导出应被拦截并提示
+    with pytest.raises(ValueError, match="未能自动精简"):
+        await service.export_course_plan(plan.id)
 
 
 @pytest.mark.service
@@ -321,8 +339,10 @@ async def test_update_condenses_overlong_points(service, test_db, monkeypatch):
 
     monkeypatch.setattr(service_module, "ensure_brief_points", brief_ok)
     plan = await service.create_draft(_create_request(["lp-1"]))
+    await service._finalize_draft(plan.id)
+    plan = await service.get_course_plan(plan.id)
 
-    # 用户把重点改超长后保存，应先经 AI 精简再入库
+    # 用户把重点改超长后保存：立即入库并转后台精简
     monkeypatch.setattr(service_module, "ensure_brief_points", brief_shorten)
     updated = await service.update_course_plan(
         plan.id,
@@ -346,8 +366,12 @@ async def test_update_condenses_overlong_points(service, test_db, monkeypatch):
             ],
         ),
     )
-    assert updated.chapters[0].key_points == "掌握VLAN配置要点"
-    assert updated.chapters[0].difficult_points == "理解Trunk转发过程"
+    assert updated.status == "condensing"
+    await service._finalize_draft(plan.id)
+    finalized = await service.get_course_plan(plan.id)
+    assert finalized.status == "draft"
+    assert finalized.chapters[0].key_points == "掌握VLAN配置要点"
+    assert finalized.chapters[0].difficult_points == "理解Trunk转发过程"
 
 
 @pytest.mark.slow
@@ -378,6 +402,7 @@ async def test_export_renders_fixed_templates(service, test_db, monkeypatch):
             ],
         )
     )
+    await service._finalize_draft(plan.id)
 
     file_path, media_type = await service.export_course_plan(plan.id)
 
